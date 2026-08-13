@@ -16,7 +16,9 @@ from ..model import (
     Paragraph,
     Table,
     UnsupportedObject,
+    WmfGraphic,
 )
+from ..wmf import WmfDecodeError, wmf_display_size
 
 __all__ = ["render"]
 
@@ -54,6 +56,9 @@ def _render_blocks(blocks: list[Block]) -> str:
             list_counters.clear()
         elif isinstance(block, Image):
             chunks.append(_image_placeholder(block))
+            list_counters.clear()
+        elif isinstance(block, WmfGraphic):
+            chunks.append(_wmf_placeholder(block))
             list_counters.clear()
         elif isinstance(block, UnsupportedObject):
             chunks.append(
@@ -139,6 +144,15 @@ def _image_placeholder(image: Image) -> str:
         reference = _clean(image.reference)
         return f"[Image: {alt} (external reference not loaded: {reference})]"
     return f"[Image: {alt}]"
+
+
+def _wmf_placeholder(graphic: WmfGraphic) -> str:
+    try:
+        wmf_display_size(graphic)
+    except WmfDecodeError:
+        return "[Invalid WMF preview]"
+    alt = _clean(str(graphic.alt_text or "Embedded WMF preview"))
+    return f"[WMF preview: {alt} ({graphic.width_px} x {graphic.height_px} pixels)]"
 
 
 def _clean(value: str) -> str:

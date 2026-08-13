@@ -29,8 +29,10 @@ from ..model import (
     Table,
     TableCell,
     UnsupportedObject,
+    WmfGraphic,
 )
 from ..model import Document as AmiProDocument
+from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
 
@@ -106,6 +108,8 @@ def _add_blocks(target: Any, document: AmiProDocument, blocks: list[Block]) -> N
             _add_table(target, block, document)
         elif isinstance(block, Image):
             _add_placeholder(target, _image_placeholder(block))
+        elif isinstance(block, WmfGraphic):
+            _add_wmf(target, block)
         elif isinstance(block, UnsupportedObject):
             _add_placeholder(target, f"[Unsupported {block.kind}: {block.description}]")
         elif isinstance(block, Annotation | Footnote | Header | Footer):
@@ -127,6 +131,22 @@ def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
         "unknown": "placement unknown",
     }.get(block.placement, "placement unknown")
     return f"[{kind}: {placement}]"
+
+
+def _add_wmf(target: Any, graphic: WmfGraphic) -> None:
+    from docx.shared import Inches
+
+    try:
+        payload = wmf_png(graphic)
+        width, height = wmf_display_size(graphic)
+    except WmfDecodeError:
+        _add_placeholder(target, "[Invalid WMF preview]")
+        return
+    paragraph = target.add_paragraph()
+    paragraph.add_run(_clean_xml_text(str(graphic.alt_text or "Embedded WMF preview")))
+    paragraph.add_run().add_picture(
+        BytesIO(payload), width=Inches(width), height=Inches(height)
+    )
 
 
 def _populate_paragraph(

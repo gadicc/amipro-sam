@@ -155,8 +155,50 @@ object-id .type primary-offset primary-length companion-offset companion-length
 
 Normal offsets are absolute from byte zero; the preamble variant uses the
 post-preamble base. Lengths and offsets are untrusted and must be range-checked.
-Only bounded BMP payloads are currently made available to renderers. WMF, SDW,
-OLE, equations, and companion data are inert placeholders.
+WMF support follows Microsoft's public
+[MS-WMF specification](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/4813e7fd-52d0-4f42-965f-228c8b7488d2).
+The eight installation WMFs and 102 well-formed, in-range private WMFs are
+classic type-1 memory metafiles with a version-3 standard header and a final
+EOF record; none has an Aldus placeable header. One additional in-range private WMF
+has an impossible record size after a complete bitmap and no EOF, and one
+directory entry points beyond its source file. Both remain visible
+placeholders. Placeable-header handling is therefore specification-backed and
+synthetic-tested, not corpus-verified.
+
+The corpus-backed record subset is deliberately narrow: optional anisotropic
+map mode before the window transform, one window origin/extent, exactly one
+`DIBSTRETCHBLT` using `SRCCOPY`, bounded logical palette
+creation/selection/realization, and EOF. The DIB must use the 40-byte
+`BITMAPINFOHEADER`, one plane, bottom-up orientation, `BI_RGB`, exact bounded
+storage, and 1-, 4-, 8-, or 24-bit pixels. Negative destination width, top-down
+DIBs, and additional raster operations remain unsupported. The inspected WMFs
+use only the supported operations. Their decoded
+dimensions range from small installation icons through 455 by 363 pixels; a
+few use a negative destination/window Y extent whose matching signs cancel in
+the anisotropic mapping. The decoder requires matching source, destination,
+window, and DIB extents rather than guessing a transform.
+
+Both the optional
+[placeable header](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/828e1864-7fe7-42d8-ab0a-1de161b32f27)
+and the required
+[standard header](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/d169108a-e3fe-436a-bb44-bea61a46ce56)
+are validated before records are scanned. Record word lengths, the declared
+file and maximum-record sizes, object slots, logical palettes, coordinates,
+DIB stride and pixel count, and terminal EOF are all bounded or cross-checked.
+Every escape or unknown operation rejects the whole preview. This is especially
+important because WMF escape records can carry printer data and other active or
+embedded payloads; no raw WMF is sent to a browser, operating-system graphics
+API, office suite, or external converter.
+
+A successful WMF becomes an inert IR block containing top-down RGB pixels,
+dimensions, an operation summary, and the source SHA-256—not raw WMF records.
+The toolkit creates a fresh deterministic PNG for HTML, PDF, ODT, and DOCX;
+ODT/DOCX package it under a fixed internal path. Markdown and text emit a
+dimensioned marker, while JSON reports byte lengths without inlining pixels.
+Any unsupported or malformed WMF remains a digest-bearing visible placeholder
+with a stable diagnostic.
+
+SDW, OLE, equations, and companion data remain inert placeholders.
 
 ## Active content and safety
 
@@ -167,8 +209,8 @@ treated as HTML. Renderers escape source text and do not load remote resources.
 
 ## Hypotheses and open questions
 
-- Version 3 is described by secondary sources but is not represented in the
-  inspected corpora.
+- SAM format version 3 is described by secondary sources but is not represented
+  in the inspected corpora. (This is separate from the version-3 WMF header.)
 - CP1252 is strongly evidenced for Western documents, but other locales and
   actual non-ASCII textual bytes need targeted samples.
 - Frame z-order and exact floating coordinates need more reverse engineering;

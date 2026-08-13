@@ -28,7 +28,9 @@ from ..model import (
     Table,
     TableCell,
     UnsupportedObject,
+    WmfGraphic,
 )
+from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
 
@@ -48,6 +50,9 @@ NS = {
     "meta": "urn:oasis:names:tc:opendocument:xmlns:meta:1.0",
     "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
     "manifest": "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0",
+    "draw": "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
+    "svg": "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0",
+    "xlink": "http://www.w3.org/1999/xlink",
 }
 for _prefix, _uri in NS.items():
     ET.register_namespace(_prefix, _uri)
@@ -57,13 +62,18 @@ def render(document: Document, **_options: object) -> bytes:
     """Return *document* as a valid ODT package."""
 
     try:
-        content = _ContentBuilder(document).build()
+        builder = _ContentBuilder(document)
+        content = builder.build()
         members = [
             ("content.xml", content),
             ("styles.xml", _styles_xml()),
             ("meta.xml", _meta_xml()),
             ("settings.xml", _settings_xml()),
-            ("META-INF/manifest.xml", _manifest_xml()),
+            (
+                "META-INF/manifest.xml",
+                _manifest_xml([name for name, _payload in builder.generated_images]),
+            ),
+            *builder.generated_images,
         ]
         output = BytesIO()
         with ZipFile(output, "w") as archive:
@@ -85,6 +95,8 @@ class _ContentBuilder:
         self._paragraph_style_counter = 0
         self._text_style_counter = 0
         self._table_counter = 0
+        self._image_counter = 0
+        self.generated_images: list[tuple[str, bytes]] = []
         self._define_list_styles()
         self._define_table_cell_styles()
 
@@ -134,12 +146,46 @@ class _ContentBuilder:
                 self._add_table(block)
             elif isinstance(block, Image):
                 self._add_placeholder(_image_placeholder(block))
+            elif isinstance(block, WmfGraphic):
+                self._add_wmf(block)
             elif isinstance(block, UnsupportedObject):
                 self._add_placeholder(f"[Unsupported {block.kind}: {block.description}]")
             elif isinstance(block, Annotation | Footnote | Header | Footer):
                 self._add_placeholder(_container_label(block))
                 self._add_blocks(block.blocks)
             index += 1
+
+    def _add_wmf(self, graphic: WmfGraphic) -> None:
+        try:
+            payload = wmf_png(graphic)
+            width, height = wmf_display_size(graphic)
+        except WmfDecodeError:
+            self._add_placeholder("[Invalid WMF preview]")
+            return
+        self._image_counter += 1
+        name = f"Pictures/WMF{self._image_counter}.png"
+        self.generated_images.append((name, payload))
+        paragraph = ET.SubElement(self.body_text, _q("text", "p"))
+        frame = ET.SubElement(
+            paragraph,
+            _q("draw", "frame"),
+            {
+                _q("draw", "name"): f"WMF{self._image_counter}",
+                _q("text", "anchor-type"): "as-char",
+                _q("svg", "width"): f"{width:.6g}in",
+                _q("svg", "height"): f"{height:.6g}in",
+            },
+        )
+        ET.SubElement(
+            frame,
+            _q("draw", "image"),
+            {
+                _q("xlink", "href"): name,
+                _q("xlink", "type"): "simple",
+                _q("xlink", "show"): "embed",
+                _q("xlink", "actuate"): "onLoad",
+            },
+        )
 
     def _add_paragraph(
         self,
@@ -550,7 +596,7 @@ def _settings_xml() -> bytes:
     return _xml_bytes(root)
 
 
-def _manifest_xml() -> bytes:
+def _manifest_xml(image_names: list[str] | None = None) -> bytes:
     root = ET.Element(
         _q("manifest", "manifest"),
         {_q("manifest", "version"): "1.3"},
@@ -568,6 +614,15 @@ def _manifest_xml() -> bytes:
             {
                 _q("manifest", "full-path"): path,
                 _q("manifest", "media-type"): media_type,
+            },
+        )
+    for name in image_names or []:
+        ET.SubElement(
+            root,
+            _q("manifest", "file-entry"),
+            {
+                _q("manifest", "full-path"): name,
+                _q("manifest", "media-type"): "image/png",
             },
         )
     return _xml_bytes(root)

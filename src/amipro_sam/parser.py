@@ -33,10 +33,12 @@ from .model import (
     TextRun,
     UnknownRecord,
     UnsupportedObject,
+    WmfGraphic,
 )
 from .syntax import (
     MultilineContainerScanner,
 )
+from .wmf import WmfDecodeError, decode_wmf
 
 _MAIN_SECTION = re.compile(r"^\[([A-Za-z][A-Za-z0-9_-]{0,63})\]$")
 _SUBSECTION = re.compile(r"^\s+\[([A-Za-z][A-Za-z0-9_-]{0,63})\]\s*$")
@@ -563,6 +565,12 @@ def _parse_structures(
     table_cells = 0
     layout_index = 0
     layout_budget = _RecordBudget(limits.max_records)
+    wmf_pixel_budget = _RecordBudget(
+        min(
+            ParseLimits().max_total_wmf_pixels,
+            max(0, limits.max_total_wmf_pixels),
+        )
+    )
     assets: dict[str, list[Block]] = {}
     for section in sections:
         if section.name.lower() == "embedded":
@@ -574,6 +582,7 @@ def _parse_structures(
                     decoded,
                     limits,
                     data_base_offset=data_base_offset,
+                    wmf_pixel_budget=wmf_pixel_budget,
                 )
             )
 
@@ -1039,6 +1048,7 @@ def _parse_embedded_manifest(
     limits: ParseLimits,
     *,
     data_base_offset: int = 0,
+    wmf_pixel_budget: _RecordBudget | None = None,
 ) -> dict[str, list[Block]]:
     raw = "\n".join(section.raw_lines).encode(decoded.encoding, errors="surrogateescape")
     total = 0
@@ -1132,6 +1142,55 @@ def _parse_embedded_manifest(
                     source=section.source,
                 )
             )
+        elif (
+            extension == ".wmf"
+            and asset_is_valid
+            and asset_length <= limits.max_embedded_asset_bytes
+        ):
+            asset_data = data[
+                physical_asset_offset : physical_asset_offset + asset_length
+            ]
+            try:
+                def reserve_pixels(count: int) -> None:
+                    if wmf_pixel_budget is not None:
+                        if count > wmf_pixel_budget.limit - wmf_pixel_budget.used:
+                            raise WmfDecodeError(
+                                "total-pixel-limit",
+                                "decoded WMF pixels exceed the document-wide limit",
+                            )
+                        wmf_pixel_budget.used += count
+
+                graphic: WmfGraphic = decode_wmf(
+                    asset_data,
+                    limits=limits,
+                    source=section.source,
+                    alt_text=f"Embedded WMF preview {asset_id}",
+                    reserve_pixels=reserve_pixels,
+                )
+            except WmfDecodeError as exc:
+                digest = hashlib.sha256(asset_data).hexdigest()
+                description = (
+                    f"{asset_length} bytes; SHA-256 {digest}; "
+                    f"safe preview unavailable: {exc}"
+                )
+                asset_blocks.insert(
+                    0,
+                    UnsupportedObject(
+                        kind="embedded wmf",
+                        description=description,
+                        source=section.source,
+                    ),
+                )
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        f"wmf-{exc.code}",
+                        str(exc),
+                        section.source,
+                    )
+                )
+            else:
+                asset_blocks.insert(0, graphic)
         else:
             asset_blocks.insert(
                 0,

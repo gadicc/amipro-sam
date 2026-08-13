@@ -24,7 +24,9 @@ from ..model import (
     StyleDefinition,
     Table,
     UnsupportedObject,
+    WmfGraphic,
 )
+from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
 
@@ -168,6 +170,8 @@ def _render_blocks(document: Document, blocks: list[Block] | None = None) -> str
             result.append(_table(document, block))
         elif isinstance(block, Image):
             result.append(_image(block))
+        elif isinstance(block, WmfGraphic):
+            result.append(_wmf_graphic(block))
         elif isinstance(block, UnsupportedObject):
             label = f"Unsupported {block.kind}: {block.description}"
             result.append(f'<div class="placeholder">[{_text(label)}]</div>\n')
@@ -384,6 +388,23 @@ def _image(image: Image) -> str:
     return (
         "<figure>"
         f'<img src="data:{media_type};base64,{encoded}" alt="{_attribute(alt)}"{style}>'
+        f"<figcaption>{_text(alt)}</figcaption>"
+        "</figure>\n"
+    )
+
+
+def _wmf_graphic(graphic: WmfGraphic) -> str:
+    try:
+        data = wmf_png(graphic)
+        width, height = wmf_display_size(graphic)
+    except WmfDecodeError:
+        return '<div class="placeholder">[Invalid WMF preview]</div>\n'
+    encoded = base64.b64encode(data).decode("ascii")
+    alt = graphic.alt_text or "Embedded WMF preview"
+    return (
+        '<figure class="wmf-preview">'
+        f'<img src="data:image/png;base64,{encoded}" alt="{_attribute(alt)}" '
+        f'style="width:{width:g}in;height:{height:g}in">'
         f"<figcaption>{_text(alt)}</figcaption>"
         "</figure>\n"
     )

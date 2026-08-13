@@ -21,7 +21,8 @@ discarded or activated.
 | Body and page-layout headers/footers | Typed IR with odd/even placement and raw frame records | Semantic/labeled reflow; not yet repeated in physical page margins | Explicit placement markers |
 | Ordinary text frames | Text recovered | Anchored/reflowed with warnings | Reflowed |
 | Embedded BMP | Safely indexed and bounded | HTML embeds; paged formats use placeholder | Placeholder |
-| WMF | Preserved as metadata | Placeholder | Placeholder |
+| WMF type-1 SRCCOPY DIB subset | Strict bounded standard/placeable validation; one bottom-up 1/4/8/24-bit BI_RGB raster decoded to inert RGB IR | Fresh internal PNG in HTML/PDF/ODT/DOCX | Explicit dimensions marker |
+| Other/malformed WMF | Digest-bearing inert placeholder and diagnostic | Visible placeholder; never activated | Visible placeholder |
 | Ami Draw `.sdw` | Preserved as metadata | Placeholder | Placeholder |
 | OLE/WordArt | Never activated | Placeholder | Placeholder |
 | Equations | Preserved as unsupported object | Placeholder | Placeholder |

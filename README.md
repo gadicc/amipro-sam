@@ -24,9 +24,10 @@ experimental DOCX output.
 - Text recovery from the main document, text frames, and table cells.
 - Typed annotations, footnotes, and body/layout header/footer streams with raw
   placement records retained in the intermediate representation.
-- Bounds-checked extraction of embedded BMP data.
-- Visible placeholders for WMF, Ami Draw, OLE, equations, macros, and other
-  unsupported objects.
+- Bounds-checked extraction of embedded BMP data and direct, inert PNG previews
+  for the validated WMF/DIB subset.
+- Visible placeholders for unsupported WMF operations, Ami Draw, OLE,
+  equations, macros, and other unsupported objects.
 - Directory inventory, batch conversion that continues after corrupt files, and
   stable diagnostics.
 - No execution of macros, DDE, scripts, or OLE; no remote resource loading and
@@ -152,7 +153,8 @@ represent. Unsupported data is marked rather than silently omitted.
 
 Treat every legacy document as untrusted. The toolkit:
 
-- applies configurable file, line, record, table, and embedded-asset limits;
+- applies configurable file, line, record, table, embedded-asset, and WMF
+  record/object/palette/dimension/pixel limits;
 - validates every embedded offset and length before slicing bytes;
 - does not invoke office software or external converters in production;
 - never activates macros, OLE, DDE, external links, or document scripts;

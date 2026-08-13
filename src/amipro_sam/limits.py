@@ -16,3 +16,9 @@ class ParseLimits:
     max_table_cells: int = 100_000
     max_embedded_asset_bytes: int = 16 * 1024 * 1024
     max_total_asset_bytes: int = 64 * 1024 * 1024
+    max_wmf_records: int = 10_000
+    max_wmf_objects: int = 4_096
+    max_wmf_palette_entries: int = 4_096
+    max_wmf_dimension: int = 4_096
+    max_wmf_pixels: int = 4_000_000
+    max_total_wmf_pixels: int = 8_000_000

@@ -18,7 +18,9 @@ from ..model import (
     StyleDefinition,
     Table,
     UnsupportedObject,
+    WmfGraphic,
 )
+from ..wmf import WmfDecodeError, wmf_display_size
 
 __all__ = ["render"]
 
@@ -71,6 +73,9 @@ def _render_blocks(document: Document, blocks: list[Block]) -> str:
             counters.clear()
         elif isinstance(block, Image):
             chunks.append(_image_placeholder(block))
+            counters.clear()
+        elif isinstance(block, WmfGraphic):
+            chunks.append(_wmf_placeholder(block))
             counters.clear()
         elif isinstance(block, UnsupportedObject):
             chunks.append(
@@ -212,6 +217,17 @@ def _image_placeholder(image: Image) -> str:
     else:
         detail = f"[Image: {alt}]"
     return _escape_text(detail)
+
+
+def _wmf_placeholder(graphic: WmfGraphic) -> str:
+    try:
+        wmf_display_size(graphic)
+    except WmfDecodeError:
+        return _escape_text("[Invalid WMF preview]")
+    alt = str(graphic.alt_text or "Embedded WMF preview")
+    return _escape_text(
+        f"[WMF preview: {alt} ({graphic.width_px} x {graphic.height_px} pixels)]"
+    )
 
 
 def _heading_level(style_name: str | None) -> int | None:

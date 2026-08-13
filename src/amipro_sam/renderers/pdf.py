@@ -2,6 +2,8 @@
 
 Only ReportLab's built-in fonts are used.  In particular, font names and image
 references found in a SAM file are never interpreted as paths or opened.
+Validated WMF raster data is converted by the toolkit to a fresh in-memory PNG
+before ReportLab sees it.
 """
 
 from __future__ import annotations
@@ -17,6 +19,9 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.pdfgen.canvas import Canvas
+from reportlab.platypus import (
+    Image as ReportLabImage,
+)
 from reportlab.platypus import (
     PageBreak as ReportLabPageBreak,
 )
@@ -48,7 +53,9 @@ from ..model import (
     Table,
     TableCell,
     UnsupportedObject,
+    WmfGraphic,
 )
+from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
 
@@ -79,9 +86,10 @@ class _InvariantCanvas(Canvas):
 def render(document: Document, **_options: object) -> bytes:
     """Return *document* as PDF bytes.
 
-    The renderer deliberately emits placeholders for images and unsupported
-    objects.  ReportLab therefore never opens a source-supplied filename, URL,
-    OLE object, or embedded payload.
+    The renderer deliberately emits placeholders for source Image objects and
+    unsupported objects.  A validated WMF preview is passed as a freshly
+    generated in-memory PNG; ReportLab never opens a source-supplied filename,
+    URL, OLE object, or original embedded payload.
     """
 
     try:
@@ -155,6 +163,9 @@ def _append_primary_blocks(
         elif isinstance(block, Image):
             story.append(_placeholder_flowable(_image_placeholder(block)))
             list_counters.clear()
+        elif isinstance(block, WmfGraphic):
+            story.append(_wmf_flowable(block))
+            list_counters.clear()
         elif isinstance(block, UnsupportedObject):
             story.append(
                 _placeholder_flowable(
@@ -199,6 +210,9 @@ def _append_fallback_blocks(
                 )
         elif isinstance(block, Image):
             story.append(_fallback_paragraph(_image_placeholder(block), placeholder=True))
+            list_counters.clear()
+        elif isinstance(block, WmfGraphic):
+            story.append(_wmf_flowable(block))
             list_counters.clear()
         elif isinstance(block, UnsupportedObject):
             story.append(
@@ -588,6 +602,17 @@ def _image_placeholder(image: Image) -> str:
     elif image.data is not None:
         detail += " (embedded image preserved as a placeholder)"
     return f"[{detail}]"
+
+
+def _wmf_flowable(graphic: WmfGraphic) -> object:
+    try:
+        payload = wmf_png(graphic)
+        width, height = wmf_display_size(graphic, max_width_in=6.25, max_height_in=8.0)
+    except WmfDecodeError:
+        return _placeholder_flowable("[Invalid WMF preview]")
+    image = ReportLabImage(BytesIO(payload), width=width * inch, height=height * inch)
+    image.hAlign = "LEFT"
+    return image
 
 
 def _clean_text(value: str) -> str:
