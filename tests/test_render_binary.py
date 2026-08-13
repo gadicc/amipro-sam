@@ -108,7 +108,9 @@ def test_pdf_text_and_pages_are_recoverable_when_pypdf_is_available() -> None:
     reader = pypdf.PdfReader(BytesIO(pdf.render(_document())))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
-    assert len(reader.pages) >= 3
+    # A page-break-before property on the first paragraph has no preceding
+    # page to finish; paged renderers now normalize that boundary artifact.
+    assert len(reader.pages) == 2
     assert "<script>alert('x') & safe</script>" in text
     assert "Heading" in text
     assert "A & B <preview>" in text
@@ -299,7 +301,7 @@ def test_pdf_plain_layout_fallback_keeps_conversion_available(
     assert b"/JavaScript" not in output
 
 
-def test_pdf_does_not_flatten_renderer_safety_errors() -> None:
+def test_pdf_visibly_reflows_table_beyond_safe_grid_width() -> None:
     table = Table(
         rows=[
             TableRow(
@@ -311,8 +313,17 @@ def test_pdf_does_not_flatten_renderer_safety_errors() -> None:
         ]
     )
 
-    with pytest.raises(RenderError, match="safe 256-column limit"):
-        pdf.render(Document("synthetic.sam", "windows-1252", blocks=[table]))
+    document = Document(
+        "synthetic.sam",
+        "windows-1252",
+        blocks=[table, Paragraph(runs=[TextRun("AFTER")])],
+    )
+
+    story = pdf._primary_story(document)
+
+    assert "Table cells omitted at safe 256-column limit" in story[0].getPlainText()
+    assert "AFTER" in story[1].getPlainText()
+    assert pdf.render(document).startswith(b"%PDF-")
 
 
 def test_odt_package_is_valid_deterministic_and_self_contained() -> None:

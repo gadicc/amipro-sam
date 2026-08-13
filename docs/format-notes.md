@@ -120,25 +120,90 @@ as corpus-verified. Annotation metadata in the observed version-4 documents has
 five comma-separated fields rather than only the edit-date field described by
 the older reference; those fields therefore remain opaque.
 
-## Frames, tables, and embedded objects
+## Page geometry, frames, and tables
 
-Frames use `[frm]` with nested layout and content records. `[txt]` contains an
-ordinary Ami Pro text stream. Tables use `[tbl]`, optional row/column definition
-records, then `[data]` records whose first two integers are zero-based row and
-column coordinates. Body commands `<:tN>` and `<:AN>` refer to frames whose
-anchor flag is set; the zero-based `N` selects those frames in source order. In
-the inspected corpora these references determine table and floating-frame order.
-The current table reader recovers rectangular cell text but does not yet
-reproduce every border, merge, formula, or page coordinate.
+This implementation separates documented or corroborated fields from opaque
+records. Ami Pro's first-party user guide documents page-layout concepts,
+including [paper size, margins, odd/even pages, and mirrored
+margins](https://public.dhe.ibm.com/software/lotus/desktop/LotusDoc/10701.txt),
+[inserted layouts](https://public.dhe.ibm.com/software/lotus/desktop/LotusDoc/10702.txt),
+and [fixed and floating headers](https://public.dhe.ibm.com/software/lotus/desktop/LotusDoc/10741.txt).
+The byte-level mappings below are independently corroborated by Born's
+reverse-engineering reference and the LGPL KOffice/KWord
+[Ami Pro filter notes](https://sources.debian.org/src/koffice/1%3A1.6.3-7/filters/kword/amipro/FileFormat.txt/).
+The vendor guide and Born book are copyrighted references; the toolkit cites
+and paraphrases them but copies neither prose nor sample bytes.
 
-Page-layout records contain frame-shaped `[hrght]`, `[frght]`, `[hlft]`, and
-`[flft]` branches for right/odd and left/even headers and footers. Each branch
-may contain `[lyfrm]`/`[frmlay]` placement records followed by a bounded `[txt]`
-stream. Layout-backed header/footer text is represented explicitly and its raw
-geometry is retained for later page-layout work. The inspected corpora contain
-129 nonempty right-header streams and 19 nonempty right-footer streams across
-the installation and private samples; no left-page branches were observed.
+Distances are signed ASCII integers in twips (1,440 per inch, 20 per point).
+For `[lay]`, the low page-size value maps 1 through 7 to Letter, Legal, A3, A4,
+A5, B5, and custom. Corroborated feature bits select landscape (256),
+non-alternating pages (512), mirrored margins (1024), a second header (2048),
+and a second footer (4096). The exact page on which the latter two variants
+begin is not independently verified, so the parser records the bits without
+inventing that transition.
+
+The `[rght]` and `[lft]` branches describe right/odd and left/even page variants.
+Their corroborated nine-number prefix is:
+
+```text
+height, width, reserved, left margin, bottom margin,
+display unit, top margin, right margin, flags
+```
+
+`reserved` is a toolkit label for an unassigned third field, not a semantic
+claim. Display-unit values 1, 2, 3, and 4 denote inch, centimetre, pica, and
+point for the original UI; geometry itself remains integer twips. Additional
+line, gutter, column, or tab fields are retained as an opaque bounded summary
+plus the complete raw layout record. They do not drive allocation. The parser
+derives page and content rectangles only from a complete, safe prefix. It caps
+pages between 1 inch (1,440 twips) and the application's documented 22-inch
+maximum (31,680 twips), requires nonnegative margins and at least 720 twips of
+remaining width and height as a
+toolkit safety policy, and otherwise emits a diagnostic and leaves renderers to
+their fixed Letter-page fallback.
+
+`[frm]` has a corroborated six-number prefix: page number, flag word, and left,
+top, right, bottom edges in a top-left-origin coordinate system. Width and
+height are derived only when right is greater than left and bottom is greater
+than top. The validator bounds signed edges to -32,768 through 32,767 and each
+span to 31,680 twips. Known flags identify bitmap, drawing, table, opacity,
+wrap-around, repeating, text, header, footer, odd/right, border, and anchored
+properties. Unknown flag bits and every raw field remain available. `[frmlay]`
+is retained as opaque frame-layout metadata: public evidence corroborates its
+second field as a width, but its first field does not consistently behave as a
+height, so it is not used to derive geometry.
+
+`Frame` objects wrap their readable child blocks. Anchored body commands
+`<:tN>` and `<:AN>` select only anchor-flagged frames by zero-based source order,
+and the complete `Frame` is inserted at that exact body location. This ordering
+is corpus-confirmed. Unanchored frames remain visible after the body with their
+page number and validated rectangle, but current renderers deliberately reflow
+them rather than reproducing overlapping absolute placement. Repeating, fixed,
+and anchored status is represented when the evidenced bits permit it. The
+encoding of a true page-background layer is unknown: an unanchored or opaque
+frame is never labelled a background merely by inference.
+
+Page layouts contain frame-shaped `[hrght]`, `[frght]`, `[hlft]`, and `[flft]`
+branches for right/odd and left/even headers and footers. Public examples and
+the inspected corpora place `[lyfrm]`, `[frmlay]`, and `[txt]` either below the
+branch or as following sibling records. Both shapes are bounded at the next
+header/footer or ordinary page-layout branch, preventing one sibling stream
+from consuming another. Layout-backed header/footer text is typed directly and
+also carries a `Frame` geometry descriptor. The inspected corpora contain 129
+nonempty right-header streams and 19 nonempty right-footer streams across the
+installation and private samples; no left-page branches were observed.
 Left-page handling is therefore documented-format-backed and synthetic-tested.
+
+`[pg]` contents and the target-layout portion of layout-change page-break
+commands are version-dependent and not publicly mapped at byte level. `[pg]`
+is retained as `OpaquePageHints`; it never supplies a trusted page count,
+allocation size, or inferred layout transition. A confirmed `<:p...>` command
+still requests a visible page break before the following paragraph.
+
+Tables use `[tbl]`, optional row/column definition records, then `[data]`
+records whose first two integers are zero-based row and column coordinates. The
+current table reader recovers rectangular cell text but does not yet reproduce
+every border, merge, formula, or page coordinate.
 
 `[fopts]` has four bounded integers: option flags, starting number, separator
 length, and indentation. Known bits request collection at the page end,

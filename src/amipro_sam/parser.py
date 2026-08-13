@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,8 +21,12 @@ from .model import (
     Footer,
     Footnote,
     FootnoteOptions,
+    Frame,
     Header,
     Image,
+    OpaquePageHints,
+    PageLayout,
+    PageVariantGeometry,
     Paragraph,
     SdwDrawing,
     SectionRecord,
@@ -32,6 +37,7 @@ from .model import (
     TableCell,
     TableRow,
     TextRun,
+    TwipRect,
     UnknownRecord,
     UnsupportedObject,
     WmfGraphic,
@@ -56,6 +62,13 @@ _FONT_TAG = re.compile(
 _LINE_SPACING = re.compile(r"^:S\+(?P<value>-?\d+(?:\.\d+)?)$", re.IGNORECASE)
 _PARAGRAPH_LAYOUT = re.compile(r"^:#(?P<first>-?\d+)(?:,(?P<rest>-?\d+))?.*$")
 _FRAME_ANCHOR = re.compile(r"(?<!<)<:(?P<kind>t|A)(?P<index>\d+)>")
+_LAYOUT_TABBED_MARKER = re.compile(
+    r"^(?P<indent>\t*)\[(?P<name>[A-Za-z][A-Za-z0-9_-]{0,63})\]\s*$"
+)
+_LAYOUT_BRANCH_MARKER = re.compile(
+    r"^(?P<indent>[ \t]*)\[(?P<name>hrght|hlft|frght|flft)\]\s*$",
+    re.IGNORECASE,
+)
 
 _KNOWN_HEADER_SECTIONS = {
     "ver",
@@ -110,8 +123,12 @@ class _InlineState:
 @dataclass(slots=True)
 class _FrameContent:
     kind: str
-    blocks: list[Block]
+    frame: Frame
     source: SourceSpan
+
+    @property
+    def blocks(self) -> list[Block]:
+        return self.frame.blocks
 
 
 @dataclass(slots=True)
@@ -268,11 +285,11 @@ def parse_bytes(
         document.blocks.append(
             UnsupportedObject(
                 "unplaced anchored frame",
-                f"anchor target {index} was not referenced by the body; recovered content follows",
+                f"anchor target {index} was not referenced by the body; recovered frame follows",
                 frame.source,
             )
         )
-        document.blocks.extend(frame.blocks)
+        document.blocks.append(frame.frame)
         document.diagnostics.append(
             Diagnostic(
                 Severity.WARNING,
@@ -501,6 +518,267 @@ def _bounded_small_signed(value: str) -> int | None:
         return None
 
 
+_MAX_PAGE_TWIPS = 22 * 1440
+_MIN_PAGE_TWIPS = 1440
+_MIN_CONTENT_TWIPS = 720
+_MIN_FRAME_COORD = -32768
+_MAX_FRAME_COORD = 32767
+_MAX_TYPED_GEOMETRY_FIELDS = 1024
+_PAGE_LAYOUT_FEATURE_FLAGS = 256 | 512 | 1024 | 2048 | 4096
+_FRAME_KNOWN_FLAGS = (
+    1
+    | 2
+    | 4
+    | 64
+    | 128
+    | 256
+    | 512
+    | 2048
+    | 4096
+    | 8192
+    | 65536
+    | 524288
+)
+
+
+def _parse_page_layout(
+    document: Document, section: SectionRecord, layout_index: int
+) -> PageLayout:
+    """Parse the documented, bounded subset of one ``[lay]`` record."""
+
+    prefix, prefix_truncated = _prefix_fields(section.raw_lines)
+    if prefix_truncated:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "page-layout-summary-truncated",
+                f"[lay] typed prefix was capped at {_MAX_TYPED_GEOMETRY_FIELDS} fields; "
+                "the complete record remains in raw form",
+                section.source,
+            )
+        )
+    name = _unescape_literal(prefix[0]) if prefix else ""
+    flags = _bounded_small_signed(prefix[1]) if len(prefix) > 1 else None
+    if flags is not None and not 0 <= flags <= 0x7FFFFFFF:
+        flags = None
+    if flags is None:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "malformed-page-layout-flags",
+                "[lay] has no bounded nonnegative flag word; geometry was retained independently",
+                section.source,
+            )
+        )
+
+    paper_codes = {
+        1: "letter",
+        2: "legal",
+        3: "a3",
+        4: "a4",
+        5: "a5",
+        6: "b5",
+        7: "custom",
+    }
+    paper_kind = paper_codes.get(flags & 0xFF, "unknown") if flags is not None else "unknown"
+    odd = _parse_page_variant(document, section, "rght", "odd")
+    even = _parse_page_variant(document, section, "lft", "even")
+    layout = PageLayout(
+        index=layout_index,
+        name=name,
+        flags=flags,
+        paper_kind=paper_kind,  # type: ignore[arg-type]
+        orientation=(
+            "landscape"
+            if flags is not None and flags & 256
+            else "portrait"
+            if flags is not None
+            else "unknown"
+        ),
+        non_alternating=bool(flags is not None and flags & 512),
+        mirrored=bool(flags is not None and flags & 1024),
+        second_header=bool(flags is not None and flags & 2048),
+        second_footer=bool(flags is not None and flags & 4096),
+        unknown_flag_bits=(flags & ~(0xFF | _PAGE_LAYOUT_FEATURE_FLAGS)) if flags else 0,
+        odd=odd,
+        even=even,
+        valid=bool((odd and odd.valid) or (even and even.valid)),
+        raw="\n".join(section.raw_lines),
+        source=section.source,
+    )
+    if not layout.valid:
+        layout.reason = "no complete, bounded right/odd or left/even page geometry"
+    if paper_kind == "unknown" and flags is not None:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.INFO,
+                "unknown-page-size-code",
+                f"[lay] page-size code {flags & 0xFF} remains uninterpreted",
+                section.source,
+            )
+        )
+    return layout
+
+
+def _parse_page_variant(
+    document: Document,
+    section: SectionRecord,
+    marker_name: str,
+    side: str,
+) -> PageVariantGeometry | None:
+    marker_indexes = [
+        index
+        for index, line in enumerate(section.raw_lines)
+        if (match := _LAYOUT_TABBED_MARKER.fullmatch(line)) is not None
+        and len(match.group("indent")) == 1
+        and match.group("name").lower() == marker_name
+    ]
+    if not marker_indexes:
+        return None
+    duplicate = len(marker_indexes) > 1
+    if duplicate:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "duplicate-page-variant",
+                f"[lay] has {len(marker_indexes)} [{marker_name}] branches; "
+                "only the first geometry is typed",
+                section.raw_spans[marker_indexes[1]],
+            )
+        )
+    start = marker_indexes[0]
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(section.raw_lines))
+            if re.fullmatch(
+                r"\t\[[A-Za-z][A-Za-z0-9_-]{0,63}\]\s*",
+                section.raw_lines[index],
+            )
+        ),
+        len(section.raw_lines),
+    )
+    raw_fields: list[str] = []
+    omitted_fields = 0
+    for line in section.raw_lines[start + 1 : end]:
+        value = line.strip()
+        if not value:
+            continue
+        if value.startswith("[") or value == ">":
+            break
+        if len(raw_fields) < _MAX_TYPED_GEOMETRY_FIELDS:
+            raw_fields.append(value)
+        else:
+            omitted_fields += 1
+    source = section.raw_spans[start]
+    geometry = PageVariantGeometry(
+        side=side,  # type: ignore[arg-type]
+        raw_fields=tuple(raw_fields),
+        source=source,
+    )
+    if omitted_fields:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "page-geometry-summary-truncated",
+                f"[{marker_name}] typed field summary was capped at {_MAX_TYPED_GEOMETRY_FIELDS}; "
+                f"{omitted_fields} additional field(s) remain in the raw [lay] record",
+                source,
+            )
+        )
+    parsed = [_bounded_small_signed(value) for value in raw_fields[:9]]
+    if len(raw_fields) < 9 or any(value is None for value in parsed):
+        geometry.reason = "page variant requires a nine-field bounded integer prefix"
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "malformed-page-geometry",
+                f"[{marker_name}] {geometry.reason}",
+                source,
+                "\n".join(raw_fields),
+            )
+        )
+        return geometry
+
+    (
+        height,
+        width,
+        reserved,
+        margin_left,
+        margin_bottom,
+        display_unit,
+        margin_top,
+        margin_right,
+        flags,
+    ) = (int(value) for value in parsed)
+    geometry.height_twips = height
+    geometry.width_twips = width
+    geometry.reserved = reserved
+    geometry.margin_left_twips = margin_left
+    geometry.margin_bottom_twips = margin_bottom
+    geometry.display_unit = display_unit
+    geometry.margin_top_twips = margin_top
+    geometry.margin_right_twips = margin_right
+    geometry.flags = flags
+
+    values_are_bounded = all(-(2**31) <= value <= 2**31 - 1 for value in parsed)
+    dimensions_are_bounded = (
+        _MIN_PAGE_TWIPS <= width <= _MAX_PAGE_TWIPS
+        and _MIN_PAGE_TWIPS <= height <= _MAX_PAGE_TWIPS
+    )
+    margins_are_bounded = (
+        0 <= margin_left < width
+        and 0 <= margin_right < width
+        and 0 <= margin_top < height
+        and 0 <= margin_bottom < height
+        and width - margin_left - margin_right >= _MIN_CONTENT_TWIPS
+        and height - margin_top - margin_bottom >= _MIN_CONTENT_TWIPS
+    )
+    if not (values_are_bounded and dimensions_are_bounded and margins_are_bounded):
+        geometry.reason = "page dimensions or margins are outside safe supported bounds"
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "invalid-page-geometry",
+                f"[{marker_name}] {geometry.reason}",
+                source,
+                "\n".join(raw_fields),
+            )
+        )
+        return geometry
+
+    geometry.page_rect = TwipRect(0, 0, width, height, True)
+    geometry.content_rect = TwipRect(
+        margin_left,
+        margin_top,
+        width - margin_right,
+        height - margin_bottom,
+        True,
+    )
+    geometry.valid = (
+        not duplicate
+        and geometry.page_rect.is_usable
+        and geometry.content_rect.is_usable
+    )
+    if not geometry.valid:
+        geometry.reason = (
+            "duplicate page variants make source geometry ambiguous"
+            if duplicate
+            else "derived page rectangle failed bounded validation"
+        )
+        return geometry
+    if display_unit not in {1, 2, 3, 4}:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.INFO,
+                "unknown-page-display-unit",
+                f"[{marker_name}] display-unit code {display_unit} remains uninterpreted",
+                source,
+            )
+        )
+    return geometry
+
+
 def _parse_style(section: SectionRecord, decoded: DecodedSource) -> StyleDefinition | None:
     lines = section.raw_lines
     if not lines:
@@ -627,12 +905,21 @@ def _parse_structures(
                 )
             )
         elif name == "lay":
+            document.page_layouts.append(
+                _parse_page_layout(document, section, layout_index)
+            )
             result.supplemental_blocks.extend(
                 _parse_layout_headers_footers(
                     document, section, layout_index, limits, layout_budget
                 )
             )
             layout_index += 1
+        elif name == "pg":
+            document.page_hints.append(
+                OpaquePageHints(
+                    raw="\n".join(section.raw_lines), source=section.source
+                )
+            )
         elif name == "frm":
             frame_blocks: list[Block] = []
             has_table_marker = any(
@@ -649,6 +936,7 @@ def _parse_structures(
                 frame_blocks.append(table)
             frame_paragraphs = _parse_frame_text(document, section)
             frame_blocks.extend(frame_paragraphs)
+            is_image = False
             if table is None and has_table_marker:
                 frame_blocks.append(
                     UnsupportedObject(
@@ -684,24 +972,40 @@ def _parse_structures(
                         )
                     )
             frame_kind = "table" if has_table_marker else "frame"
-            if _frame_flags(section) & 0x80000:
+            content_kind = (
+                "table"
+                if has_table_marker
+                else "text"
+                if frame_paragraphs
+                else "image"
+                if is_image
+                else "drawing"
+            )
+            frame = _build_frame(
+                document,
+                section,
+                frame_blocks,
+                content_kind=content_kind,
+            )
+            if frame.placement == "anchored":
+                frame.anchor_index = len(result.anchored_frames)
                 result.anchored_frames.append(
-                    _FrameContent(frame_kind, frame_blocks, section.source)
+                    _FrameContent(frame_kind, frame, section.source)
                 )
             else:
                 result.supplemental_blocks.append(
                     UnsupportedObject(
                         "unanchored frame",
-                        "visual placement could not be reconstructed; recovered content follows",
+                        "unsupported or invalid visual placement; recovered frame follows",
                         section.source,
                     )
                 )
-                result.supplemental_blocks.extend(frame_blocks)
+                result.supplemental_blocks.append(frame)
                 document.diagnostics.append(
                     Diagnostic(
                         Severity.INFO,
                         "unanchored-frame-reflowed",
-                        "unanchored frame content was placed after the main body",
+                        "unanchored frame was retained after the main body",
                         section.source,
                     )
                 )
@@ -733,31 +1037,136 @@ def _parse_layout_headers_footers(
         "frght": (Footer, "odd"),
         "flft": (Footer, "even"),
     }
-    depth_one_sections = [
-        index
-        for index, line in enumerate(section.raw_lines)
-        if re.fullmatch(r"\t\[[A-Za-z][A-Za-z0-9_-]{0,63}\]\s*", line)
-    ]
-    markers: list[tuple[int, str]] = []
-    malformed_markers: list[tuple[int, str]] = []
+    # Scan once.  Exact marker syntax is significant: bracket-looking body
+    # text such as ``[[hrght]]`` is not a layout branch, and marker-looking
+    # lines inside a terminated [txt] stream remain content.  This also avoids
+    # the former per-branch full-section rescans.
+    structural_sections: list[tuple[int, int, str]] = []
+    branch_events: list[tuple[int, str, bool]] = []
+    in_text_stream = False
+    text_stream_indent = 0
+    text_scanner = MultilineContainerScanner()
+    text_container_depth = 0
     for index, line in enumerate(section.raw_lines):
-        name = line.strip().lower()
-        if name.startswith("[") and name.endswith("]"):
-            name = name[1:-1]
-        indent = len(line) - len(line.lstrip("\t"))
-        if name in branch_types and indent == 1:
-            markers.append((index, name))
-        elif name in branch_types:
-            malformed_markers.append((index, name))
-            document.diagnostics.append(
-                Diagnostic(
-                    Severity.WARNING,
-                    "malformed-layout-branch-indentation",
-                    f"[{name}] outside the evidenced layout depth was visibly reflowed "
-                    "without page-placement semantics",
-                    section.raw_spans[index],
-                )
+        if in_text_stream:
+            structural = _LAYOUT_TABBED_MARKER.fullmatch(line)
+            structural_boundary = (
+                structural is not None
+                and len(structural.group("indent")) <= text_stream_indent
             )
+            if not structural_boundary:
+                scan = text_scanner.scan_line(line)
+                if scan.standalone_terminator:
+                    if text_container_depth:
+                        text_container_depth -= 1
+                    else:
+                        in_text_stream = False
+                else:
+                    text_container_depth += int(scan.opener is not None)
+                continue
+            # A same/shallower exact subsection marker bounds a corrupt [txt]
+            # stream even when its close is missing.  Content normally sits
+            # one indentation level deeper, so marker-looking body text at
+            # that level remains readable text.
+            in_text_stream = False
+
+        marker_match = _LAYOUT_TABBED_MARKER.fullmatch(line)
+        if marker_match is not None:
+            indent = len(marker_match.group("indent"))
+            name = marker_match.group("name").lower()
+            structural_sections.append((index, indent, name))
+            if name in branch_types:
+                branch_events.append((index, name, indent == 1))
+            if name == "txt" and indent in {1, 2}:
+                in_text_stream = True
+                text_stream_indent = indent
+                text_scanner = MultilineContainerScanner()
+                text_container_depth = 0
+            continue
+
+        branch_match = _LAYOUT_BRANCH_MARKER.fullmatch(line)
+        if branch_match is not None:
+            name = branch_match.group("name").lower()
+            branch_events.append((index, name, False))
+
+    markers = [(index, name) for index, name, valid in branch_events if valid]
+    malformed_markers = [
+        (index, name) for index, name, valid in branch_events if not valid
+    ]
+    for index, name in malformed_markers:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "malformed-layout-branch-indentation",
+                f"[{name}] outside the evidenced layout depth was visibly reflowed "
+                "without page-placement semantics",
+                section.raw_spans[index],
+            )
+        )
+
+    sibling_continuations = {"lyfrm", "frmlay", "txt"}
+    branch_positions = [index for index, _name, _valid in branch_events]
+    depth_one_positions = [
+        index for index, indent, _name in structural_sections if indent == 1
+    ]
+    text_positions = [
+        index
+        for index, indent, name in structural_sections
+        if name == "txt" and indent in {1, 2}
+    ]
+    depth_one_noncontinuations = [
+        index
+        for index, indent, name in structural_sections
+        if indent == 1 and name not in sibling_continuations
+    ]
+
+    def merged_positions(first: list[int], second: list[int]) -> list[int]:
+        """Merge two source-ordered position lists without sorting or duplicates."""
+
+        result: list[int] = []
+        first_index = 0
+        second_index = 0
+        while first_index < len(first) or second_index < len(second):
+            left = first[first_index] if first_index < len(first) else None
+            right = second[second_index] if second_index < len(second) else None
+            if right is None or (left is not None and left <= right):
+                value = left
+                first_index += 1
+                if right == value:
+                    second_index += 1
+            else:
+                value = right
+                second_index += 1
+            if value is not None and (not result or result[-1] != value):
+                result.append(value)
+        return result
+
+    def branch_ends(
+        starts: list[tuple[int, str]], boundaries: list[int]
+    ) -> dict[int, int]:
+        result: dict[int, int] = {}
+        boundary_index = 0
+        for start, _name in starts:
+            while (
+                boundary_index < len(boundaries)
+                and boundaries[boundary_index] <= start
+            ):
+                boundary_index += 1
+            result[start] = (
+                boundaries[boundary_index]
+                if boundary_index < len(boundaries)
+                else len(section.raw_lines)
+            )
+        return result
+
+    valid_ends = branch_ends(
+        markers,
+        merged_positions(branch_positions, depth_one_noncontinuations),
+    )
+    malformed_ends = branch_ends(
+        malformed_markers,
+        merged_positions(branch_positions, depth_one_positions),
+    )
 
     # Every branch creates both a typed block and one raw-preservation record.
     # Charge them before materializing either collection.
@@ -767,23 +1176,18 @@ def _parse_layout_headers_footers(
     )
     blocks: list[Block] = []
     for start, branch_name in markers:
-        end = next(
-            (index for index in depth_one_sections if index > start),
-            len(section.raw_lines),
-        )
+        # Both public shapes occur: layout records can nest [lyfrm]/[frmlay]/
+        # [txt] below the H/F marker, or place those three records as siblings.
+        # Only those explicitly evidenced sibling records belong to the branch.
+        end = valid_ends[start]
         raw_lines = section.raw_lines[start:end]
         raw = "\n".join(raw_lines)
         source = section.raw_spans[start]
         content: list[Block] = []
         metadata_lines: list[str] = []
         terminated = True
-        txt_markers = [
-            index
-            for index in range(start + 1, end)
-            if section.raw_lines[index].strip().lower() == "[txt]"
-            and len(section.raw_lines[index])
-            - len(section.raw_lines[index].lstrip("\t"))
-            == 2
+        txt_markers = text_positions[
+            bisect_right(text_positions, start) : bisect_left(text_positions, end)
         ]
         if not txt_markers:
             terminated = False
@@ -853,6 +1257,24 @@ def _parse_layout_headers_footers(
                     )
 
         container_type, placement = branch_types[branch_name]
+        branch_header_fields, branch_header_truncated = _nested_record_fields(
+            raw_lines, "lyfrm"
+        )
+        branch_layout_fields, branch_layout_truncated = _nested_record_fields(
+            raw_lines, "frmlay"
+        )
+        branch_frame = _build_frame_from_fields(
+            document,
+            content,
+            content_kind="text",
+            region="header" if container_type is Header else "footer",
+            raw_header_fields=branch_header_fields,
+            frame_layout_fields=branch_layout_fields,
+            header_fields_truncated=branch_header_truncated,
+            frame_layout_fields_truncated=branch_layout_truncated,
+            raw=raw,
+            source=source,
+        )
         block = container_type(
             blocks=content,
             placement=placement,  # type: ignore[arg-type]
@@ -862,6 +1284,7 @@ def _parse_layout_headers_footers(
             raw=raw,
             terminated=terminated,
             source=source,
+            frame=branch_frame,
         )
         blocks.append(block)
         document.unknown_records.append(
@@ -875,17 +1298,7 @@ def _parse_layout_headers_footers(
         )
 
     for start, branch_name in malformed_markers:
-        end = next(
-            (
-                index
-                for index in sorted(
-                    depth_one_sections
-                    + [marker_start for marker_start, _ in malformed_markers]
-                )
-                if index > start
-            ),
-            len(section.raw_lines),
-        )
+        end = malformed_ends[start]
         raw_lines = section.raw_lines[start:end]
         source = section.raw_spans[start]
         blocks.append(
@@ -922,22 +1335,176 @@ def _parse_layout_headers_footers(
     return blocks
 
 
-def _frame_flags(section: SectionRecord) -> int:
-    """Return the second numeric frame-header field (the frame flag word)."""
-
-    values: list[int] = []
-    for line in section.raw_lines:
+def _prefix_fields(lines: list[str]) -> tuple[tuple[str, ...], bool]:
+    values: list[str] = []
+    for line in lines:
         stripped = line.strip()
-        if stripped.startswith("["):
+        if stripped.startswith("[") or stripped == ">":
             break
-        if not stripped:
-            continue
-        value = _safe_int(stripped)
-        if value is not None:
-            values.append(value)
-            if len(values) == 2:
-                return values[1]
-    return 0
+        if stripped:
+            if len(values) == _MAX_TYPED_GEOMETRY_FIELDS:
+                return tuple(values), True
+            values.append(stripped)
+    return tuple(values), False
+
+
+def _nested_record_fields(
+    lines: list[str], record_name: str
+) -> tuple[tuple[str, ...], bool]:
+    marker = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip().lower() == f"[{record_name.lower()}]"
+        ),
+        None,
+    )
+    if marker is None:
+        return (), False
+    return _prefix_fields(lines[marker + 1 :])
+
+
+def _build_frame(
+    document: Document,
+    section: SectionRecord,
+    blocks: list[Block],
+    *,
+    content_kind: str,
+) -> Frame:
+    header_fields, header_truncated = _prefix_fields(section.raw_lines)
+    layout_fields, layout_truncated = _nested_record_fields(
+        section.raw_lines, "frmlay"
+    )
+    return _build_frame_from_fields(
+        document,
+        blocks,
+        content_kind=content_kind,
+        region="body",
+        raw_header_fields=header_fields,
+        frame_layout_fields=layout_fields,
+        header_fields_truncated=header_truncated,
+        frame_layout_fields_truncated=layout_truncated,
+        raw="\n".join(section.raw_lines),
+        source=section.source,
+    )
+
+
+def _build_frame_from_fields(
+    document: Document,
+    blocks: list[Block],
+    *,
+    content_kind: str,
+    region: str,
+    raw_header_fields: tuple[str, ...],
+    frame_layout_fields: tuple[str, ...],
+    header_fields_truncated: bool = False,
+    frame_layout_fields_truncated: bool = False,
+    raw: str,
+    source: SourceSpan,
+) -> Frame:
+    if header_fields_truncated or frame_layout_fields_truncated:
+        labels = []
+        if header_fields_truncated:
+            labels.append("frame header")
+        if frame_layout_fields_truncated:
+            labels.append("[frmlay]")
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "frame-field-summary-truncated",
+                f"typed {' and '.join(labels)} summary was capped at "
+                f"{_MAX_TYPED_GEOMETRY_FIELDS} fields; the complete frame remains raw",
+                source,
+            )
+        )
+    parsed = [_bounded_small_signed(value) for value in raw_header_fields[:6]]
+    page_number = parsed[0] if parsed and parsed[0] is not None else None
+    flags = parsed[1] if len(parsed) > 1 and parsed[1] is not None else None
+    if flags is not None and not 0 <= flags <= 0x7FFFFFFF:
+        flags = None
+
+    bounds: TwipRect | None = None
+    if len(raw_header_fields) >= 6 and len(parsed) == 6 and all(
+        value is not None for value in parsed
+    ):
+        left, top, right, bottom = (int(value) for value in parsed[2:6])
+        coordinates_bounded = all(
+            _MIN_FRAME_COORD <= value <= _MAX_FRAME_COORD
+            for value in (left, top, right, bottom)
+        )
+        span_bounded = (
+            0 < right - left <= _MAX_PAGE_TWIPS
+            and 0 < bottom - top <= _MAX_PAGE_TWIPS
+        )
+        valid = coordinates_bounded and span_bounded
+        reason = "" if valid else "frame edges or extents are outside safe supported bounds"
+        bounds = TwipRect(left, top, right, bottom, valid, reason)
+        if not valid:
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "invalid-frame-geometry",
+                    reason,
+                    source,
+                    "\n".join(raw_header_fields[:6]),
+                )
+            )
+    else:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "incomplete-frame-geometry",
+                "[frm]/[lyfrm] requires six bounded header fields for positioning",
+                source,
+                "\n".join(raw_header_fields),
+            )
+        )
+
+    if flags is not None and flags & 2048 and flags & 4096:
+        parsed_region = "unknown"
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "conflicting-frame-region",
+                "frame flag word selects both header and footer; enclosing branch "
+                "wins when available",
+                source,
+            )
+        )
+    elif flags is not None and flags & 2048:
+        parsed_region = "header"
+    elif flags is not None and flags & 4096:
+        parsed_region = "footer"
+    else:
+        parsed_region = region
+    if region in {"header", "footer"}:
+        parsed_region = region
+
+    placement = (
+        "anchored"
+        if flags is not None and flags & 524288
+        else "repeating"
+        if flags is not None and flags & 256
+        else "fixed-page"
+        if page_number is not None
+        else "unknown"
+    )
+    return Frame(
+        blocks=blocks,
+        content_kind=content_kind,  # type: ignore[arg-type]
+        placement=placement,
+        region=parsed_region,  # type: ignore[arg-type]
+        page_number=page_number,
+        flags=flags,
+        unknown_flag_bits=(flags & ~_FRAME_KNOWN_FLAGS) if flags is not None else 0,
+        bounds=bounds,
+        opaque=bool(flags & 64) if flags is not None else None,
+        wrap_around=bool(flags & 128) if flags is not None else None,
+        raw_header_fields=raw_header_fields,
+        frame_layout_fields=frame_layout_fields,
+        raw=raw,
+        source=source,
+    )
 
 
 def _parse_table(
@@ -1880,12 +2447,12 @@ def _resolve_frame_anchor(
             UnsupportedObject(
                 "frame anchor mismatch",
                 f"body anchor {anchor_kind}{anchor_index} targets a {frame.kind}; "
-                "recovered content follows",
+                "recovered frame follows",
                 source,
             ),
-            *frame.blocks,
+            frame.frame,
         ]
-    return list(frame.blocks)
+    return [frame.frame]
 
 
 def _initial_inline_state(document: Document) -> _InlineState:

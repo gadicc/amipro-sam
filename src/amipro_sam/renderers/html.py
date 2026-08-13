@@ -17,13 +17,20 @@ from ..model import (
     Document,
     Footer,
     Footnote,
+    Frame,
     Header,
     Image,
     PageBreak,
+    PageLayout,
+    PageVariantGeometry,
     Paragraph,
     SdwDrawing,
     StyleDefinition,
     Table,
+    TableCell,
+    TableRow,
+    TextRun,
+    TwipRect,
     UnsupportedObject,
     WmfGraphic,
 )
@@ -58,6 +65,14 @@ _JPEG_SOF_MARKERS = {
     0xCF,
 }
 _BMP_HEADER_SIZES = {40, 52, 56, 108, 124}
+_MAX_RENDER_DEPTH = 32
+_MAX_RENDER_BLOCKS = 100_000
+_MAX_TABLE_ROWS = 390
+_MAX_TABLE_CELLS = 100_000
+_MAX_PAGE_TWIPS = 22 * 1_440
+_MIN_PAGE_TWIPS = 1_440
+_MIN_CONTENT_TWIPS = 720
+_DEFAULT_PAGE_BOX = (8.5, 11.0, 1.0, 1.0, 1.0, 1.0)
 _CSS = """\
 :root{color-scheme:light;--paper:#fff;--ink:#202124;--muted:#5f6368;--line:#c9cdd2;--note:#fff8dc}
 *{box-sizing:border-box}
@@ -82,6 +97,9 @@ font-style:italic;padding:.55rem .7rem;margin:.75rem 0;overflow-wrap:anywhere;
 white-space:pre-wrap}
 .annotation,.footnote,.document-header,.document-footer{border-left:.2rem solid var(--line);
 padding:.35rem .75rem;margin:.75rem 0;background:#fafafa}
+.print-header,.print-footer{display:none}
+.document-frame{border:1px solid var(--line);background:#fff;padding:.45rem .7rem;
+margin:.75rem 0;max-width:100%;overflow-wrap:anywhere}
 .container-label{font-weight:600;color:var(--muted);margin:.15rem 0 .5rem}
 figure{margin:1rem 0}figure img{display:block;max-width:100%;height:auto}
 figcaption{color:var(--muted);font-size:.9rem;margin-top:.35rem}
@@ -90,6 +108,9 @@ border:1px solid #e4d38a;padding:1rem 1.25rem}
 .conversion-warnings h2{font-size:1.1rem;margin-top:0}
 .conversion-warnings code{overflow-wrap:anywhere}
 @media print{html{background:#fff}body{padding:0}main{box-shadow:none;max-width:none}
+thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}
+.print-header,.print-footer{display:block;position:fixed;left:0;right:0;font-size:8pt}
+.print-header{top:0}.print-footer{bottom:0}
 .conversion-warnings{break-before:page}.page-break{visibility:hidden}}
 """
 
@@ -109,7 +130,10 @@ def render(
 
     title = _document_title(document)
     language = _language(document)
-    body = _render_blocks(document)
+    promoted_furniture = _promoted_layout_furniture(document)
+    body = _render_blocks(document, promoted_furniture=promoted_furniture)
+    furniture = _layout_furniture(document, promoted_furniture)
+    page_css = _page_css(document)
     warnings = _warnings(document) if include_warnings and document.diagnostics else ""
     result = (
         "<!doctype html>\n"
@@ -122,10 +146,10 @@ def render(
         '<meta name="referrer" content="no-referrer">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_text(title)}</title>\n"
-        f"<style>{_CSS}</style>\n"
+        f"<style>{_CSS}{page_css}</style>\n"
         "</head>\n"
         "<body>\n"
-        f"<main>\n{body}</main>\n"
+        f"{furniture}<main>\n{body}</main>\n"
         f"{warnings}"
         "</body>\n"
         "</html>\n"
@@ -133,14 +157,28 @@ def render(
     return result.encode("utf-8", errors="backslashreplace")
 
 
-def _render_blocks(document: Document, blocks: list[Block] | None = None) -> str:
+def _render_blocks(
+    document: Document,
+    blocks: list[Block] | None = None,
+    *,
+    depth: int = 0,
+    active: set[int] | None = None,
+    promoted_furniture: set[int] | None = None,
+) -> str:
+    if depth >= _MAX_RENDER_DEPTH:
+        return '<div class="placeholder">[Nested content omitted at safe depth limit]</div>\n'
     result: list[str] = []
-    blocks = document.blocks if blocks is None else blocks
+    blocks = _safe_blocks(document.blocks if blocks is None else blocks)
+    blocks = [block for block in blocks if id(block) not in promoted_furniture]
+    blocks = _trim_edge_page_breaks(blocks)
+    active = set() if active is None else active
+    promoted_furniture = set() if promoted_furniture is None else promoted_furniture
+    has_content = False
     index = 0
     while index < len(blocks):
         block = blocks[index]
         if isinstance(block, Paragraph):
-            if block.page_break_before:
+            if block.page_break_before and has_content:
                 result.append(_page_break())
             if block.list_kind is not None:
                 kind = block.list_kind
@@ -163,6 +201,7 @@ def _render_blocks(document: Document, blocks: list[Block] | None = None) -> str
                     items.append(candidate)
                     index += 1
                 result.append(_list(document, kind, level, items))
+                has_content = True
                 continue
             result.append(_paragraph(document, block))
         elif isinstance(block, PageBreak):
@@ -175,33 +214,223 @@ def _render_blocks(document: Document, blocks: list[Block] | None = None) -> str
             result.append(_wmf_graphic(block))
         elif isinstance(block, SdwDrawing):
             result.append(_sdw_graphic(block))
+        elif isinstance(block, Frame):
+            result.append(
+                _frame(
+                    document,
+                    block,
+                    depth=depth,
+                    active=active,
+                    promoted_furniture=promoted_furniture,
+                )
+            )
         elif isinstance(block, UnsupportedObject):
             label = f"Unsupported {block.kind}: {block.description}"
             result.append(f'<div class="placeholder">[{_text(label)}]</div>\n')
         elif isinstance(block, Annotation):
+            nested = _nested_html(
+                document,
+                block,
+                block.blocks,
+                depth,
+                active,
+                promoted_furniture,
+            )
             result.append(
                 '<aside class="annotation" role="note">\n'
                 '<p class="container-label">Annotation</p>\n'
-                f"{_render_blocks(document, block.blocks)}</aside>\n"
+                f"{nested}</aside>\n"
             )
         elif isinstance(block, Footnote):
             label = f"Footnote {block.number}" if block.number is not None else "Footnote"
+            nested = _nested_html(
+                document,
+                block,
+                block.blocks,
+                depth,
+                active,
+                promoted_furniture,
+            )
             result.append(
                 '<aside class="footnote" role="doc-footnote">\n'
                 f'<p class="container-label">{_text(label)}</p>\n'
-                f"{_render_blocks(document, block.blocks)}</aside>\n"
+                f"{nested}</aside>\n"
             )
         elif isinstance(block, Header | Footer):
+            if id(block) in promoted_furniture:
+                index += 1
+                continue
             tag = "header" if isinstance(block, Header) else "footer"
             css_class = "document-header" if tag == "header" else "document-footer"
-            label = f"{tag.title()} - {_placement_label(block.placement)}"
-            result.append(
-                f'<{tag} class="{css_class}" data-placement="{_attribute(block.placement)}">\n'
-                f'<p class="container-label">{_text(label)}</p>\n'
-                f"{_render_blocks(document, block.blocks)}</{tag}>\n"
+            placement = _choice(block.placement, {"all", "odd", "even", "odd-even"}, "unknown")
+            label = f"{tag.title()} - {_placement_label(placement)}"
+            nested = _nested_html(
+                document,
+                block,
+                block.blocks,
+                depth,
+                active,
+                promoted_furniture,
             )
+            result.append(
+                f'<{tag} class="{css_class}" data-placement="{_attribute(placement)}">\n'
+                f'<p class="container-label">{_text(label)}</p>\n'
+                f"{nested}</{tag}>\n"
+            )
+        if not isinstance(block, PageBreak):
+            has_content = True
         index += 1
     return "".join(result)
+
+
+def _frame(
+    document: Document,
+    frame: Frame,
+    *,
+    depth: int,
+    active: set[int],
+    promoted_furniture: set[int],
+) -> str:
+    kind = _choice(frame.content_kind, {"text", "table", "image", "drawing"}, "unknown")
+    placement = _choice(
+        frame.placement, {"anchored", "fixed-page", "repeating"}, "unknown"
+    )
+    region = _choice(frame.region, {"body", "header", "footer"}, "unknown")
+    label = f"Frame - {placement}; {kind}; {region} region"
+    page_number = frame.page_number
+    if type(page_number) is int and 1 <= page_number <= 1_000_000:
+        label += f"; source page {page_number}"
+    style = ""
+    width = _frame_width_inches(frame)
+    if width is not None:
+        style = f' style="width:{width:g}in"'
+    nested = _nested_html(
+        document,
+        frame,
+        frame.blocks,
+        depth,
+        active,
+        promoted_furniture,
+    )
+    return (
+        f'<section class="document-frame" data-placement="{_attribute(placement)}"'
+        f' data-content-kind="{_attribute(kind)}"{style}>\n'
+        f'<p class="container-label">{_text(label)}</p>\n'
+        f"{nested}</section>\n"
+    )
+
+
+def _nested_html(
+    document: Document,
+    owner: object,
+    blocks: object,
+    depth: int,
+    active: set[int],
+    promoted_furniture: set[int],
+) -> str:
+    identity = id(owner)
+    if identity in active:
+        return '<div class="placeholder">[Repeated or recursive content omitted]</div>\n'
+    active.add(identity)
+    return _render_blocks(
+        document,
+        blocks,  # type: ignore[arg-type]
+        depth=depth + 1,
+        active=active,
+        promoted_furniture=promoted_furniture,
+    )
+
+
+def _safe_blocks(value: object) -> list[Block]:
+    if not isinstance(value, list | tuple):
+        return []
+    return list(value[:_MAX_RENDER_BLOCKS])
+
+
+def _trim_edge_page_breaks(blocks: list[Block]) -> list[Block]:
+    start = 0
+    end = len(blocks)
+    while start < end and isinstance(blocks[start], PageBreak):
+        start += 1
+    while end > start and isinstance(blocks[end - 1], PageBreak):
+        end -= 1
+    return blocks[start:end]
+
+
+def _choice(value: object, choices: set[str], default: str) -> str:
+    return value if isinstance(value, str) and value in choices else default
+
+
+def _layout_furniture(document: Document, promoted: set[int]) -> str:
+    parts: list[str] = []
+    for block in _safe_blocks(document.blocks):
+        if not isinstance(block, Header | Footer) or id(block) not in promoted:
+            continue
+        tag = "header" if isinstance(block, Header) else "footer"
+        placement = _choice(block.placement, {"all", "odd", "even", "odd-even"}, "unknown")
+        parts.append(
+            f'<{tag} class="print-{tag}" data-placement="{_attribute(placement)}">\n'
+            f"{_render_blocks(document, block.blocks, promoted_furniture=promoted)}</{tag}>\n"
+        )
+    return "".join(parts)
+
+
+def _promoted_layout_furniture(document: Document) -> set[int]:
+    """Keep page furniture inline in HTML.
+
+    Browser fixed-position boxes do not reserve space in the print content
+    area and cannot reliably represent Ami Pro's odd/even variants.  The page
+    geometry still becomes bounded ``@page`` CSS, while every header/footer
+    remains visible once in source order without overlap or duplication.
+    """
+
+    return set()
+
+
+def _safe_html_furniture(
+    block: Header | Footer,
+    page_box: tuple[float, float, float, float, float, float],
+    margin: float,
+) -> bool:
+    blocks = block.blocks
+    if not isinstance(blocks, list | tuple) or not 1 <= len(blocks) <= 8:
+        return False
+    if not all(isinstance(item, Paragraph) for item in blocks):
+        return False
+    width = page_box[0] - page_box[3] - page_box[5]
+    characters_per_line = max(20, int(width * 10))
+    line_count = 0
+    total_characters = 0
+    for paragraph in blocks:
+        try:
+            value = paragraph.text
+        except (AttributeError, TypeError):
+            return False
+        if not isinstance(value, str) or len(value) > 4_096:
+            return False
+        total_characters += len(value)
+        if total_characters > 8_192:
+            return False
+        lines = value.splitlines() or [""]
+        line_count += sum(max(1, math.ceil(len(line) / characters_per_line)) for line in lines)
+    # Browser fixed-position line boxes and the normal body region need real
+    # clearance, not merely the nominal font height.  Half an inch is the
+    # smallest margin for which a one-line repeated item is promoted.
+    required_margin = max(0.5, 0.125 + line_count * 0.25)
+    return margin >= required_margin
+
+
+def _frame_width_inches(frame: Frame) -> float | None:
+    bounds = frame.bounds
+    if not isinstance(bounds, TwipRect) or bounds.valid is not True or not bounds.is_usable:
+        return None
+    width = bounds.width_twips
+    # Narrow absolute source frames are reflowed at the document width.  Using
+    # their literal width can turn a few kilobytes of text into hundreds of
+    # print pages in a browser.
+    if type(width) is not int or not 1_800 <= width <= _MAX_PAGE_TWIPS:
+        return None
+    return width / 1440.0
 
 
 def _placement_label(value: str) -> str:
@@ -240,9 +469,22 @@ def _list(
 
 def _paragraph_content(document: Document, paragraph: Paragraph) -> str:
     base = _named_character_style(document, paragraph.style_name)
-    if not paragraph.runs:
-        return ""
-    return "".join(_run(run.text, base, run.style) for run in paragraph.runs)
+    runs = paragraph.runs
+    if not isinstance(runs, list | tuple):
+        return _text(paragraph.text)
+    parts: list[str] = []
+    for run in runs[:_MAX_RENDER_BLOCKS]:
+        if not isinstance(run, TextRun) or not isinstance(run.style, CharacterStyle):
+            parts.append(_text("[Invalid text run omitted]"))
+            continue
+        value = run.text
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if not isinstance(value, str):
+            parts.append(_text("[Invalid text run omitted]"))
+            continue
+        parts.append(_run(value, base, run.style))
+    return "".join(parts)
 
 
 def _run(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
@@ -324,30 +566,76 @@ def _paragraph_attributes(
 
 
 def _table(document: Document, table: Table) -> str:
-    if not table.rows:
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        return '<div class="placeholder">[Invalid table rows omitted]</div>\n'
+    seen_rows: set[int] = set()
+    safe_rows: list[TableRow] = []
+    omitted = len(rows) > _MAX_TABLE_ROWS
+    for row in rows[:_MAX_TABLE_ROWS]:
+        if not isinstance(row, TableRow) or id(row) in seen_rows:
+            omitted = True
+            continue
+        seen_rows.add(id(row))
+        safe_rows.append(row)
+    if not safe_rows:
         return '<div class="placeholder">[Empty table]</div>\n'
+    if any(
+        isinstance(row.cells, list | tuple) and len(row.cells) > 256
+        for row in safe_rows
+    ):
+        return (
+            '<div class="placeholder">'
+            '[Table cells omitted at safe 256-column limit]'
+            '</div>\n'
+        )
     result = ["<table>\n"]
     header_rows = 0
-    for row in table.rows:
+    for row in safe_rows:
         if not row.is_header:
             break
         header_rows += 1
+    seen_cells: set[int] = set()
     if header_rows:
         result.append("<thead>\n")
-        for row in table.rows[:header_rows]:
-            result.append(_table_row(document, row.cells, header=True))
+        for row in safe_rows[:header_rows]:
+            result.append(
+                _table_row(document, row.cells, header=True, seen_cells=seen_cells)
+            )
         result.append("</thead>\n")
     result.append("<tbody>\n")
-    for row in table.rows[header_rows:]:
-        result.append(_table_row(document, row.cells, header=False))
+    for row in safe_rows[header_rows:]:
+        result.append(
+            _table_row(document, row.cells, header=False, seen_cells=seen_cells)
+        )
     result.append("</tbody>\n</table>\n")
+    if omitted:
+        result.append(
+            '<div class="placeholder">[Table content omitted at safe rendering limit]</div>\n'
+        )
     return "".join(result)
 
 
-def _table_row(document: Document, cells: list[object], *, header: bool) -> str:
+def _table_row(
+    document: Document,
+    cells: list[object],
+    *,
+    header: bool,
+    seen_cells: set[int],
+) -> str:
     tag = "th" if header else "td"
     result = ["<tr>"]
-    for cell in cells:
+    if not isinstance(cells, list | tuple):
+        return '<tr><td><div class="placeholder">[Invalid table row omitted]</div></td></tr>\n'
+    for cell in cells[: min(_MAX_TABLE_CELLS, 256)]:
+        if not isinstance(cell, TableCell):
+            continue
+        if id(cell) in seen_cells:
+            result.append(
+                f'<{tag}><div class="placeholder">[Repeated table cell omitted]</div></{tag}>'
+            )
+            continue
+        seen_cells.add(id(cell))
         column_span = max(1, min(_integer(getattr(cell, "column_span", 1), 1), 256))
         row_span = max(1, min(_integer(getattr(cell, "row_span", 1), 1), 65534))
         attributes = ""
@@ -356,7 +644,25 @@ def _table_row(document: Document, cells: list[object], *, header: bool) -> str:
         if row_span > 1:
             attributes += f' rowspan="{row_span}"'
         blocks = getattr(cell, "blocks", [])
-        content = "".join(_paragraph(document, item) for item in blocks)
+        safe_blocks = _safe_blocks(blocks)[:4_096]
+        paragraphs: list[Paragraph] = []
+        seen_paragraphs: set[int] = set()
+        for item in safe_blocks:
+            if not isinstance(item, Paragraph) or id(item) in seen_paragraphs:
+                continue
+            seen_paragraphs.add(id(item))
+            paragraphs.append(item)
+        invalid_content = (
+            not isinstance(blocks, list | tuple)
+            or len(paragraphs) != len(safe_blocks)
+            or (isinstance(blocks, list | tuple) and len(blocks) > 4_096)
+        )
+        content = (
+            '<div class="placeholder">[Invalid table cell content omitted]</div>'
+            if invalid_content
+            else ""
+        )
+        content += "".join(_paragraph(document, item) for item in paragraphs)
         result.append(f"<{tag}{attributes}>{content}</{tag}>")
     result.append("</tr>\n")
     return "".join(result)
@@ -515,6 +821,88 @@ def _diagnostic_severity(diagnostic: Diagnostic) -> str:
 
 def _page_break() -> str:
     return '<hr class="page-break" aria-label="Page break">\n'
+
+
+def _page_css(document: Document) -> str:
+    layout, page_box, odd, even = _page_layout_boxes(document)
+    if layout is not None and layout.non_alternating is True:
+        even = None
+    width, height, top, right, bottom, left = page_box or _DEFAULT_PAGE_BOX
+    result = (
+        f"\n@page{{size:{width:g}in {height:g}in;"
+        f"margin:{top:g}in {right:g}in {bottom:g}in {left:g}in}}\n"
+    )
+    for selector, candidate in (("right", odd), ("left", even)):
+        if candidate is None or candidate[:2] != (width, height):
+            continue
+        result += (
+            f"@page:{selector}{{margin:{candidate[2]:g}in {candidate[3]:g}in "
+            f"{candidate[4]:g}in {candidate[5]:g}in}}\n"
+        )
+    return (
+        result
+        + f"main,.conversion-warnings{{max-width:{width:g}in;"
+        f"padding:{top:g}in {right:g}in {bottom:g}in {left:g}in}}\n"
+        "@media print{main,.conversion-warnings{padding:0}}\n"
+    )
+
+
+def _page_box(document: Document) -> tuple[float, float, float, float, float, float]:
+    _layout, page_box, _odd, _even = _page_layout_boxes(document)
+    return page_box or _DEFAULT_PAGE_BOX
+
+
+def _page_layout_boxes(
+    document: Document,
+) -> tuple[
+    PageLayout | None,
+    tuple[float, float, float, float, float, float] | None,
+    tuple[float, float, float, float, float, float] | None,
+    tuple[float, float, float, float, float, float] | None,
+]:
+    layouts = getattr(document, "page_layouts", None)
+    if not isinstance(layouts, list | tuple):
+        return None, None, None, None
+    for index, layout in enumerate(layouts):
+        if index >= 256:
+            break
+        if not isinstance(layout, PageLayout) or layout.valid is not True:
+            continue
+        odd = _validated_page_box(layout.odd)
+        even = _validated_page_box(layout.even)
+        primary = odd or even
+        if primary is not None:
+            return layout, primary, odd, even
+    return None, None, None, None
+
+
+def _validated_page_box(
+    geometry: object,
+) -> tuple[float, float, float, float, float, float] | None:
+    if not isinstance(geometry, PageVariantGeometry) or geometry.valid is not True:
+        return None
+    values = (
+        geometry.width_twips,
+        geometry.height_twips,
+        geometry.margin_top_twips,
+        geometry.margin_right_twips,
+        geometry.margin_bottom_twips,
+        geometry.margin_left_twips,
+    )
+    if not all(type(value) is int for value in values):
+        return None
+    width, height, top, right, bottom, left = values
+    assert all(isinstance(value, int) for value in values)
+    if not (
+        _MIN_PAGE_TWIPS <= width <= _MAX_PAGE_TWIPS
+        and _MIN_PAGE_TWIPS <= height <= _MAX_PAGE_TWIPS
+        and min(top, right, bottom, left) >= 0
+        and max(top, right, bottom, left) <= _MAX_PAGE_TWIPS
+        and width - left - right >= _MIN_CONTENT_TWIPS
+        and height - top - bottom >= _MIN_CONTENT_TWIPS
+    ):
+        return None
+    return tuple(value / 1440.0 for value in values)  # type: ignore[return-value]
 
 
 def _document_title(document: Document) -> str:

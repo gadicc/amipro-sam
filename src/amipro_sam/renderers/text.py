@@ -6,16 +6,18 @@ import re
 
 from ..model import (
     Annotation,
-    Block,
     Document,
     Footer,
     Footnote,
+    Frame,
     Header,
     Image,
     PageBreak,
     Paragraph,
     SdwDrawing,
     Table,
+    TableCell,
+    TableRow,
     UnsupportedObject,
     WmfGraphic,
 )
@@ -26,6 +28,9 @@ __all__ = ["render"]
 
 
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0e-\x1f\x7f]")
+_MAX_RENDER_DEPTH = 32
+_MAX_RENDER_BLOCKS = 100_000
+_MAX_TABLE_ROWS = 390
 
 def render(document: Document, **_options: object) -> bytes:
     """Return readable UTF-8 text, retaining every block in source order.
@@ -34,16 +39,30 @@ def render(document: Document, **_options: object) -> bytes:
     and objects that cannot be represented are emitted as visible labels.
     """
 
-    rendered = _render_blocks(document.blocks)
+    rendered = _render_blocks(document.blocks, seen=set())
     if not rendered:
         return b""
     return (rendered + "\n").encode("utf-8", errors="backslashreplace")
 
 
-def _render_blocks(blocks: list[Block]) -> str:
+def _render_blocks(
+    blocks: object,
+    *,
+    depth: int = 0,
+    seen: set[int] | None = None,
+) -> str:
+    if depth >= _MAX_RENDER_DEPTH:
+        return "[Nested content omitted at safe depth limit]"
+    if not isinstance(blocks, list | tuple):
+        return "[Invalid nested content omitted]"
+    seen = set() if seen is None else seen
+    identity = id(blocks)
+    if identity in seen:
+        return "[Repeated or recursive content omitted]"
+    seen.add(identity)
     chunks: list[str] = []
     list_counters: dict[int, int] = {}
-    for block in blocks:
+    for block in blocks[:_MAX_RENDER_BLOCKS]:
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 chunks.append("\f")
@@ -69,17 +88,40 @@ def _render_blocks(blocks: list[Block]) -> str:
                 _clean(f"[Unsupported {block.kind}: {block.description}]")
             )
             list_counters.clear()
+        elif isinstance(block, Frame):
+            chunks.append(
+                _marked_container(
+                    _frame_marker(block),
+                    _render_blocks(block.blocks, depth=depth + 1, seen=seen),
+                )
+            )
+            list_counters.clear()
         elif isinstance(block, Annotation):
-            chunks.append(_marked_container("[Annotation]", _render_blocks(block.blocks)))
+            chunks.append(
+                _marked_container(
+                    "[Annotation]",
+                    _render_blocks(block.blocks, depth=depth + 1, seen=seen),
+                )
+            )
             list_counters.clear()
         elif isinstance(block, Footnote):
             marker = f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
-            chunks.append(_marked_container(marker, _render_blocks(block.blocks)))
+            chunks.append(
+                _marked_container(
+                    marker,
+                    _render_blocks(block.blocks, depth=depth + 1, seen=seen),
+                )
+            )
             list_counters.clear()
         elif isinstance(block, Header | Footer):
             kind = "Header" if isinstance(block, Header) else "Footer"
             marker = f"[{kind}: {_placement_label(block.placement)}]"
-            chunks.append(_marked_container(marker, _render_blocks(block.blocks)))
+            chunks.append(
+                _marked_container(
+                    marker,
+                    _render_blocks(block.blocks, depth=depth + 1, seen=seen),
+                )
+            )
             list_counters.clear()
 
     return "\n\n".join(chunks)
@@ -97,6 +139,26 @@ def _placement_label(value: str) -> str:
         "odd-even": "odd and even variants",
         "unknown": "placement unknown",
     }.get(value, "placement unknown")
+
+
+def _frame_marker(frame: Frame) -> str:
+    placement = frame.placement if isinstance(frame.placement, str) and frame.placement in {
+        "anchored",
+        "fixed-page",
+        "repeating",
+    } else "unknown placement"
+    region = (
+        frame.region
+        if isinstance(frame.region, str) and frame.region in {"body", "header", "footer"}
+        else "unknown region"
+    )
+    kind = frame.content_kind if isinstance(frame.content_kind, str) and frame.content_kind in {
+        "text",
+        "table",
+        "image",
+        "drawing",
+    } else "unknown content"
+    return f"[Frame: {placement}; {region}; {kind}; geometry reflowed]"
 
 
 def _paragraph(paragraph: Paragraph, counters: dict[int, int]) -> str:
@@ -125,18 +187,51 @@ def _paragraph(paragraph: Paragraph, counters: dict[int, int]) -> str:
 
 
 def _table(table: Table) -> str:
-    if not table.rows:
+    source_rows = table.rows
+    if not isinstance(source_rows, list | tuple):
+        return "[Invalid table rows omitted]"
+    seen_rows: set[int] = set()
+    safe_rows: list[TableRow] = []
+    omitted = len(source_rows) > _MAX_TABLE_ROWS
+    for row in source_rows[:_MAX_TABLE_ROWS]:
+        if not isinstance(row, TableRow) or id(row) in seen_rows:
+            omitted = True
+            continue
+        seen_rows.add(id(row))
+        safe_rows.append(row)
+    if not safe_rows:
         return "[Empty table]"
     rows: list[str] = []
-    for row in table.rows:
+    seen_cells: set[int] = set()
+    for row in safe_rows:
         cells: list[str] = []
-        for cell in row.cells:
+        source_cells = row.cells if isinstance(row.cells, list | tuple) else []
+        if len(source_cells) > 256:
+            rows.append("[Table cells omitted at safe 256-column limit]")
+            omitted = True
+            continue
+        for cell in source_cells[:256]:
+            if not isinstance(cell, TableCell):
+                omitted = True
+                continue
+            if id(cell) in seen_cells:
+                cells.append("[Repeated table cell omitted]")
+                omitted = True
+                continue
+            seen_cells.add(id(cell))
             # A physical newline would split the TSV row, so retain paragraph
             # boundaries with a readable slash separator instead.
             value = _clean(cell.text).replace("\t", "    ").replace("\n", " / ")
             cells.append(value)
-            cells.extend("" for _ in range(max(1, _integer(cell.column_span, 1)) - 1))
+            cells.extend(
+                ""
+                for _ in range(
+                    max(1, min(_integer(cell.column_span, 1), 256)) - 1
+                )
+            )
         rows.append("\t".join(cells))
+    if omitted:
+        rows.append("[Table content omitted at safe rendering limit]")
     return "\n".join(rows)
 
 

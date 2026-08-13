@@ -37,6 +37,112 @@ class Diagnostic:
 
 
 @dataclass(slots=True)
+class TwipRect:
+    """A source rectangle in Ami Pro's top-left-origin twip coordinates.
+
+    ``valid`` records the parser's bounded-validation result.  Consumers must
+    still use ``is_usable`` before allocating or positioning output because IR
+    instances can also be constructed by callers.
+    """
+
+    left: int = 0
+    top: int = 0
+    right: int = 0
+    bottom: int = 0
+    valid: bool = False
+    reason: str = ""
+
+    @property
+    def is_usable(self) -> bool:
+        values = (self.left, self.top, self.right, self.bottom)
+        return (
+            self.valid is True
+            and all(type(value) is int for value in values)
+            and all(-32768 <= value <= 32767 for value in values)
+            and self.right > self.left
+            and self.bottom > self.top
+            and self.right - self.left <= 31680
+            and self.bottom - self.top <= 31680
+        )
+
+    @property
+    def width_twips(self) -> int | None:
+        return self.right - self.left if self.is_usable else None
+
+    @property
+    def height_twips(self) -> int | None:
+        return self.bottom - self.top if self.is_usable else None
+
+
+@dataclass(slots=True)
+class PageVariantGeometry:
+    """Typed nine-field ``[rght]``/``[lft]`` page geometry.
+
+    The raw strings remain available even when validation fails.  ``page_rect``
+    and ``content_rect`` are derived only from a complete, bounded field set.
+    """
+
+    side: Literal["odd", "even"] = "odd"
+    height_twips: int | None = None
+    width_twips: int | None = None
+    reserved: int | None = None
+    margin_left_twips: int | None = None
+    margin_bottom_twips: int | None = None
+    display_unit: int | None = None
+    margin_top_twips: int | None = None
+    margin_right_twips: int | None = None
+    flags: int | None = None
+    page_rect: TwipRect | None = None
+    content_rect: TwipRect | None = None
+    valid: bool = False
+    reason: str = ""
+    raw_fields: tuple[str, ...] = ()
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class PageLayout:
+    """One source-order ``[lay]`` definition and its page variants."""
+
+    index: int = 0
+    name: str = ""
+    flags: int | None = None
+    paper_kind: Literal[
+        "letter", "legal", "a3", "a4", "a5", "b5", "custom", "unknown"
+    ] = "unknown"
+    orientation: Literal["portrait", "landscape", "unknown"] = "unknown"
+    non_alternating: bool = False
+    mirrored: bool = False
+    second_header: bool = False
+    second_footer: bool = False
+    unknown_flag_bits: int = 0
+    odd: PageVariantGeometry | None = None
+    even: PageVariantGeometry | None = None
+    valid: bool = False
+    reason: str = ""
+    raw: str = ""
+    source: SourceSpan | None = None
+
+    @property
+    def primary_geometry(self) -> PageVariantGeometry | None:
+        """Return the first usable odd/right geometry, then even/left."""
+
+        if self.odd is not None and self.odd.valid:
+            return self.odd
+        if self.even is not None and self.even.valid:
+            return self.even
+        return None
+
+
+@dataclass(slots=True)
+class OpaquePageHints:
+    """Uninterpreted, version-dependent ``[pg]`` pagination hints."""
+
+    raw: str = ""
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
 class CharacterStyle:
     bold: bool = False
     italic: bool = False
@@ -80,7 +186,37 @@ class Paragraph:
 
     @property
     def text(self) -> str:
-        return "".join(run.text for run in self.runs)
+        if not isinstance(self.runs, list | tuple):
+            return "[Invalid paragraph runs omitted]"
+        parts: list[str] = []
+        seen: set[int] = set()
+        omitted = len(self.runs) > 4_096
+        total = 0
+        for run in self.runs[:4_096]:
+            if not isinstance(run, TextRun):
+                omitted = True
+                continue
+            if id(run) in seen:
+                omitted = True
+                continue
+            seen.add(id(run))
+            value = run.text
+            if isinstance(value, str):
+                pass
+            elif isinstance(value, bytes):
+                value = value.decode("utf-8", errors="replace")
+            else:
+                omitted = True
+                continue
+            total += len(value)
+            if total > 1_000_000:
+                parts.append(value[: max(0, 1_000_000 - (total - len(value)))])
+                omitted = True
+                break
+            parts.append(value)
+        if omitted:
+            parts.append("[Paragraph content omitted at safe rendering limit]")
+        return "".join(parts)
 
 
 @dataclass(slots=True)
@@ -96,7 +232,20 @@ class TableCell:
 
     @property
     def text(self) -> str:
-        return "\n".join(block.text for block in self.blocks)
+        if not isinstance(self.blocks, list | tuple):
+            return "[Invalid table cell content omitted]"
+        parts: list[str] = []
+        seen: set[int] = set()
+        omitted = len(self.blocks) > 4_096
+        for block in self.blocks[:4_096]:
+            if not isinstance(block, Paragraph) or id(block) in seen:
+                omitted = True
+                continue
+            seen.add(id(block))
+            parts.append(block.text)
+        if omitted:
+            parts.append("[Table cell content omitted at safe rendering limit]")
+        return "\n".join(parts)
 
 
 @dataclass(slots=True)
@@ -210,6 +359,36 @@ class UnsupportedObject:
 
 
 @dataclass(slots=True)
+class Frame:
+    """A typed frame whose readable contents remain in source anchor order.
+
+    Geometry is in integer twips.  No value of ``layer_role`` claims that an
+    unanchored frame is a page background; that source encoding is unknown.
+    """
+
+    blocks: list[Block] = field(default_factory=list)
+    content_kind: Literal["text", "table", "image", "drawing", "unknown"] = (
+        "unknown"
+    )
+    placement: Literal["anchored", "fixed-page", "repeating", "unknown"] = (
+        "unknown"
+    )
+    region: Literal["body", "header", "footer", "unknown"] = "body"
+    layer_role: Literal["unknown"] = "unknown"
+    anchor_index: int | None = None
+    page_number: int | None = None
+    flags: int | None = None
+    unknown_flag_bits: int = 0
+    bounds: TwipRect | None = None
+    opaque: bool | None = None
+    wrap_around: bool | None = None
+    raw_header_fields: tuple[str, ...] = ()
+    frame_layout_fields: tuple[str, ...] = ()
+    raw: str = ""
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
 class Annotation:
     """An inline Ami Pro note with readable nested content and opaque metadata."""
 
@@ -250,6 +429,7 @@ class Header:
     raw: str = ""
     terminated: bool = True
     source: SourceSpan | None = None
+    frame: Frame | None = None
 
 
 @dataclass(slots=True)
@@ -266,6 +446,7 @@ class Footer:
     raw: str = ""
     terminated: bool = True
     source: SourceSpan | None = None
+    frame: Frame | None = None
 
 
 Block: TypeAlias = (
@@ -276,6 +457,7 @@ Block: TypeAlias = (
     | WmfGraphic
     | SdwDrawing
     | UnsupportedObject
+    | Frame
     | Annotation
     | Footnote
     | Header
@@ -337,6 +519,8 @@ class Document:
     version: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     footnote_options: FootnoteOptions | None = None
+    page_layouts: list[PageLayout] = field(default_factory=list)
+    page_hints: list[OpaquePageHints] = field(default_factory=list)
     styles: dict[str, StyleDefinition] = field(default_factory=dict)
     blocks: list[Block] = field(default_factory=list)
     unknown_records: list[UnknownRecord] = field(default_factory=list)
@@ -354,73 +538,177 @@ class Document:
         return _jsonable(self)
 
 
-def _blocks_text(blocks: list[Block]) -> str:
+_MAX_TEXT_RECURSION = 64
+
+
+def _blocks_text(
+    blocks: list[Block],
+    *,
+    _active: set[int] | None = None,
+    _depth: int = 0,
+) -> str:
+    if not isinstance(blocks, list):
+        return "[Invalid nested content omitted]"
+    if _depth >= _MAX_TEXT_RECURSION:
+        return "[Nested content depth limit reached]"
+    active = set() if _active is None else _active
+    identity = id(blocks)
+    if identity in active:
+        return "[Recursive content omitted]"
+    active.add(identity)
     parts: list[str] = []
-    for block in blocks:
-        if isinstance(block, Paragraph):
-            parts.append(block.text)
-        elif isinstance(block, PageBreak):
-            parts.append("\f")
-        elif isinstance(block, Table):
-            parts.extend("\t".join(cell.text for cell in row.cells) for row in block.rows)
-        elif isinstance(block, Image):
-            parts.append(f"[{block.alt_text}]")
-        elif isinstance(block, WmfGraphic):
-            parts.append(
-                f"[WMF preview: {block.width_px} x {block.height_px} pixels]"
-            )
-        elif isinstance(block, SdwDrawing):
-            if (
-                isinstance(block.preview, SdwPreview)
-                and isinstance(block.preview.width_px, int)
-                and not isinstance(block.preview.width_px, bool)
-                and isinstance(block.preview.height_px, int)
-                and not isinstance(block.preview.height_px, bool)
-                and block.preview.width_px > 0
-                and block.preview.height_px > 0
-            ):
-                status = block.status if isinstance(block.status, str) else "unavailable"
+    for block in blocks[:100_000]:
+            if isinstance(block, Paragraph):
+                parts.append(block.text)
+            elif isinstance(block, PageBreak):
+                parts.append("\f")
+            elif isinstance(block, Table):
+                rows = block.rows
+                if not isinstance(rows, list | tuple):
+                    parts.append("[Invalid table rows omitted]")
+                    continue
+                seen_rows: set[int] = set()
+                seen_cells: set[int] = set()
+                omitted = len(rows) > 390
+                for row in rows[:390]:
+                    if not isinstance(row, TableRow):
+                        omitted = True
+                        continue
+                    if id(row) in seen_rows:
+                        omitted = True
+                        continue
+                    seen_rows.add(id(row))
+                    cells = row.cells
+                    if not isinstance(cells, list | tuple):
+                        parts.append("[Invalid table row omitted]")
+                        continue
+                    if len(cells) > 256:
+                        parts.append("[Table cells omitted at safe 256-column limit]")
+                        omitted = True
+                        continue
+                    values: list[str] = []
+                    for cell in cells[:256]:
+                        if not isinstance(cell, TableCell):
+                            omitted = True
+                            continue
+                        if id(cell) in seen_cells:
+                            values.append("[Repeated table cell omitted]")
+                            omitted = True
+                            continue
+                        seen_cells.add(id(cell))
+                        values.append(cell.text)
+                    parts.append(
+                        "\t".join(values)
+                    )
+                if omitted:
+                    parts.append("[Table content omitted at safe rendering limit]")
+            elif isinstance(block, Image):
+                parts.append(f"[{block.alt_text}]")
+            elif isinstance(block, WmfGraphic):
                 parts.append(
-                    "[Ami Draw companion preview: "
-                    f"{block.preview.width_px} x {block.preview.height_px} pixels; "
-                    f"grayscale/index rendering; vector status={status}]"
+                    f"[WMF preview: {block.width_px} x {block.height_px} pixels]"
                 )
-            else:
+            elif isinstance(block, SdwDrawing):
+                if (
+                    isinstance(block.preview, SdwPreview)
+                    and isinstance(block.preview.width_px, int)
+                    and not isinstance(block.preview.width_px, bool)
+                    and isinstance(block.preview.height_px, int)
+                    and not isinstance(block.preview.height_px, bool)
+                    and block.preview.width_px > 0
+                    and block.preview.height_px > 0
+                ):
+                    status = block.status if isinstance(block.status, str) else "unavailable"
+                    parts.append(
+                        "[Ami Draw companion preview: "
+                        f"{block.preview.width_px} x {block.preview.height_px} pixels; "
+                        f"grayscale/index rendering; vector status={status}]"
+                    )
+                else:
+                    parts.append(
+                        "[Ami Draw object: vector payload preserved; rendering unavailable]"
+                    )
+            elif isinstance(block, UnsupportedObject):
+                parts.append(f"[Unsupported {block.kind}: {block.description}]")
+            elif isinstance(block, Frame):
                 parts.append(
-                    "[Ami Draw object: vector payload preserved; rendering unavailable]"
+                    _blocks_text(block.blocks, _active=active, _depth=_depth + 1)
                 )
-        elif isinstance(block, UnsupportedObject):
-            parts.append(f"[Unsupported {block.kind}: {block.description}]")
-        elif isinstance(block, Annotation):
-            parts.append("[Annotation]\n" + _blocks_text(block.blocks))
-        elif isinstance(block, Footnote):
-            label = f"Footnote {block.number}" if block.number is not None else "Footnote"
-            parts.append(f"[{label}]\n" + _blocks_text(block.blocks))
-        elif isinstance(block, Header | Footer):
-            label = type(block).__name__
-            parts.append(f"[{label}: {block.placement} pages]\n" + _blocks_text(block.blocks))
+            elif isinstance(block, Annotation):
+                parts.append(
+                    "[Annotation]\n"
+                    + _blocks_text(block.blocks, _active=active, _depth=_depth + 1)
+                )
+            elif isinstance(block, Footnote):
+                label = (
+                    f"Footnote {block.number}"
+                    if block.number is not None
+                    else "Footnote"
+                )
+                parts.append(
+                    f"[{label}]\n"
+                    + _blocks_text(block.blocks, _active=active, _depth=_depth + 1)
+                )
+            elif isinstance(block, Header | Footer):
+                label = type(block).__name__
+                parts.append(
+                    f"[{label}: {block.placement} pages]\n"
+                    + _blocks_text(block.blocks, _active=active, _depth=_depth + 1)
+                )
     return "\n".join(parts)
 
 
-def _jsonable(value: Any) -> Any:
+_MAX_JSON_RECURSION = 64
+
+
+def _jsonable(
+    value: Any,
+    *,
+    _active: set[int] | None = None,
+    _depth: int = 0,
+) -> Any:
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, bytes):
         return {"length": len(value), "encoding": "not-inlined"}
-    if is_dataclass(value):
-        result = {
-            item.name: _jsonable(getattr(value, item.name)) for item in fields(value)
-        }
-        result["type"] = type(value).__name__
-        return result
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_jsonable(item) for item in value]
     if value is None or isinstance(value, bool | int | str):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else {"encoding": "non-finite-number"}
+    if _depth >= _MAX_JSON_RECURSION:
+        return {
+            "encoding": "nested-depth-limit",
+            "type": type(value).__name__,
+        }
+    if is_dataclass(value) or isinstance(value, dict | list | tuple):
+        active = set() if _active is None else _active
+        identity = id(value)
+        if identity in active:
+            return {
+                "encoding": "recursive-reference",
+                "type": type(value).__name__,
+            }
+        active.add(identity)
+        if is_dataclass(value):
+            result = {
+                item.name: _jsonable(
+                    getattr(value, item.name),
+                    _active=active,
+                    _depth=_depth + 1,
+                )
+                for item in fields(value)
+            }
+            result["type"] = type(value).__name__
+            return result
+        if isinstance(value, dict):
+            return {
+                str(key): _jsonable(item, _active=active, _depth=_depth + 1)
+                for key, item in list(value.items())[:100_000]
+            }
+        return [
+            _jsonable(item, _active=active, _depth=_depth + 1)
+            for item in value[:100_000]
+        ]
     return {"encoding": "unsupported-value", "type": type(value).__name__}

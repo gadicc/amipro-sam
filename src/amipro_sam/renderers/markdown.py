@@ -6,11 +6,11 @@ import re
 
 from ..model import (
     Annotation,
-    Block,
     CharacterStyle,
     Document,
     Footer,
     Footnote,
+    Frame,
     Header,
     Image,
     PageBreak,
@@ -18,6 +18,8 @@ from ..model import (
     SdwDrawing,
     StyleDefinition,
     Table,
+    TableCell,
+    TableRow,
     UnsupportedObject,
     WmfGraphic,
 )
@@ -31,30 +33,49 @@ _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _HEADING_NUMBER = re.compile(
     r"(?:^|\b)(?:heading|head|h)\s*[-_:]?\s*([1-6])(?:\b|$)", re.IGNORECASE
 )
+_MAX_RENDER_DEPTH = 32
+_MAX_RENDER_BLOCKS = 100_000
+_MAX_TABLE_ROWS = 390
 
 def render(document: Document, **_options: object) -> bytes:
     """Return CommonMark-like Markdown without source-controlled raw HTML."""
 
-    rendered = _render_blocks(document, document.blocks)
+    rendered = _render_blocks(document, document.blocks, seen=set())
     if not rendered:
         return b""
     return (rendered + "\n").encode("utf-8", errors="backslashreplace")
 
 
-def _render_blocks(document: Document, blocks: list[Block]) -> str:
+def _render_blocks(
+    document: Document,
+    blocks: object,
+    *,
+    depth: int = 0,
+    seen: set[int] | None = None,
+) -> str:
+    if depth >= _MAX_RENDER_DEPTH:
+        return _escape_text("[Nested content omitted at safe depth limit]")
+    if not isinstance(blocks, list | tuple):
+        return _escape_text("[Invalid nested content omitted]")
+    seen = set() if seen is None else seen
+    identity = id(blocks)
+    if identity in seen:
+        return _escape_text("[Repeated or recursive content omitted]")
+    seen.add(identity)
     chunks: list[str] = []
     counters: dict[int, int] = {}
     index = 0
-    while index < len(blocks):
-        block = blocks[index]
+    safe_blocks = blocks[:_MAX_RENDER_BLOCKS]
+    while index < len(safe_blocks):
+        block = safe_blocks[index]
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 chunks.append("[Page break]")
                 counters.clear()
             if block.list_kind is not None:
                 items: list[str] = []
-                while index < len(blocks):
-                    candidate = blocks[index]
+                while index < len(safe_blocks):
+                    candidate = safe_blocks[index]
                     if (
                         not isinstance(candidate, Paragraph)
                         or candidate.list_kind is None
@@ -86,17 +107,48 @@ def _render_blocks(document: Document, blocks: list[Block]) -> str:
                 _escape_text(f"[Unsupported {block.kind}: {block.description}]")
             )
             counters.clear()
+        elif isinstance(block, Frame):
+            chunks.append(
+                _marked_container(
+                    _frame_marker(block),
+                    _render_blocks(
+                        document, block.blocks, depth=depth + 1, seen=seen
+                    ),
+                )
+            )
+            counters.clear()
         elif isinstance(block, Annotation):
-            chunks.append(_marked_container("[Annotation]", _render_blocks(document, block.blocks)))
+            chunks.append(
+                _marked_container(
+                    "[Annotation]",
+                    _render_blocks(
+                        document, block.blocks, depth=depth + 1, seen=seen
+                    ),
+                )
+            )
             counters.clear()
         elif isinstance(block, Footnote):
             marker = f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
-            chunks.append(_marked_container(marker, _render_blocks(document, block.blocks)))
+            chunks.append(
+                _marked_container(
+                    marker,
+                    _render_blocks(
+                        document, block.blocks, depth=depth + 1, seen=seen
+                    ),
+                )
+            )
             counters.clear()
         elif isinstance(block, Header | Footer):
             kind = "Header" if isinstance(block, Header) else "Footer"
             marker = f"[{kind}: {_placement_label(block.placement)}]"
-            chunks.append(_marked_container(marker, _render_blocks(document, block.blocks)))
+            chunks.append(
+                _marked_container(
+                    marker,
+                    _render_blocks(
+                        document, block.blocks, depth=depth + 1, seen=seen
+                    ),
+                )
+            )
             counters.clear()
         index += 1
 
@@ -115,6 +167,26 @@ def _placement_label(value: str) -> str:
         "odd-even": "odd and even variants",
         "unknown": "placement unknown",
     }.get(value, "placement unknown")
+
+
+def _frame_marker(frame: Frame) -> str:
+    placement = frame.placement if isinstance(frame.placement, str) and frame.placement in {
+        "anchored",
+        "fixed-page",
+        "repeating",
+    } else "unknown placement"
+    region = (
+        frame.region
+        if isinstance(frame.region, str) and frame.region in {"body", "header", "footer"}
+        else "unknown region"
+    )
+    kind = frame.content_kind if isinstance(frame.content_kind, str) and frame.content_kind in {
+        "text",
+        "table",
+        "image",
+        "drawing",
+    } else "unknown content"
+    return f"[Frame: {placement}; {region}; {kind}; geometry reflowed]"
 
 
 def _paragraph(
@@ -150,9 +222,14 @@ def _paragraph(
 
 def _paragraph_inline(document: Document, paragraph: Paragraph) -> str:
     base = _named_character_style(document, paragraph.style_name)
-    if not paragraph.runs:
-        return ""
-    return "".join(_run(run.text, base, run.style) for run in paragraph.runs)
+    runs = paragraph.runs
+    if not isinstance(runs, list | tuple):
+        return _escape_text(paragraph.text)
+    return "".join(
+        _run(run.text, base, run.style)
+        for run in runs[:100_000]
+        if hasattr(run, "text") and hasattr(run, "style")
+    )
 
 
 def _run(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
@@ -176,18 +253,54 @@ def _run(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
 
 
 def _table(document: Document, table: Table) -> str:
-    if not table.rows:
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        return _escape_text("[Invalid table rows omitted]")
+    seen_rows: set[int] = set()
+    safe_rows: list[TableRow] = []
+    omitted = len(rows) > _MAX_TABLE_ROWS
+    for row in rows[:_MAX_TABLE_ROWS]:
+        if not isinstance(row, TableRow) or id(row) in seen_rows:
+            omitted = True
+            continue
+        seen_rows.add(id(row))
+        safe_rows.append(row)
+    if not safe_rows:
         return _escape_text("[Empty table]")
 
     matrix: list[list[str]] = []
-    for row in table.rows:
+    seen_cells: set[int] = set()
+    for row in safe_rows:
         rendered_row: list[str] = []
-        for cell in row.cells:
-            paragraphs = [_paragraph_inline(document, item) for item in cell.blocks]
+        cells = row.cells if isinstance(row.cells, list | tuple) else []
+        if len(cells) > 256:
+            matrix.append(
+                [_escape_text("[Table cells omitted at safe 256-column limit]")]
+            )
+            omitted = True
+            continue
+        for cell in cells[:256]:
+            if not isinstance(cell, TableCell):
+                omitted = True
+                continue
+            if id(cell) in seen_cells:
+                rendered_row.append(_escape_text("[Repeated table cell omitted]"))
+                omitted = True
+                continue
+            seen_cells.add(id(cell))
+            blocks = cell.blocks if isinstance(cell.blocks, list | tuple) else []
+            paragraphs = [
+                _paragraph_inline(document, item)
+                for item in blocks[:_MAX_RENDER_BLOCKS]
+                if isinstance(item, Paragraph)
+            ]
             value = "<br>".join(item.replace("\n", "<br>") for item in paragraphs)
             rendered_row.append(value)
             rendered_row.extend(
-                "" for _ in range(max(1, _integer(cell.column_span, 1)) - 1)
+                ""
+                for _ in range(
+                    max(1, min(_integer(cell.column_span, 1), 256)) - 1
+                )
             )
         matrix.append(rendered_row)
 
@@ -197,7 +310,7 @@ def _table(document: Document, table: Table) -> str:
     for row in matrix:
         row.extend("" for _ in range(width - len(row)))
 
-    if table.rows[0].is_header:
+    if safe_rows[0].is_header:
         header = matrix[0]
         body = matrix[1:]
     else:
@@ -205,6 +318,8 @@ def _table(document: Document, table: Table) -> str:
         body = matrix
     lines = [_markdown_row(header), _markdown_row(["---"] * width)]
     lines.extend(_markdown_row(row) for row in body)
+    if omitted:
+        lines.append(_escape_text("[Table content omitted at safe rendering limit]"))
     return "\n".join(lines)
 
 

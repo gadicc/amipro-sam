@@ -7,7 +7,7 @@ import pytest
 
 from amipro_sam.errors import ParseError, ResourceLimitError
 from amipro_sam.limits import ParseLimits
-from amipro_sam.model import Image, Paragraph, Table, UnsupportedObject
+from amipro_sam.model import Frame, Image, Paragraph, Table, UnsupportedObject
 from amipro_sam.parser import parse_bytes, parse_file
 
 STYLE = """[tag]
@@ -115,7 +115,8 @@ delta
 \t\t[e]
 """
     document = parse_bytes(sam("body", extra=extra))
-    table = next(block for block in document.blocks if isinstance(block, Table))
+    frame = next(block for block in document.blocks if isinstance(block, Frame))
+    table = next(block for block in frame.blocks if isinstance(block, Table))
     assert [[cell.text for cell in row.cells] for row in table.rows] == [
         ["alpha", "beta"],
         ["gamma", "delta"],
@@ -135,7 +136,8 @@ def test_table_cell_style_markers_are_controls_not_visible_text() -> None:
 \t\t[e]
 """
     document = parse_bytes(sam("body", extra=extra))
-    table = next(block for block in document.blocks if isinstance(block, Table))
+    frame = next(block for block in document.blocks if isinstance(block, Frame))
+    table = next(block for block in frame.blocks if isinstance(block, Table))
 
     assert [cell.text for cell in table.rows[0].cells] == ["Value", "@literal"]
 
@@ -153,7 +155,8 @@ def test_table_formula_metadata_does_not_leak_below_cached_value() -> None:
 \t\t[e]
 """
     document = parse_bytes(sam("body", extra=extra))
-    table = next(block for block in document.blocks if isinstance(block, Table))
+    frame = next(block for block in document.blocks if isinstance(block, Frame))
+    table = next(block for block in frame.blocks if isinstance(block, Table))
 
     assert table.rows[0].cells[0].text == "3819,00"
     assert "@sum" not in document.text

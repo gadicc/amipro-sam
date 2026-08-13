@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -21,6 +22,7 @@ from ..model import (
     CharacterStyle,
     Footer,
     Footnote,
+    Frame,
     Header,
     Image,
     PageBreak,
@@ -29,6 +31,8 @@ from ..model import (
     StyleDefinition,
     Table,
     TableCell,
+    TableRow,
+    TextRun,
     UnsupportedObject,
     WmfGraphic,
 )
@@ -46,7 +50,285 @@ _DOC_ID = re.compile(rb"<w14:docId(?:\s[^>]*)?/>\s*")
 _SAVE_PREVIEW = re.compile(rb"<w:savePreviewPicture(?:\s[^>]*)?/>\s*")
 _ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 _MAX_TABLE_COLUMNS = 256
+_MAX_TABLE_ROWS = 390
 _COVERED = object()
+_MAX_PAGE_TWIPS = 31_680
+_MIN_PAGE_TWIPS = 1_440
+_MIN_BODY_TWIPS = 720
+_MIN_FURNITURE_MARGIN_TWIPS = 720
+_MAX_BLOCKS_PER_LIST = 100_000
+_MAX_BLOCK_DEPTH = 64
+
+
+@dataclass(frozen=True, slots=True)
+class _PageGeometry:
+    width_twips: int = 12_240
+    height_twips: int = 15_840
+    margin_left_twips: int = 1_440
+    margin_right_twips: int = 1_440
+    margin_top_twips: int = 1_440
+    margin_bottom_twips: int = 1_440
+    layout_index: int | None = None
+    non_alternating: bool = False
+
+    @property
+    def body_width_twips(self) -> int:
+        return self.width_twips - self.margin_left_twips - self.margin_right_twips
+
+    @property
+    def body_height_twips(self) -> int:
+        return self.height_twips - self.margin_top_twips - self.margin_bottom_twips
+
+
+@dataclass(frozen=True, slots=True)
+class _NativePageContent:
+    header_odd: Header | None = None
+    header_even: Header | None = None
+    footer_odd: Footer | None = None
+    footer_even: Footer | None = None
+    ids: frozenset[int] = frozenset()
+    alternating: bool = True
+
+    @property
+    def uses_odd_even(self) -> bool:
+        return self.alternating and any(
+            item is not None
+            for item in (
+                self.header_odd,
+                self.header_even,
+                self.footer_odd,
+                self.footer_even,
+            )
+        )
+
+
+def _page_geometry(document: object) -> _PageGeometry:
+    layouts = getattr(document, "page_layouts", None)
+    if not isinstance(layouts, (list, tuple)):
+        return _PageGeometry()
+    for layout in layouts:
+        if getattr(layout, "valid", None) is not True:
+            continue
+        for variant_name in ("odd", "even"):
+            variant = getattr(layout, variant_name, None)
+            if getattr(variant, "valid", None) is not True:
+                continue
+            values = tuple(
+                getattr(variant, name, None)
+                for name in (
+                    "width_twips",
+                    "height_twips",
+                    "margin_left_twips",
+                    "margin_right_twips",
+                    "margin_top_twips",
+                    "margin_bottom_twips",
+                )
+            )
+            if not all(type(value) is int for value in values):
+                continue
+            width, height, left, right, top, bottom = values
+            if not (
+                _MIN_PAGE_TWIPS <= width <= _MAX_PAGE_TWIPS
+                and _MIN_PAGE_TWIPS <= height <= _MAX_PAGE_TWIPS
+            ):
+                continue
+            if min(left, right, top, bottom) < 0:
+                continue
+            if left + right >= width or top + bottom >= height:
+                continue
+            if width - left - right < _MIN_BODY_TWIPS:
+                continue
+            if height - top - bottom < _MIN_BODY_TWIPS:
+                continue
+            layout_index = getattr(layout, "index", None)
+            if type(layout_index) is not int:
+                layout_index = None
+            return _PageGeometry(
+                width_twips=width,
+                height_twips=height,
+                margin_left_twips=left,
+                margin_right_twips=right,
+                margin_top_twips=top,
+                margin_bottom_twips=bottom,
+                layout_index=layout_index,
+                non_alternating=getattr(layout, "non_alternating", None) is True,
+            )
+    return _PageGeometry()
+
+
+def _native_page_content(
+    document: object,
+    geometry: _PageGeometry,
+) -> _NativePageContent:
+    if geometry.layout_index is None:
+        return _NativePageContent()
+    candidates: dict[str, list[Header | Footer]] = {
+        "header_odd": [],
+        "header_even": [],
+        "footer_odd": [],
+        "footer_even": [],
+    }
+    for block in _safe_blocks(getattr(document, "blocks", None)):
+        if not isinstance(block, Header | Footer):
+            continue
+        placement = getattr(block, "placement", None)
+        if not isinstance(placement, str) or placement not in {"odd", "even"}:
+            continue
+        if getattr(block, "origin", None) != "layout":
+            continue
+        if getattr(block, "layout_index", None) != geometry.layout_index:
+            continue
+        key = f"{'header' if isinstance(block, Header) else 'footer'}_{placement}"
+        candidates[key].append(block)
+    selected = {
+        key: (
+            values[0]
+            if len(values) == 1 and _native_furniture_fits(values[0], geometry)
+            else None
+        )
+        for key, values in candidates.items()
+    }
+    if geometry.non_alternating:
+        selected["header_even"] = None
+        selected["footer_even"] = None
+    ids = frozenset(id(value) for value in selected.values() if value is not None)
+    return _NativePageContent(
+        ids=ids,
+        alternating=not geometry.non_alternating,
+        **selected,
+    )
+
+
+def _native_furniture_fits(
+    block: Header | Footer,
+    geometry: _PageGeometry,
+) -> bool:
+    if getattr(block, "terminated", None) is not True:
+        return False
+    if type(getattr(block, "unknown_flag_bits", None)) is not int:
+        return False
+    if block.unknown_flag_bits != 0:
+        return False
+    frame = getattr(block, "frame", None)
+    if frame is not None and (
+        not isinstance(frame, Frame)
+        or type(getattr(frame, "unknown_flag_bits", None)) is not int
+        or frame.unknown_flag_bits != 0
+    ):
+        return False
+    child_blocks = getattr(block, "blocks", None)
+    if not isinstance(child_blocks, (list, tuple)) or not 1 <= len(child_blocks) <= 4:
+        return False
+    if not all(_native_paragraph_is_safe(item) for item in child_blocks):
+        return False
+    characters_per_line = max(20, geometry.body_width_twips // 144)
+    line_count = 0
+    total_characters = 0
+    for paragraph in child_blocks:
+        text = _bounded_native_paragraph_text(paragraph)
+        if text is None:
+            return False
+        total_characters += len(text)
+        if total_characters > 8_192:
+            return False
+        lines = text.splitlines() or [""]
+        line_count += sum(
+            max(1, math.ceil(len(line) / characters_per_line)) for line in lines
+        )
+    margin = (
+        geometry.margin_top_twips
+        if isinstance(block, Header)
+        else geometry.margin_bottom_twips
+    )
+    required = max(_MIN_FURNITURE_MARGIN_TWIPS, 360 + line_count * 360)
+    return margin >= required
+
+
+def _bounded_native_paragraph_text(paragraph: Paragraph) -> str | None:
+    runs = getattr(paragraph, "runs", None)
+    if not isinstance(runs, (list, tuple)) or len(runs) > 1_024:
+        return None
+    parts: list[str] = []
+    length = 0
+    for run in runs:
+        if not isinstance(run, TextRun) or not isinstance(run.style, CharacterStyle):
+            return None
+        value = run.text
+        if not isinstance(value, str):
+            return None
+        length += len(value)
+        if length > 4_096:
+            return None
+        parts.append(value)
+    return "".join(parts)
+
+
+def _native_paragraph_is_safe(value: object) -> bool:
+    page_break = getattr(value, "page_break_before", None)
+    list_kind = getattr(value, "list_kind", None)
+    return (
+        isinstance(value, Paragraph)
+        and (page_break is False or page_break is None)
+        and (list_kind is None or (isinstance(list_kind, str) and list_kind == ""))
+        and isinstance(getattr(value, "runs", None), (list, tuple))
+    )
+
+
+def _safe_blocks(value: object) -> list[Block]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(value[:_MAX_BLOCKS_PER_LIST])
+
+
+def _normalized_blocks(blocks: list[Block]) -> list[Block]:
+    """Discard edge breaks while preserving every explicit interior break."""
+
+    result: list[Block] = []
+    index = 0
+    while index < len(blocks):
+        if not isinstance(blocks[index], PageBreak):
+            result.append(blocks[index])
+            index += 1
+            continue
+        end = index
+        while end < len(blocks) and isinstance(blocks[end], PageBreak):
+            end += 1
+        if result and end < len(blocks):
+            result.extend(blocks[index:end])
+        index = end
+    return result
+
+
+def _safe_paragraph_text(paragraph: object) -> str:
+    parts: list[str] = []
+    runs = getattr(paragraph, "runs", None)
+    if not isinstance(runs, (list, tuple)):
+        return ""
+    for run in runs:
+        value = getattr(run, "text", "")
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, bytes):
+            parts.append(value.decode("utf-8", errors="replace"))
+    return "".join(parts)
+
+
+def _frame_label(frame: Frame) -> str:
+    content_kind = getattr(frame, "content_kind", None)
+    if not isinstance(content_kind, str) or content_kind not in {
+        "text", "table", "image", "drawing", "unknown"
+    }:
+        content_kind = "unknown"
+    placement = getattr(frame, "placement", None)
+    if not isinstance(placement, str) or placement not in {
+        "anchored", "fixed-page", "repeating", "unknown"
+    }:
+        placement = "unknown"
+    return (
+        f"[Frame: {content_kind}; {placement} placement reflowed in source order; "
+        "original coordinates not reproduced]"
+    )
+
 
 def render(document: AmiProDocument, **_options: object) -> bytes:
     """Return *document* as DOCX bytes.
@@ -59,7 +341,7 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
     try:
         from docx import Document as WordDocument
         from docx.enum.section import WD_ORIENT
-        from docx.shared import Inches, Pt
+        from docx.shared import Pt, Twips
     except ImportError as exc:
         raise RenderError(
             "DOCX output requires the optional 'python-docx' dependency. "
@@ -68,17 +350,23 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
         ) from exc
 
     try:
+        geometry = _page_geometry(document)
+        native = _native_page_content(document, geometry)
         output_document = WordDocument()
         section = output_document.sections[0]
-        section.orientation = WD_ORIENT.PORTRAIT
-        section.page_width = Inches(8.5)
-        section.page_height = Inches(11)
-        section.top_margin = Inches(1)
-        section.right_margin = Inches(1)
-        section.bottom_margin = Inches(1)
-        section.left_margin = Inches(1)
-        section.header_distance = Inches(0.492)
-        section.footer_distance = Inches(0.492)
+        section.orientation = (
+            WD_ORIENT.LANDSCAPE
+            if geometry.width_twips > geometry.height_twips
+            else WD_ORIENT.PORTRAIT
+        )
+        section.page_width = Twips(geometry.width_twips)
+        section.page_height = Twips(geometry.height_twips)
+        section.top_margin = Twips(geometry.margin_top_twips)
+        section.right_margin = Twips(geometry.margin_right_twips)
+        section.bottom_margin = Twips(geometry.margin_bottom_twips)
+        section.left_margin = Twips(geometry.margin_left_twips)
+        section.header_distance = Twips(min(708, geometry.margin_top_twips // 2))
+        section.footer_distance = Twips(min(708, geometry.margin_bottom_twips // 2))
 
         normal = output_document.styles["Normal"]
         normal.font.name = "Calibri"
@@ -87,7 +375,15 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
         normal.paragraph_format.line_spacing = 1.1
         _scrub_core_properties(output_document.core_properties)
 
-        _add_blocks(output_document, document, document.blocks)
+        _add_native_page_content(output_document, section, native)
+        _add_blocks(
+            output_document,
+            document,
+            document.blocks,
+            geometry,
+            native.ids,
+            active_container_ids=set(),
+        )
 
         buffer = BytesIO()
         output_document.save(buffer)
@@ -98,26 +394,118 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
         raise RenderError(f"Could not render DOCX safely: {exc}") from exc
 
 
-def _add_blocks(target: Any, document: AmiProDocument, blocks: list[Block]) -> None:
-    for block in blocks:
-        if isinstance(block, Paragraph):
-            paragraph = target.add_paragraph()
-            _populate_paragraph(paragraph, block, document)
-        elif isinstance(block, PageBreak):
-            target.add_page_break()
-        elif isinstance(block, Table):
-            _add_table(target, block, document)
-        elif isinstance(block, Image):
-            _add_placeholder(target, _image_placeholder(block))
-        elif isinstance(block, WmfGraphic):
-            _add_wmf(target, block)
-        elif isinstance(block, SdwDrawing):
-            _add_sdw(target, block)
-        elif isinstance(block, UnsupportedObject):
-            _add_placeholder(target, f"[Unsupported {block.kind}: {block.description}]")
-        elif isinstance(block, Annotation | Footnote | Header | Footer):
-            _add_placeholder(target, _container_label(block))
-            _add_blocks(target, document, block.blocks)
+def _add_blocks(
+    target: Any,
+    document: AmiProDocument,
+    blocks: object,
+    geometry: _PageGeometry,
+    native_ids: frozenset[int],
+    *,
+    depth: int = 0,
+    active_container_ids: set[int],
+) -> None:
+    if depth > _MAX_BLOCK_DEPTH:
+        _add_placeholder(target, "[Nested content omitted: safe depth limit reached]")
+        return
+    if isinstance(blocks, (list, tuple)):
+        container_id = id(blocks)
+        if container_id in active_container_ids:
+            _add_placeholder(
+                target,
+                "[Nested content omitted: repeated or cyclic block reference]",
+            )
+            return
+        active_container_ids.add(container_id)
+    else:
+        container_id = None
+    visible = [
+        block for block in _safe_blocks(blocks) if id(block) not in native_ids
+    ]
+    try:
+        for block in _normalized_blocks(visible):
+            if isinstance(block, Paragraph):
+                paragraph = target.add_paragraph()
+                _populate_paragraph(paragraph, block, document)
+            elif isinstance(block, PageBreak):
+                target.add_page_break()
+            elif isinstance(block, Table):
+                _add_table(target, block, document, geometry.body_width_twips)
+            elif isinstance(block, Image):
+                _add_placeholder(target, _image_placeholder(block))
+            elif isinstance(block, WmfGraphic):
+                _add_wmf(target, block, geometry)
+            elif isinstance(block, SdwDrawing):
+                _add_sdw(target, block, geometry)
+            elif isinstance(block, Frame):
+                _add_placeholder(target, _frame_label(block))
+                _add_blocks(
+                    target,
+                    document,
+                    getattr(block, "blocks", None),
+                    geometry,
+                    native_ids,
+                    depth=depth + 1,
+                    active_container_ids=active_container_ids,
+                )
+            elif isinstance(block, UnsupportedObject):
+                _add_placeholder(target, f"[Unsupported {block.kind}: {block.description}]")
+            elif isinstance(block, Annotation | Footnote | Header | Footer):
+                _add_placeholder(target, _container_label(block))
+                _add_blocks(
+                    target,
+                    document,
+                    getattr(block, "blocks", None),
+                    geometry,
+                    native_ids,
+                    depth=depth + 1,
+                    active_container_ids=active_container_ids,
+                )
+    finally:
+        # Keep visited containers for the full render to bound shared DAGs.
+        pass
+
+
+def _add_native_page_content(
+    output_document: Any,
+    section: Any,
+    native: _NativePageContent,
+) -> None:
+    if native.uses_odd_even:
+        output_document.settings.odd_and_even_pages_header_footer = True
+    for container, source in (
+        (section.header if native.header_odd is not None else None, native.header_odd),
+        (
+            section.even_page_header if native.header_even is not None else None,
+            native.header_even,
+        ),
+        (section.footer if native.footer_odd is not None else None, native.footer_odd),
+        (
+            section.even_page_footer if native.footer_even is not None else None,
+            native.footer_even,
+        ),
+    ):
+        if container is None or source is None:
+            continue
+        container.is_linked_to_previous = False
+        _populate_native_container(container, getattr(source, "blocks", None))
+
+
+def _populate_native_container(container: Any, blocks: object) -> None:
+    paragraphs = _safe_blocks(blocks)
+    if not paragraphs:
+        return
+    existing = container.paragraphs
+    for index, source in enumerate(paragraphs):
+        target = existing[0] if index == 0 and existing else container.add_paragraph()
+        _clear_word_paragraph(target)
+        target.add_run(_clean_xml_text(_safe_paragraph_text(source)))
+
+
+def _clear_word_paragraph(paragraph: Any) -> None:
+    properties = paragraph._p.pPr
+    for child in list(paragraph._p):
+        if child is not properties:
+            paragraph._p.remove(child)
 
 
 def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
@@ -126,22 +514,29 @@ def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
     if isinstance(block, Footnote):
         return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
     kind = "Header" if isinstance(block, Header) else "Footer"
+    source_placement = getattr(block, "placement", None)
+    if not isinstance(source_placement, str):
+        source_placement = "unknown"
     placement = {
         "all": "all pages",
         "odd": "odd/right pages",
         "even": "even/left pages",
         "odd-even": "odd and even variants",
         "unknown": "placement unknown",
-    }.get(block.placement, "placement unknown")
+    }.get(source_placement, "placement unknown")
     return f"[{kind}: {placement}]"
 
 
-def _add_wmf(target: Any, graphic: WmfGraphic) -> None:
+def _add_wmf(target: Any, graphic: WmfGraphic, geometry: _PageGeometry) -> None:
     from docx.shared import Inches
 
     try:
         payload = wmf_png(graphic)
-        width, height = wmf_display_size(graphic)
+        width, height = wmf_display_size(
+            graphic,
+            max_width_in=min(6.25, geometry.body_width_twips / 1440),
+            max_height_in=min(7.5, geometry.body_height_twips / 1440),
+        )
     except WmfDecodeError:
         _add_placeholder(target, "[Invalid WMF preview]")
         return
@@ -152,13 +547,15 @@ def _add_wmf(target: Any, graphic: WmfGraphic) -> None:
     )
 
 
-def _add_sdw(target: Any, drawing: SdwDrawing) -> None:
+def _add_sdw(target: Any, drawing: SdwDrawing, geometry: _PageGeometry) -> None:
     from docx.shared import Inches
 
     try:
         payload = sdw_png(drawing)
         width, height = sdw_display_size(
-            drawing, max_width_in=6.25, max_height_in=7.5
+            drawing,
+            max_width_in=min(6.25, geometry.body_width_twips / 1440),
+            max_height_in=min(7.5, geometry.body_height_twips / 1440),
         )
     except SdwDecodeError:
         _add_placeholder(target, _sdw_placeholder(drawing))
@@ -251,9 +648,39 @@ def _populate_paragraph(
     formatting.keep_with_next = bool(source.keep_with_next)
 
     base = style_definition.character if style_definition else CharacterStyle()
-    for source_run in source.runs:
-        run = target.add_run(_clean_xml_text(source_run.text))
+    source_runs = source.runs
+    if not isinstance(source_runs, list | tuple):
+        target.add_run(_clean_xml_text(source.text))
+        return
+    seen_runs: set[int] = set()
+    omitted = len(source_runs) > 4_096
+    total_characters = 0
+    for source_run in source_runs[:4_096]:
+        if not isinstance(source_run, TextRun) or not isinstance(
+            source_run.style, CharacterStyle
+        ):
+            target.add_run("[Invalid text run omitted]")
+            continue
+        if id(source_run) in seen_runs:
+            omitted = True
+            continue
+        seen_runs.add(id(source_run))
+        value = source_run.text
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if not isinstance(value, str):
+            target.add_run("[Invalid text run omitted]")
+            continue
+        total_characters += len(value)
+        if total_characters > 1_000_000:
+            value = value[: max(0, 1_000_000 - (total_characters - len(value)))]
+            omitted = True
+        run = target.add_run(_clean_xml_text(value))
         _format_run(run, _merge_character_style(base, source_run.style))
+        if total_characters > 1_000_000:
+            break
+    if omitted:
+        target.add_run("[Paragraph content omitted at safe rendering limit]")
 
 
 def _format_run(run: Any, style: CharacterStyle) -> None:
@@ -306,10 +733,38 @@ def _add_placeholder(document: Any, text: str) -> None:
     properties.append(borders)
 
 
-def _add_table(document: Any, source: Table, ir_document: AmiProDocument) -> None:
+def _add_table(
+    document: Any,
+    source: Table,
+    ir_document: AmiProDocument,
+    body_width_twips: int,
+) -> None:
     from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
-    grid, anchors = _layout_table(source)
+    rows = _safe_table_rows(source)
+    if not rows:
+        _add_placeholder(
+            document,
+            "[Invalid table rows omitted]"
+            if not isinstance(source.rows, list | tuple)
+            else "[Empty table]",
+        )
+        return
+    if any(
+        isinstance(row.cells, list | tuple)
+        and len(row.cells) > _MAX_TABLE_COLUMNS
+        for row in rows
+    ):
+        _add_placeholder(
+            document,
+            "[Table cells omitted at safe 256-column limit]",
+        )
+        return
+    try:
+        grid, anchors = _layout_table(source)
+    except RenderError:
+        _add_placeholder(document, "[Table grid omitted at safe 256-column limit]")
+        return
     if not grid or not grid[0]:
         _add_placeholder(document, "[Empty table]")
         return
@@ -319,7 +774,7 @@ def _add_table(document: Any, source: Table, ir_document: AmiProDocument) -> Non
     table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
-    widths = _configure_table_geometry(table, column_count)
+    widths = _configure_table_geometry(table, column_count, body_width_twips)
 
     merged_cells: dict[tuple[int, int], Any] = {}
     for row_index, column_index, _cell, column_span, row_span in anchors:
@@ -331,40 +786,79 @@ def _add_table(document: Any, source: Table, ir_document: AmiProDocument) -> Non
             _set_cell_width(target, sum(widths[column_index : column_index + column_span]))
         merged_cells[(row_index, column_index)] = target
 
+    seen_cells: set[int] = set()
     for row_index, column_index, source_cell, _column_span, _row_span in anchors:
         target = merged_cells[(row_index, column_index)]
         target.text = ""
         target.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-        if source_cell.blocks:
-            for block_index, source_paragraph in enumerate(source_cell.blocks):
-                paragraph = target.paragraphs[0] if block_index == 0 else target.add_paragraph()
-                _populate_paragraph(paragraph, source_paragraph, ir_document)
-        if source.rows[row_index].is_header:
+        repeated_cell = id(source_cell) in seen_cells
+        seen_cells.add(id(source_cell))
+        paragraphs = (
+            source_cell.blocks[:4_096]
+            if isinstance(source_cell.blocks, list | tuple)
+            else []
+        )
+        valid_paragraphs: list[Paragraph] = []
+        seen_paragraphs: set[int] = set()
+        for item in paragraphs:
+            if not isinstance(item, Paragraph) or id(item) in seen_paragraphs:
+                continue
+            seen_paragraphs.add(id(item))
+            valid_paragraphs.append(item)
+        invalid_content = repeated_cell or (
+            not isinstance(source_cell.blocks, list | tuple)
+            or len(valid_paragraphs) != len(paragraphs)
+            or (
+                isinstance(source_cell.blocks, list | tuple)
+                and len(source_cell.blocks) > 4_096
+            )
+        )
+        if invalid_content:
+            target.paragraphs[0].add_run(
+                "[Repeated table cell omitted]"
+                if repeated_cell
+                else "[Invalid or repeated table cell content omitted]"
+            )
+        for block_index, source_paragraph in enumerate(
+            valid_paragraphs if not repeated_cell else []
+        ):
+            paragraph_index = block_index + int(invalid_content)
+            paragraph = (
+                target.paragraphs[0]
+                if paragraph_index == 0
+                else target.add_paragraph()
+            )
+            _populate_paragraph(paragraph, source_paragraph, ir_document)
+        if rows[row_index].is_header:
             _shade_cell(target, "F2F4F7")
             for paragraph in target.paragraphs:
                 for run in paragraph.runs:
                     run.bold = True
 
-    for row_index, row in enumerate(source.rows):
+    for row_index, row in enumerate(rows):
         if row.is_header:
             _shade_header_row(table.rows[row_index])
-        if row.is_header and all(
-            previous.is_header for previous in source.rows[: row_index + 1]
+        if row_index < 8 and row.is_header and all(
+            previous.is_header for previous in rows[: row_index + 1]
         ):
             _set_repeat_table_header(table.rows[row_index])
 
 
-def _configure_table_geometry(table: Any, column_count: int) -> list[int]:
+def _configure_table_geometry(
+    table: Any,
+    column_count: int,
+    body_width_twips: int,
+) -> list[int]:
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Twips
 
-    total_width = 9360
+    total_width = max(_MIN_BODY_TWIPS, body_width_twips)
     base, remainder = divmod(total_width, column_count)
     widths = [base + (1 if index < remainder else 0) for index in range(column_count)]
     table_properties = table._tbl.tblPr
     _set_or_add_measure(table_properties, "w:tblW", total_width, "dxa")
-    _set_or_add_measure(table_properties, "w:tblInd", 120, "dxa")
+    _set_or_add_measure(table_properties, "w:tblInd", 0, "dxa")
     layout = table_properties.find(qn("w:tblLayout"))
     if layout is None:
         layout = OxmlElement("w:tblLayout")
@@ -441,21 +935,34 @@ def _set_repeat_table_header(row: Any) -> None:
 def _layout_table(
     table: Table,
 ) -> tuple[list[list[object | TableCell | None]], list[tuple[int, int, TableCell, int, int]]]:
-    row_count = len(table.rows)
+    rows = _safe_table_rows(table)
+    row_count = len(rows)
     if not row_count:
         return [], []
     grid: list[list[object | TableCell | None]] = [[] for _ in range(row_count)]
     anchors: list[tuple[int, int, TableCell, int, int]] = []
+    current_width = 0
 
     def ensure_width(width: int) -> None:
+        nonlocal current_width
         if width > _MAX_TABLE_COLUMNS:
             raise RenderError(f"Table exceeds the safe {_MAX_TABLE_COLUMNS}-column limit")
+        if width <= current_width:
+            return
         for row in grid:
             row.extend([None] * (width - len(row)))
+        current_width = width
 
-    for row_index, row in enumerate(table.rows):
+    for row_index, row in enumerate(rows):
         column_index = 0
-        for cell in row.cells:
+        cells = row.cells if isinstance(row.cells, list | tuple) else []
+        if len(cells) > _MAX_TABLE_COLUMNS:
+            raise RenderError(
+                f"Table exceeds the safe {_MAX_TABLE_COLUMNS}-column limit"
+            )
+        for cell in cells[:_MAX_TABLE_COLUMNS]:
+            if not isinstance(cell, TableCell):
+                continue
             while column_index < len(grid[row_index]) and grid[row_index][column_index] is not None:
                 column_index += 1
             column_span = _safe_span(cell.column_span, _MAX_TABLE_COLUMNS)
@@ -480,6 +987,41 @@ def _layout_table(
     max_columns = max((len(row) for row in grid), default=0)
     ensure_width(max_columns)
     return grid, anchors
+
+
+def _safe_table_rows(table: Table) -> list[TableRow]:
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        return []
+    result: list[TableRow] = []
+    seen: set[int] = set()
+    omitted = len(rows) > _MAX_TABLE_ROWS
+    for row in rows[:_MAX_TABLE_ROWS]:
+        if not isinstance(row, TableRow) or id(row) in seen:
+            omitted = True
+            continue
+        seen.add(id(row))
+        result.append(row)
+    if omitted:
+        result = result[: _MAX_TABLE_ROWS - 1]
+        result.append(
+            TableRow(
+                cells=[
+                    TableCell(
+                        blocks=[
+                            Paragraph(
+                                runs=[
+                                    TextRun(
+                                        "[Table content omitted at safe rendering limit]"
+                                    )
+                                ]
+                            )
+                        ]
+                    )
+                ]
+            )
+        )
+    return result
 
 
 def _scrub_core_properties(core: Any) -> None:

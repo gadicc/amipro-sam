@@ -18,8 +18,13 @@ discarded or activated.
 | Tables and cell text | Supported subset | Reflowed | Simple tables/TSV |
 | Table formulas | Cached value recovered; formula preserved in IR | Cached value | Cached value |
 | Annotations and inline footnotes | Typed recursive IR; raw metadata retained | Semantic/labeled reflow; footnotes are not native page-bottom objects | Explicit labeled reflow |
-| Body and page-layout headers/footers | Typed IR with odd/even placement and raw frame records | Semantic/labeled reflow; not yet repeated in physical page margins | Explicit placement markers |
-| Ordinary text frames | Text recovered | Anchored/reflowed with warnings | Reflowed |
+| Page size and margins (`[lay]`, `[rght]`, `[lft]`) | Typed nine-field twip prefix; opaque tail and raw layout retained; impossible geometry diagnosed | First renderer-valid odd/right geometry, then even/left, controls page/print size and margins; otherwise a fixed Letter fallback | Typed data remains in JSON; prose formats do not simulate a page box |
+| Page-layout headers/footers | Typed odd/even IR with bounded `[lyfrm]` geometry; nested and sibling stream shapes supported | PDF/ODT/DOCX promote a narrow unambiguous, layout-matched, size-bounded subset to repeated page furniture; HTML and all ambiguous, malformed, complex, or body-stream variants remain visibly reflowed | Explicit placement markers |
+| Anchored body frames | Typed `Frame` at the original zero-based `<:tN>`/`<:AN>` anchor location | Contents rendered once in source order; bounded width may guide safe reflow, but absolute coordinates and overlap are not reproduced | Explicit frame marker and source-order contents |
+| Fixed-page and repeating frames | Page/flag/rectangle metadata typed when bounded; raw fields retained | Visible labeled source-order reflow; original fixed/repeating placement is not reproduced | Explicit frame marker and source-order contents |
+| Background frames and z-order | No byte-level mapping claimed; `layer_role` remains `unknown` | No inferred background or stacking behavior | No inferred background or stacking behavior |
+| Explicit page breaks | Paragraph break request retained; unknown layout target remains opaque | Preserved between visible content; redundant leading/trailing breaks may be dropped | Explicit break marker where the format supports it |
+| `[pg]` page hints | Preserved as opaque typed raw data; never trusted as page count or allocation input | Not used for pagination | Available only through structured preservation output |
 | Embedded BMP | Safely indexed and bounded | HTML embeds; paged formats use placeholder | Placeholder |
 | WMF type-1 SRCCOPY DIB subset | Strict bounded standard/placeable validation; one bottom-up 1/4/8/24-bit BI_RGB raster decoded to inert RGB IR | Fresh internal PNG in HTML/PDF/ODT/DOCX | Explicit dimensions marker |
 | Other/malformed WMF | Digest-bearing inert placeholder and diagnostic | Visible placeholder; never activated | Visible placeholder |

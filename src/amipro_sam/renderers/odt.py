@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from io import BytesIO
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
@@ -20,6 +21,7 @@ from ..model import (
     Document,
     Footer,
     Footnote,
+    Frame,
     Header,
     Image,
     PageBreak,
@@ -28,6 +30,8 @@ from ..model import (
     StyleDefinition,
     Table,
     TableCell,
+    TableRow,
+    TextRun,
     UnsupportedObject,
     WmfGraphic,
 )
@@ -40,8 +44,15 @@ __all__ = ["render"]
 MIMETYPE = "application/vnd.oasis.opendocument.text"
 _HEX_COLOR = re.compile(r"#?([0-9a-fA-F]{6})\Z")
 _MAX_TABLE_COLUMNS = 256
+_MAX_TABLE_ROWS = 390
+_MAX_BLOCKS_PER_LIST = 100_000
+_MAX_BLOCK_DEPTH = 64
 _COVERED = object()
 _ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+_MAX_PAGE_TWIPS = 31_680
+_MIN_PAGE_TWIPS = 1_440
+_MIN_BODY_TWIPS = 720
+_MIN_FURNITURE_MARGIN_TWIPS = 720
 NS = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
     "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
@@ -59,15 +70,302 @@ for _prefix, _uri in NS.items():
     ET.register_namespace(_prefix, _uri)
 
 
+@dataclass(frozen=True, slots=True)
+class _PageGeometry:
+    width_twips: int = 12_240
+    height_twips: int = 15_840
+    margin_left_twips: int = 1_440
+    margin_right_twips: int = 1_440
+    margin_top_twips: int = 1_440
+    margin_bottom_twips: int = 1_440
+    layout_index: int | None = None
+    non_alternating: bool = False
+
+    @property
+    def body_width_twips(self) -> int:
+        return self.width_twips - self.margin_left_twips - self.margin_right_twips
+
+    @property
+    def body_height_twips(self) -> int:
+        return self.height_twips - self.margin_top_twips - self.margin_bottom_twips
+
+
+@dataclass(frozen=True, slots=True)
+class _NativePageContent:
+    header_odd: Header | None = None
+    header_even: Header | None = None
+    footer_odd: Footer | None = None
+    footer_even: Footer | None = None
+    ids: frozenset[int] = frozenset()
+    alternating: bool = True
+
+    @property
+    def uses_odd_even(self) -> bool:
+        return self.alternating and any(
+            item is not None
+            for item in (
+                self.header_odd,
+                self.header_even,
+                self.footer_odd,
+                self.footer_even,
+            )
+        )
+
+
+def _page_geometry(document: object) -> _PageGeometry:
+    layouts = getattr(document, "page_layouts", None)
+    if not isinstance(layouts, (list, tuple)):
+        return _PageGeometry()
+    for layout in layouts:
+        if getattr(layout, "valid", None) is not True:
+            continue
+        for variant_name in ("odd", "even"):
+            variant = getattr(layout, variant_name, None)
+            if getattr(variant, "valid", None) is not True:
+                continue
+            values = tuple(
+                getattr(variant, name, None)
+                for name in (
+                    "width_twips",
+                    "height_twips",
+                    "margin_left_twips",
+                    "margin_right_twips",
+                    "margin_top_twips",
+                    "margin_bottom_twips",
+                )
+            )
+            if not all(type(value) is int for value in values):
+                continue
+            width, height, left, right, top, bottom = values
+            if not (
+                _MIN_PAGE_TWIPS <= width <= _MAX_PAGE_TWIPS
+                and _MIN_PAGE_TWIPS <= height <= _MAX_PAGE_TWIPS
+            ):
+                continue
+            if min(left, right, top, bottom) < 0:
+                continue
+            if left + right >= width or top + bottom >= height:
+                continue
+            if width - left - right < _MIN_BODY_TWIPS:
+                continue
+            if height - top - bottom < _MIN_BODY_TWIPS:
+                continue
+            layout_index = getattr(layout, "index", None)
+            if type(layout_index) is not int:
+                layout_index = None
+            return _PageGeometry(
+                width_twips=width,
+                height_twips=height,
+                margin_left_twips=left,
+                margin_right_twips=right,
+                margin_top_twips=top,
+                margin_bottom_twips=bottom,
+                layout_index=layout_index,
+                non_alternating=getattr(layout, "non_alternating", None) is True,
+            )
+    return _PageGeometry()
+
+
+def _native_page_content(
+    document: object,
+    geometry: _PageGeometry,
+) -> _NativePageContent:
+    if geometry.layout_index is None:
+        return _NativePageContent()
+    candidates: dict[str, list[Header | Footer]] = {
+        "header_odd": [],
+        "header_even": [],
+        "footer_odd": [],
+        "footer_even": [],
+    }
+    for block in _safe_blocks(getattr(document, "blocks", None)):
+        if not isinstance(block, Header | Footer):
+            continue
+        placement = getattr(block, "placement", None)
+        if not isinstance(placement, str) or placement not in {"odd", "even"}:
+            continue
+        if getattr(block, "origin", None) != "layout":
+            continue
+        if getattr(block, "layout_index", None) != geometry.layout_index:
+            continue
+        key = f"{'header' if isinstance(block, Header) else 'footer'}_{placement}"
+        candidates[key].append(block)
+
+    selected = {
+        key: (
+            values[0]
+            if len(values) == 1 and _native_furniture_fits(values[0], geometry)
+            else None
+        )
+        for key, values in candidates.items()
+    }
+    if geometry.non_alternating:
+        selected["header_even"] = None
+        selected["footer_even"] = None
+    ids = frozenset(
+        id(value) for value in selected.values() if value is not None
+    )
+    return _NativePageContent(
+        ids=ids,
+        alternating=not geometry.non_alternating,
+        **selected,
+    )
+
+
+def _native_furniture_fits(
+    block: Header | Footer,
+    geometry: _PageGeometry,
+) -> bool:
+    if getattr(block, "terminated", None) is not True:
+        return False
+    if type(getattr(block, "unknown_flag_bits", None)) is not int:
+        return False
+    if block.unknown_flag_bits != 0:
+        return False
+    frame = getattr(block, "frame", None)
+    if frame is not None and (
+        not isinstance(frame, Frame)
+        or type(getattr(frame, "unknown_flag_bits", None)) is not int
+        or frame.unknown_flag_bits != 0
+    ):
+        return False
+    child_blocks = getattr(block, "blocks", None)
+    if not isinstance(child_blocks, (list, tuple)) or not 1 <= len(child_blocks) <= 4:
+        return False
+    if not all(_native_paragraph_is_safe(item) for item in child_blocks):
+        return False
+    characters_per_line = max(20, geometry.body_width_twips // 144)
+    line_count = 0
+    total_characters = 0
+    for paragraph in child_blocks:
+        text = _bounded_native_paragraph_text(paragraph)
+        if text is None:
+            return False
+        total_characters += len(text)
+        if total_characters > 8_192:
+            return False
+        lines = text.splitlines() or [""]
+        line_count += sum(
+            max(1, math.ceil(len(line) / characters_per_line)) for line in lines
+        )
+    margin = (
+        geometry.margin_top_twips
+        if isinstance(block, Header)
+        else geometry.margin_bottom_twips
+    )
+    required = max(_MIN_FURNITURE_MARGIN_TWIPS, 360 + line_count * 360)
+    return margin >= required
+
+
+def _bounded_native_paragraph_text(paragraph: Paragraph) -> str | None:
+    runs = getattr(paragraph, "runs", None)
+    if not isinstance(runs, (list, tuple)) or len(runs) > 1_024:
+        return None
+    parts: list[str] = []
+    length = 0
+    for run in runs:
+        if not isinstance(run, TextRun) or not isinstance(run.style, CharacterStyle):
+            return None
+        value = run.text
+        if not isinstance(value, str):
+            return None
+        length += len(value)
+        if length > 4_096:
+            return None
+        parts.append(value)
+    return "".join(parts)
+
+
+def _native_paragraph_is_safe(value: object) -> bool:
+    page_break = getattr(value, "page_break_before", None)
+    list_kind = getattr(value, "list_kind", None)
+    return (
+        isinstance(value, Paragraph)
+        and (page_break is False or page_break is None)
+        and (list_kind is None or (isinstance(list_kind, str) and list_kind == ""))
+        and isinstance(getattr(value, "runs", None), (list, tuple))
+    )
+
+
+def _safe_blocks(value: object) -> list[Block]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(value[:_MAX_BLOCKS_PER_LIST])
+
+
+def _normalized_blocks(blocks: list[Block]) -> list[Block]:
+    """Discard edge breaks while preserving every explicit interior break."""
+
+    result: list[Block] = []
+    index = 0
+    while index < len(blocks):
+        if not isinstance(blocks[index], PageBreak):
+            result.append(blocks[index])
+            index += 1
+            continue
+        end = index
+        while end < len(blocks) and isinstance(blocks[end], PageBreak):
+            end += 1
+        if result and end < len(blocks):
+            result.extend(blocks[index:end])
+        index = end
+    return result
+
+
+def _append_native_paragraphs(parent: ET.Element, blocks: object) -> None:
+    for paragraph in _safe_blocks(blocks):
+        if not isinstance(paragraph, Paragraph):
+            continue
+        node = ET.SubElement(parent, _q("text", "p"))
+        _append_text(node, _safe_paragraph_text(paragraph))
+
+
+def _safe_paragraph_text(paragraph: object) -> str:
+    parts: list[str] = []
+    runs = getattr(paragraph, "runs", None)
+    if not isinstance(runs, (list, tuple)):
+        return ""
+    for run in runs:
+        value = getattr(run, "text", "")
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, bytes):
+            parts.append(value.decode("utf-8", errors="replace"))
+    return "".join(parts)
+
+
+def _frame_label(frame: Frame) -> str:
+    content_kind = getattr(frame, "content_kind", None)
+    if not isinstance(content_kind, str) or content_kind not in {
+        "text", "table", "image", "drawing", "unknown"
+    }:
+        content_kind = "unknown"
+    placement = getattr(frame, "placement", None)
+    if not isinstance(placement, str) or placement not in {
+        "anchored", "fixed-page", "repeating", "unknown"
+    }:
+        placement = "unknown"
+    return (
+        f"[Frame: {content_kind}; {placement} placement reflowed in source order; "
+        "original coordinates not reproduced]"
+    )
+
+
+def _twips(value: int | float) -> str:
+    return f"{value / 20:g}pt"
+
+
 def render(document: Document, **_options: object) -> bytes:
     """Return *document* as a valid ODT package."""
 
     try:
-        builder = _ContentBuilder(document)
+        geometry = _page_geometry(document)
+        native = _native_page_content(document, geometry)
+        builder = _ContentBuilder(document, geometry, native)
         content = builder.build()
         members = [
             ("content.xml", content),
-            ("styles.xml", _styles_xml()),
+            ("styles.xml", _styles_xml(geometry, native)),
             ("meta.xml", _meta_xml()),
             ("settings.xml", _settings_xml()),
             (
@@ -89,8 +387,15 @@ def render(document: Document, **_options: object) -> bytes:
 
 
 class _ContentBuilder:
-    def __init__(self, document: Document) -> None:
+    def __init__(
+        self,
+        document: Document,
+        geometry: _PageGeometry,
+        native: _NativePageContent,
+    ) -> None:
         self.document = document
+        self.geometry = geometry
+        self.native_ids = native.ids
         self.automatic_styles = ET.Element(_q("office", "automatic-styles"))
         self.body_text = ET.Element(_q("office", "text"))
         self._paragraph_style_counter = 0
@@ -98,6 +403,7 @@ class _ContentBuilder:
         self._table_counter = 0
         self._image_counter = 0
         self._sdw_image_counter = 0
+        self._active_container_ids: set[int] = set()
         self.generated_images: list[tuple[str, bytes]] = []
         self._define_list_styles()
         self._define_table_cell_styles()
@@ -116,53 +422,87 @@ class _ContentBuilder:
         self._add_blocks(self.document.blocks)
         return _xml_bytes(root)
 
-    def _add_blocks(self, blocks: list[Block]) -> None:
-        index = 0
-        while index < len(blocks):
-            block = blocks[index]
-            if isinstance(block, Paragraph) and block.list_kind is not None:
-                list_kind = block.list_kind
-                list_node = ET.SubElement(
-                    self.body_text,
-                    _q("text", "list"),
-                    {_q("text", "style-name"): "LNumber" if list_kind == "number" else "LBullet"},
+    def _add_blocks(self, blocks: object, *, depth: int = 0) -> None:
+        if depth > _MAX_BLOCK_DEPTH:
+            self._add_placeholder("[Nested content omitted: safe depth limit reached]")
+            return
+        if isinstance(blocks, (list, tuple)):
+            container_id = id(blocks)
+            if container_id in self._active_container_ids:
+                self._add_placeholder(
+                    "[Nested content omitted: repeated or cyclic block reference]"
                 )
-                while index < len(blocks):
-                    candidate = blocks[index]
-                    if not isinstance(candidate, Paragraph) or candidate.list_kind != list_kind:
-                        break
-                    item = ET.SubElement(list_node, _q("text", "list-item"))
-                    self._add_paragraph(item, candidate, list_item=True)
-                    index += 1
-                continue
-            if isinstance(block, Paragraph):
-                self._add_paragraph(self.body_text, block)
-            elif isinstance(block, PageBreak):
-                paragraph = ET.SubElement(
-                    self.body_text,
-                    _q("text", "p"),
-                    {_q("text", "style-name"): self._page_break_style()},
-                )
-                paragraph.text = ""
-            elif isinstance(block, Table):
-                self._add_table(block)
-            elif isinstance(block, Image):
-                self._add_placeholder(_image_placeholder(block))
-            elif isinstance(block, WmfGraphic):
-                self._add_wmf(block)
-            elif isinstance(block, SdwDrawing):
-                self._add_sdw(block)
-            elif isinstance(block, UnsupportedObject):
-                self._add_placeholder(f"[Unsupported {block.kind}: {block.description}]")
-            elif isinstance(block, Annotation | Footnote | Header | Footer):
-                self._add_placeholder(_container_label(block))
-                self._add_blocks(block.blocks)
-            index += 1
+                return
+            self._active_container_ids.add(container_id)
+        else:
+            container_id = None
+        visible = [
+            block for block in _safe_blocks(blocks) if id(block) not in self.native_ids
+        ]
+        blocks_to_render = _normalized_blocks(visible)
+        try:
+            index = 0
+            while index < len(blocks_to_render):
+                block = blocks_to_render[index]
+                if isinstance(block, Paragraph) and block.list_kind is not None:
+                    list_kind = block.list_kind
+                    list_node = ET.SubElement(
+                        self.body_text,
+                        _q("text", "list"),
+                        {
+                            _q("text", "style-name"): (
+                                "LNumber" if list_kind == "number" else "LBullet"
+                            )
+                        },
+                    )
+                    while index < len(blocks_to_render):
+                        candidate = blocks_to_render[index]
+                        if not isinstance(candidate, Paragraph) or candidate.list_kind != list_kind:
+                            break
+                        item = ET.SubElement(list_node, _q("text", "list-item"))
+                        self._add_paragraph(item, candidate, list_item=True)
+                        index += 1
+                    continue
+                if isinstance(block, Paragraph):
+                    self._add_paragraph(self.body_text, block)
+                elif isinstance(block, PageBreak):
+                    paragraph = ET.SubElement(
+                        self.body_text,
+                        _q("text", "p"),
+                        {_q("text", "style-name"): self._page_break_style()},
+                    )
+                    paragraph.text = ""
+                elif isinstance(block, Table):
+                    self._add_table(block)
+                elif isinstance(block, Image):
+                    self._add_placeholder(_image_placeholder(block))
+                elif isinstance(block, WmfGraphic):
+                    self._add_wmf(block)
+                elif isinstance(block, SdwDrawing):
+                    self._add_sdw(block)
+                elif isinstance(block, Frame):
+                    self._add_placeholder(_frame_label(block))
+                    self._add_blocks(getattr(block, "blocks", None), depth=depth + 1)
+                elif isinstance(block, UnsupportedObject):
+                    self._add_placeholder(f"[Unsupported {block.kind}: {block.description}]")
+                elif isinstance(block, Annotation | Footnote | Header | Footer):
+                    self._add_placeholder(_container_label(block))
+                    self._add_blocks(getattr(block, "blocks", None), depth=depth + 1)
+                index += 1
+        finally:
+            # Retaining visited containers bounds shared acyclic graphs as
+            # well as direct cycles; repeated content receives the visible
+            # marker at the entry check above.
+            pass
 
     def _add_wmf(self, graphic: WmfGraphic) -> None:
         try:
             payload = wmf_png(graphic)
-            width, height = wmf_display_size(graphic)
+            width, height = wmf_display_size(
+                graphic,
+                max_width_in=min(6.25, self.geometry.body_width_twips / 1440),
+                max_height_in=min(7.5, self.geometry.body_height_twips / 1440),
+            )
         except WmfDecodeError:
             self._add_placeholder("[Invalid WMF preview]")
             return
@@ -195,7 +535,9 @@ class _ContentBuilder:
         try:
             payload = sdw_png(drawing)
             width, height = sdw_display_size(
-                drawing, max_width_in=6.25, max_height_in=7.5
+                drawing,
+                max_width_in=min(6.25, self.geometry.body_width_twips / 1440),
+                max_height_in=min(7.5, self.geometry.body_height_twips / 1440),
             )
         except SdwDecodeError:
             self._add_placeholder(_sdw_placeholder(drawing))
@@ -250,14 +592,42 @@ class _ContentBuilder:
         style_name = self._paragraph_style(paragraph, style_definition, list_item=list_item)
         node = ET.SubElement(parent, _q("text", "p"), {_q("text", "style-name"): style_name})
         base = style_definition.character if style_definition else CharacterStyle()
-        for run in paragraph.runs:
+        runs = paragraph.runs
+        if not isinstance(runs, list | tuple):
+            _append_text(node, paragraph.text)
+            return
+        seen_runs: set[int] = set()
+        omitted = len(runs) > 4_096
+        total_characters = 0
+        for run in runs[:4_096]:
+            if not isinstance(run, TextRun) or not isinstance(run.style, CharacterStyle):
+                _append_text(node, "[Invalid text run omitted]")
+                continue
+            if id(run) in seen_runs:
+                omitted = True
+                continue
+            seen_runs.add(id(run))
+            value = run.text
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", errors="replace")
+            if not isinstance(value, str):
+                _append_text(node, "[Invalid text run omitted]")
+                continue
+            total_characters += len(value)
+            if total_characters > 1_000_000:
+                value = value[: max(0, 1_000_000 - (total_characters - len(value)))]
+                omitted = True
             effective = _merge_character_style(base, run.style)
             span = ET.SubElement(
                 node,
                 _q("text", "span"),
                 {_q("text", "style-name"): self._text_style(effective)},
             )
-            _append_text(span, run.text)
+            _append_text(span, value)
+            if total_characters > 1_000_000:
+                break
+        if omitted:
+            _append_text(node, "[Paragraph content omitted at safe rendering limit]")
 
     def _add_placeholder(self, text: str) -> None:
         style_name = self._placeholder_style()
@@ -269,7 +639,28 @@ class _ContentBuilder:
         _append_text(paragraph, text)
 
     def _add_table(self, table: Table) -> None:
-        grid, anchors = _layout_table(table)
+        rows = _safe_table_rows(table)
+        if not rows:
+            self._add_placeholder(
+                "[Invalid table rows omitted]"
+                if not isinstance(table.rows, list | tuple)
+                else "[Empty table]"
+            )
+            return
+        if any(
+            isinstance(row.cells, list | tuple)
+            and len(row.cells) > _MAX_TABLE_COLUMNS
+            for row in rows
+        ):
+            self._add_placeholder(
+                "[Table cells omitted at safe 256-column limit]"
+            )
+            return
+        try:
+            grid, anchors = _layout_table(table)
+        except RenderError:
+            self._add_placeholder("[Table grid omitted at safe 256-column limit]")
+            return
         if not grid or not grid[0]:
             self._add_placeholder("[Empty table]")
             return
@@ -299,14 +690,15 @@ class _ContentBuilder:
         }
 
         header_count = 0
-        for row in table.rows:
-            if not row.is_header:
+        for row in rows:
+            if not row.is_header or header_count >= 8:
                 break
             header_count += 1
         header_parent = None
         if header_count:
             header_parent = ET.SubElement(node, _q("table", "table-header-rows"))
 
+        seen_cells: set[int] = set()
         for row_index, grid_row in enumerate(grid):
             row_parent = (
                 header_parent
@@ -343,9 +735,39 @@ class _ContentBuilder:
                 if row_span > 1:
                     attributes[_q("table", "number-rows-spanned")] = str(row_span)
                 cell_node = ET.SubElement(row_node, _q("table", "table-cell"), attributes)
-                if not cell.blocks:
+                repeated_cell = id(cell) in seen_cells
+                seen_cells.add(id(cell))
+                if repeated_cell:
+                    marker = ET.SubElement(cell_node, _q("text", "p"))
+                    _append_text(marker, "[Repeated table cell omitted]")
+                paragraphs = (
+                    cell.blocks[:4_096]
+                    if isinstance(cell.blocks, list | tuple)
+                    else []
+                )
+                valid_paragraphs: list[Paragraph] = []
+                seen_paragraphs: set[int] = set()
+                for item in paragraphs:
+                    if not isinstance(item, Paragraph) or id(item) in seen_paragraphs:
+                        continue
+                    seen_paragraphs.add(id(item))
+                    valid_paragraphs.append(item)
+                if (
+                    not isinstance(cell.blocks, list | tuple)
+                    or len(valid_paragraphs) != len(paragraphs)
+                    or (
+                        isinstance(cell.blocks, list | tuple)
+                        and len(cell.blocks) > 4_096
+                    )
+                ):
+                    marker = ET.SubElement(cell_node, _q("text", "p"))
+                    _append_text(
+                        marker,
+                        "[Invalid or repeated table cell content omitted]",
+                    )
+                if not valid_paragraphs:
                     ET.SubElement(cell_node, _q("text", "p"))
-                for paragraph in cell.blocks:
+                for paragraph in valid_paragraphs if not repeated_cell else []:
                     self._add_paragraph(cell_node, paragraph)
 
     def _paragraph_style(
@@ -505,7 +927,7 @@ class _ContentBuilder:
             node,
             _q("style", "table-properties"),
             {
-                _q("style", "width"): "6.5in",
+                _q("style", "width"): _twips(self.geometry.body_width_twips),
                 _q("table", "align"): "left",
                 _q("style", "may-break-between-rows"): "true",
             },
@@ -522,7 +944,11 @@ class _ContentBuilder:
         ET.SubElement(
             node,
             _q("style", "table-column-properties"),
-            {_q("style", "column-width"): f"{6.5 / columns:g}in"},
+            {
+                _q("style", "column-width"): _twips(
+                    self.geometry.body_width_twips / columns
+                )
+            },
         )
         return name
 
@@ -582,7 +1008,10 @@ class _ContentBuilder:
                 )
 
 
-def _styles_xml() -> bytes:
+def _styles_xml(
+    geometry: _PageGeometry,
+    native: _NativePageContent,
+) -> bytes:
     root = ET.Element(
         _q("office", "document-styles"),
         {_q("office", "version"): "1.3"},
@@ -613,18 +1042,45 @@ def _styles_xml() -> bytes:
         page_layout,
         _q("style", "page-layout-properties"),
         {
-            _q("fo", "page-width"): "8.5in",
-            _q("fo", "page-height"): "11in",
-            _q("style", "print-orientation"): "portrait",
-            _q("fo", "margin"): "1in",
+            _q("fo", "page-width"): _twips(geometry.width_twips),
+            _q("fo", "page-height"): _twips(geometry.height_twips),
+            _q("style", "print-orientation"): (
+                "landscape" if geometry.width_twips > geometry.height_twips else "portrait"
+            ),
+            _q("fo", "margin-left"): _twips(geometry.margin_left_twips),
+            _q("fo", "margin-right"): _twips(geometry.margin_right_twips),
+            _q("fo", "margin-top"): _twips(geometry.margin_top_twips),
+            _q("fo", "margin-bottom"): _twips(geometry.margin_bottom_twips),
+            _q("style", "page-usage"): "mirrored" if native.uses_odd_even else "all",
         },
     )
     masters = ET.SubElement(root, _q("office", "master-styles"))
-    ET.SubElement(
+    master = ET.SubElement(
         masters,
         _q("style", "master-page"),
         {_q("style", "name"): "Standard", _q("style", "page-layout-name"): "PM1"},
     )
+    for odd_key, even_key, odd_tag, even_tag in (
+        ("header_odd", "header_even", "header", "header-left"),
+        ("footer_odd", "footer_even", "footer", "footer-left"),
+    ):
+        odd = getattr(native, odd_key)
+        even = getattr(native, even_key)
+        if odd is None and even is None:
+            continue
+        odd_node = ET.SubElement(master, _q("style", odd_tag))
+        if odd is not None:
+            _append_native_paragraphs(odd_node, getattr(odd, "blocks", None))
+        else:
+            # LibreOffice treats a structurally empty left/right container as
+            # absent and inherits the opposite side.  An explicit empty
+            # paragraph represents the intentional blank variant instead.
+            ET.SubElement(odd_node, _q("text", "p"))
+        even_node = ET.SubElement(master, _q("style", even_tag))
+        if even is not None:
+            _append_native_paragraphs(even_node, getattr(even, "blocks", None))
+        else:
+            ET.SubElement(even_node, _q("text", "p"))
     return _xml_bytes(root)
 
 
@@ -683,21 +1139,34 @@ def _manifest_xml(image_names: list[str] | None = None) -> bytes:
 def _layout_table(
     table: Table,
 ) -> tuple[list[list[object | TableCell | None]], list[tuple[int, int, TableCell, int, int]]]:
-    row_count = len(table.rows)
+    rows = _safe_table_rows(table)
+    row_count = len(rows)
     if not row_count:
         return [], []
     grid: list[list[object | TableCell | None]] = [[] for _ in range(row_count)]
     anchors: list[tuple[int, int, TableCell, int, int]] = []
+    current_width = 0
 
     def ensure_width(width: int) -> None:
+        nonlocal current_width
         if width > _MAX_TABLE_COLUMNS:
             raise RenderError(f"Table exceeds the safe {_MAX_TABLE_COLUMNS}-column limit")
+        if width <= current_width:
+            return
         for row in grid:
             row.extend([None] * (width - len(row)))
+        current_width = width
 
-    for row_index, row in enumerate(table.rows):
+    for row_index, row in enumerate(rows):
         column_index = 0
-        for cell in row.cells:
+        cells = row.cells if isinstance(row.cells, list | tuple) else []
+        if len(cells) > _MAX_TABLE_COLUMNS:
+            raise RenderError(
+                f"Table exceeds the safe {_MAX_TABLE_COLUMNS}-column limit"
+            )
+        for cell in cells[:_MAX_TABLE_COLUMNS]:
+            if not isinstance(cell, TableCell):
+                continue
             while column_index < len(grid[row_index]) and grid[row_index][column_index] is not None:
                 column_index += 1
             column_span = _safe_span(cell.column_span, _MAX_TABLE_COLUMNS)
@@ -722,6 +1191,41 @@ def _layout_table(
     max_columns = max((len(row) for row in grid), default=0)
     ensure_width(max_columns)
     return grid, anchors
+
+
+def _safe_table_rows(table: Table) -> list[TableRow]:
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        return []
+    result: list[TableRow] = []
+    seen: set[int] = set()
+    omitted = len(rows) > _MAX_TABLE_ROWS
+    for row in rows[:_MAX_TABLE_ROWS]:
+        if not isinstance(row, TableRow) or id(row) in seen:
+            omitted = True
+            continue
+        seen.add(id(row))
+        result.append(row)
+    if omitted:
+        result = result[: _MAX_TABLE_ROWS - 1]
+        result.append(
+            TableRow(
+                cells=[
+                    TableCell(
+                        blocks=[
+                            Paragraph(
+                                runs=[
+                                    TextRun(
+                                        "[Table content omitted at safe rendering limit]"
+                                    )
+                                ]
+                            )
+                        ]
+                    )
+                ]
+            )
+        )
+    return result
 
 
 def _merge_character_style(base: CharacterStyle, run: CharacterStyle) -> CharacterStyle:
@@ -878,13 +1382,16 @@ def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
     if isinstance(block, Footnote):
         return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
     kind = "Header" if isinstance(block, Header) else "Footer"
+    source_placement = getattr(block, "placement", None)
+    if not isinstance(source_placement, str):
+        source_placement = "unknown"
     placement = {
         "all": "all pages",
         "odd": "odd/right pages",
         "even": "even/left pages",
         "odd-even": "odd and even variants",
         "unknown": "placement unknown",
-    }.get(block.placement, "placement unknown")
+    }.get(source_placement, "placement unknown")
     return f"[{kind}: {placement}]"
 
 
