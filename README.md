@@ -24,10 +24,14 @@ experimental DOCX output.
 - Text recovery from the main document, text frames, and table cells.
 - Typed annotations, footnotes, and body/layout header/footer streams with raw
   placement records retained in the intermediate representation.
-- Bounds-checked extraction of embedded BMP data and direct, inert PNG previews
-  for the validated WMF/DIB subset.
-- Visible placeholders for unsupported WMF operations, Ami Draw, OLE,
-  equations, macros, and other unsupported objects.
+- Bounds-checked extraction of embedded BMP data, direct inert PNG previews for
+  the validated WMF/DIB subset, and typed SHA-256-bearing preservation of Ami
+  Draw SDW payloads.
+- Grayscale/index previews for the narrow, validated 1-, 4-, and 8-bit Ami Draw
+  companion subset; SDW vector geometry and unsupported companion depths remain
+  explicit placeholders.
+- Visible placeholders for unsupported WMF/SDW operations, OLE, equations,
+  macros, and other unsupported objects.
 - Directory inventory, batch conversion that continues after corrupt files, and
   stable diagnostics.
 - No execution of macros, DDE, scripts, or OLE; no remote resource loading and
@@ -146,6 +150,10 @@ content, and a restrictive Content Security Policy. ODT, PDF, and DOCX are
 modern reflows. They are designed for legibility and preservation access, not
 pixel-identical reproduction of Ami Pro pagination or printer metrics.
 
+Raw SDW vector or companion bytes are never sent to a browser, embedded in an
+office package or PDF, or passed to an external converter. Visual outputs receive
+only fresh PNG data generated from the independently validated companion subset.
+
 Markdown and text intentionally flatten layout that their formats cannot
 represent. Unsupported data is marked rather than silently omitted.
 
@@ -153,8 +161,8 @@ represent. Unsupported data is marked rather than silently omitted.
 
 Treat every legacy document as untrusted. The toolkit:
 
-- applies configurable file, line, record, table, embedded-asset, and WMF
-  record/object/palette/dimension/pixel limits;
+- applies configurable file, line, record, table, embedded-asset, WMF, and SDW
+  record/depth/point/dimension/pixel limits;
 - validates every embedded offset and length before slicing bytes;
 - does not invoke office software or external converters in production;
 - never activates macros, OLE, DDE, external links, or document scripts;

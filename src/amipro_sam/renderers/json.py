@@ -17,5 +17,6 @@ def render(document: Document, **_options: object) -> bytes:
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
+        allow_nan=False,
     )
     return (serialized + "\n").encode("utf-8", errors="backslashreplace")

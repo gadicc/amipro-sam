@@ -23,6 +23,7 @@ from .model import (
     Header,
     Image,
     Paragraph,
+    SdwDrawing,
     SectionRecord,
     Severity,
     SourceSpan,
@@ -35,6 +36,7 @@ from .model import (
     UnsupportedObject,
     WmfGraphic,
 )
+from .sdw import SdwDecodeError, decode_sdw_preview, sdw_asset_limit, validate_sdw
 from .syntax import (
     MultilineContainerScanner,
 )
@@ -140,6 +142,22 @@ class _RecordBudget:
             raise ResourceLimitError(
                 f"{description} exceeds {self.limit} materialized records"
             )
+
+
+def _effective_lowerable_limit(
+    configured: object, hard_limit: int, description: str
+) -> int:
+    """Clamp a caller limit to its built-in ceiling and reject invalid settings."""
+
+    if (
+        isinstance(configured, bool)
+        or not isinstance(configured, int)
+        or configured < 0
+    ):
+        raise ResourceLimitError(
+            f"{description} must be configured as a nonnegative integer"
+        )
+    return min(configured, hard_limit)
 
 
 def parse_file(
@@ -571,6 +589,13 @@ def _parse_structures(
             max(0, limits.max_total_wmf_pixels),
         )
     )
+    sdw_pixel_budget = _RecordBudget(
+        _effective_lowerable_limit(
+            limits.max_total_sdw_pixels,
+            ParseLimits().max_total_sdw_pixels,
+            "document-wide SDW pixel limit",
+        )
+    )
     assets: dict[str, list[Block]] = {}
     for section in sections:
         if section.name.lower() == "embedded":
@@ -583,6 +608,7 @@ def _parse_structures(
                     limits,
                     data_base_offset=data_base_offset,
                     wmf_pixel_budget=wmf_pixel_budget,
+                    sdw_pixel_budget=sdw_pixel_budget,
                 )
             )
 
@@ -1049,8 +1075,15 @@ def _parse_embedded_manifest(
     *,
     data_base_offset: int = 0,
     wmf_pixel_budget: _RecordBudget | None = None,
+    sdw_pixel_budget: _RecordBudget | None = None,
 ) -> dict[str, list[Block]]:
     raw = "\n".join(section.raw_lines).encode(decoded.encoding, errors="surrogateescape")
+    effective_total_asset_bytes = _effective_lowerable_limit(
+        limits.max_total_asset_bytes,
+        ParseLimits().max_total_asset_bytes,
+        "embedded asset total byte limit",
+    )
+    effective_sdw_asset_bytes = sdw_asset_limit(limits)
     total = 0
     count = 0
     assets: dict[str, list[Block]] = {}
@@ -1078,11 +1111,18 @@ def _parse_embedded_manifest(
         physical_asset_offset = asset_offset + data_base_offset
         physical_preview_offset = preview_offset + data_base_offset
         asset_is_valid = _valid_range(physical_asset_offset, asset_length, len(data))
-        if asset_length > limits.max_embedded_asset_bytes:
+        asset_byte_limit = (
+            effective_sdw_asset_bytes
+            if extension == ".sdw"
+            else max(0, limits.max_embedded_asset_bytes)
+        )
+        if asset_length > asset_byte_limit:
             document.diagnostics.append(
                 Diagnostic(
                     Severity.WARNING,
-                    "embedded-asset-too-large",
+                    "sdw-asset-too-large"
+                    if extension == ".sdw"
+                    else "embedded-asset-too-large",
                     f"{extension} asset of {asset_length} bytes was not loaded",
                     section.source,
                 )
@@ -1096,15 +1136,16 @@ def _parse_embedded_manifest(
                     section.source,
                 )
             )
-        accounted = min(asset_length, limits.max_embedded_asset_bytes)
-        if total > limits.max_total_asset_bytes - accounted:
+        accounted = min(asset_length, asset_byte_limit)
+        if total > effective_total_asset_bytes - accounted:
             raise ResourceLimitError(
-                f"embedded asset total exceeds {limits.max_total_asset_bytes} bytes"
+                f"embedded asset total exceeds {effective_total_asset_bytes} bytes"
             )
         total += accounted
         preview_is_valid = preview_length == 0 or _valid_range(
             physical_preview_offset, preview_length, len(data)
         )
+        sdw_preview_data: bytes | None = None
         if not preview_is_valid:
             document.diagnostics.append(
                 Diagnostic(
@@ -1114,6 +1155,24 @@ def _parse_embedded_manifest(
                     section.source,
                 )
             )
+        elif extension == ".sdw" and preview_length > effective_sdw_asset_bytes:
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "sdw-preview-too-large",
+                    f"Ami Draw companion of {preview_length} bytes was not loaded",
+                    section.source,
+                )
+            )
+        elif extension == ".sdw" and preview_length:
+            if total > effective_total_asset_bytes - preview_length:
+                raise ResourceLimitError(
+                    f"embedded asset total exceeds {effective_total_asset_bytes} bytes"
+                )
+            total += preview_length
+            sdw_preview_data = data[
+                physical_preview_offset : physical_preview_offset + preview_length
+            ]
         elif preview_length:
             asset_blocks.append(
                 UnsupportedObject(
@@ -1125,7 +1184,27 @@ def _parse_embedded_manifest(
                     source=section.source,
                 )
             )
-        if (
+        if extension == ".sdw":
+            sdw_data = (
+                data[physical_asset_offset : physical_asset_offset + asset_length]
+                if asset_is_valid and asset_length <= effective_sdw_asset_bytes
+                else None
+            )
+            asset_blocks.insert(
+                0,
+                _parse_sdw_asset(
+                    document,
+                    asset_id=asset_id,
+                    asset_offset=asset_offset,
+                    asset_length=asset_length,
+                    asset_data=sdw_data,
+                    companion_data=sdw_preview_data,
+                    limits=limits,
+                    pixel_budget=sdw_pixel_budget,
+                    source=section.source,
+                ),
+            )
+        elif (
             extension == ".bmp"
             and asset_is_valid
             and asset_length <= limits.max_embedded_asset_bytes
@@ -1224,6 +1303,131 @@ def _parse_embedded_manifest(
             )
         )
     return assets
+
+
+def _parse_sdw_asset(
+    document: Document,
+    *,
+    asset_id: str,
+    asset_offset: int,
+    asset_length: int,
+    asset_data: bytes | None,
+    companion_data: bytes | None,
+    limits: ParseLimits,
+    pixel_budget: _RecordBudget | None,
+    source: SourceSpan,
+) -> SdwDrawing:
+    """Preserve one Ami Draw row and materialize only a validated companion preview."""
+
+    drawing = SdwDrawing(
+        asset_id=asset_id,
+        declared_offset=asset_offset,
+        declared_length=asset_length,
+        data=asset_data,
+        source_sha256=hashlib.sha256(asset_data).hexdigest() if asset_data is not None else None,
+        signature_family=(
+            "ascii-variant"
+            if asset_data is not None
+            and asset_data.startswith(b"AMI_METAFILE_FORMAT VERSION")
+            else "common-sm-family"
+            if asset_data is not None
+            and len(asset_data) >= 4
+            and asset_data[:2] == b"SM"
+            and asset_data[3] == 1
+            else "unrecognized"
+            if asset_data is not None
+            else "unavailable"
+        ),
+        status="unavailable" if asset_data is None else "malformed",
+        reason=(
+            "declared payload was outside the input or exceeded the configured byte limit"
+            if asset_data is None
+            else "structural validation did not complete"
+        ),
+        companion_data=companion_data,
+        companion_sha256=(
+            hashlib.sha256(companion_data).hexdigest()
+            if companion_data is not None
+            else None
+        ),
+        alt_text=f"Ami Draw object {asset_id}",
+        source=source,
+    )
+
+    if asset_data is None:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "sdw-asset-unavailable",
+                "Ami Draw payload could not be loaded from its declared bounded range",
+                source,
+            )
+        )
+    else:
+        try:
+            validation = validate_sdw(asset_data, limits=limits)
+        except SdwDecodeError as exc:
+            drawing.reason = str(exc)
+            document.diagnostics.append(
+                Diagnostic(Severity.WARNING, f"sdw-{exc.code}", str(exc), source)
+            )
+        else:
+            drawing.signature_family = validation.signature_family
+            drawing.header_field_1 = validation.header_field_1
+            drawing.header_field_2 = validation.header_field_2
+            drawing.direct_record_count = validation.direct_record_count
+            drawing.bounds = validation.bounds
+            drawing.declared_stream_length = validation.declared_stream_length
+            drawing.records = validation.records
+            drawing.trailing_bytes = validation.trailing_bytes
+            drawing.status = "validated"
+            drawing.reason = "vector operation semantics are not sufficiently documented"
+            if validation.trailing_bytes:
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "sdw-trailing-data",
+                        f"preserved {validation.trailing_bytes} byte(s) after the declared "
+                        "Ami Draw stream",
+                        source,
+                    )
+                )
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "sdw-vector-unsupported",
+                    "Ami Draw structure was validated and preserved, but unverified vector "
+                    "operation semantics were not rendered",
+                    source,
+                )
+            )
+
+    if companion_data is not None:
+        try:
+            def reserve_pixels(count: int) -> None:
+                if pixel_budget is not None:
+                    if count > pixel_budget.limit - pixel_budget.used:
+                        raise SdwDecodeError(
+                            "total-pixel-limit",
+                            "decoded SDW companion pixels exceed the document-wide limit",
+                        )
+                    pixel_budget.used += count
+
+            drawing.preview = decode_sdw_preview(
+                companion_data,
+                limits=limits,
+                reserve_pixels=reserve_pixels,
+            )
+        except SdwDecodeError as exc:
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    f"sdw-preview-{exc.code}",
+                    str(exc),
+                    source,
+                )
+            )
+    return drawing
 
 
 def _diagnose_unindexed_tail(

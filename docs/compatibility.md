@@ -23,7 +23,9 @@ discarded or activated.
 | Embedded BMP | Safely indexed and bounded | HTML embeds; paged formats use placeholder | Placeholder |
 | WMF type-1 SRCCOPY DIB subset | Strict bounded standard/placeable validation; one bottom-up 1/4/8/24-bit BI_RGB raster decoded to inert RGB IR | Fresh internal PNG in HTML/PDF/ODT/DOCX | Explicit dimensions marker |
 | Other/malformed WMF | Digest-bearing inert placeholder and diagnostic | Visible placeholder; never activated | Visible placeholder |
-| Ami Draw `.sdw` | Preserved as metadata | Placeholder | Placeholder |
+| Ami Draw binary `SM ?? 01` preservation subset (locally observed as `SM 02 01`) | Bounded recursive-envelope validation; typed raw payload, SHA-256, header fields, bounds, and numeric record summaries; vector operation/style semantics intentionally unsupported | Explicit vector-preservation marker; a supported companion may supply a fresh preview | Explicit vector-preservation and companion-preview markers |
+| SDW `SS` companion `(bits per plane, planes)` = `(1,1)`, `(1,4)`, or `(8,1)` | Strict 18-byte DDB-like envelope/storage validation; bounded top-down, MSB-first, row-interleaved index preview | Fresh internal grayscale/index PNG only; no source palette or color-fidelity claim | Explicit grayscale/index marker |
+| Other or malformed SDW/companion data, including 16-/24-bit companions and the distinct PRONOM ASCII-header variant | In-range, within-limit bytes and SHA-256 retained in typed IR with an explicit diagnostic; unavailable ranges remain explicit without a false hash | Vector status remains visible; an independently valid companion may still supply a fresh preview; source data is never activated or packaged | Explicit vector status; independently valid companion marked separately |
 | OLE/WordArt | Never activated | Placeholder | Placeholder |
 | Equations | Preserved as unsupported object | Placeholder | Placeholder |
 | Macros, DDE, active fields | Never executed/followed | Inert placeholder/fallback | Inert placeholder/fallback |
@@ -37,3 +39,7 @@ facsimiles. Exact line and page breaks depend on available fonts and modern font
 metrics. PDF deliberately uses built-in fonts and may show missing-glyph boxes
 for non-Latin scripts; ODT and DOCX preserve the Unicode text for system font
 selection.
+
+JSON exposes the typed SDW status, hashes, validated structure, and companion
+metadata. Byte arrays are represented by non-inlined length descriptors; raw
+SDW data is not copied into JSON or any presentation output.

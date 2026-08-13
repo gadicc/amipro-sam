@@ -49,12 +49,14 @@ from ..model import (
     Image,
     PageBreak,
     Paragraph,
+    SdwDrawing,
     StyleDefinition,
     Table,
     TableCell,
     UnsupportedObject,
     WmfGraphic,
 )
+from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
@@ -66,7 +68,6 @@ _COVERED = object()
 _MAX_TABLE_COLUMNS = 256
 _FRAME_WIDTH = 6.5 * inch - 12.0  # SimpleDocTemplate's frame has 6pt side padding.
 _MIN_TEXT_WIDTH = 1.25 * inch
-
 
 class _InvariantCanvas(Canvas):
     """Canvas with stable timestamps, identifiers, and innocuous metadata."""
@@ -166,6 +167,9 @@ def _append_primary_blocks(
         elif isinstance(block, WmfGraphic):
             story.append(_wmf_flowable(block))
             list_counters.clear()
+        elif isinstance(block, SdwDrawing):
+            story.extend(_sdw_flowables(block))
+            list_counters.clear()
         elif isinstance(block, UnsupportedObject):
             story.append(
                 _placeholder_flowable(
@@ -213,6 +217,9 @@ def _append_fallback_blocks(
             list_counters.clear()
         elif isinstance(block, WmfGraphic):
             story.append(_wmf_flowable(block))
+            list_counters.clear()
+        elif isinstance(block, SdwDrawing):
+            story.extend(_sdw_flowables(block))
             list_counters.clear()
         elif isinstance(block, UnsupportedObject):
             story.append(
@@ -613,6 +620,75 @@ def _wmf_flowable(graphic: WmfGraphic) -> object:
     image = ReportLabImage(BytesIO(payload), width=width * inch, height=height * inch)
     image.hAlign = "LEFT"
     return image
+
+
+def _sdw_flowables(drawing: SdwDrawing) -> list[object]:
+    try:
+        payload = sdw_png(drawing)
+        width, height = sdw_display_size(
+            drawing, max_width_in=6.25, max_height_in=7.5
+        )
+    except SdwDecodeError:
+        return [_placeholder_flowable(_sdw_placeholder(drawing))]
+    if not isinstance(payload, bytes) or not _valid_sdw_display_size(width, height):
+        return [_placeholder_flowable(_sdw_placeholder(drawing))]
+    try:
+        image = ReportLabImage(
+            BytesIO(payload), width=width * inch, height=height * inch
+        )
+    except Exception:
+        return [_placeholder_flowable(_sdw_placeholder(drawing))]
+    image.hAlign = "LEFT"
+    return [_placeholder_flowable(sdw_preview_caption(drawing)), image]
+
+
+def _sdw_placeholder(drawing: SdwDrawing) -> str:
+    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    details = [
+        f"Ami Draw object: {alt}",
+        "no valid companion preview",
+        "vector payload not rendered",
+        f"status={status}",
+        f"reason={reason}",
+    ]
+    length = drawing.declared_length
+    if isinstance(length, int) and not isinstance(length, bool) and 0 <= length <= 2**63 - 1:
+        details.append(f"declared length={length} bytes")
+    digest = drawing.source_sha256
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+        details.append(f"SHA-256={digest.lower()}")
+    return "[" + "; ".join(details) + "]"
+
+
+def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+    if isinstance(value, str):
+        result = value
+    elif isinstance(value, bytes):
+        result = value.decode("utf-8", errors="replace")
+    elif isinstance(value, (bool, int, float)):
+        try:
+            result = str(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+    else:
+        return default
+    result = " ".join(result.split())[:maximum]
+    return result or default
+
+
+def _valid_sdw_display_size(width: object, height: object) -> bool:
+    return (
+        isinstance(width, int | float)
+        and not isinstance(width, bool)
+        and isinstance(height, int | float)
+        and not isinstance(height, bool)
+        and math.isfinite(width)
+        and math.isfinite(height)
+        and 0.0 < width <= 6.25
+        and 0.0 < height <= 7.5
+    )
 
 
 def _clean_text(value: str) -> str:

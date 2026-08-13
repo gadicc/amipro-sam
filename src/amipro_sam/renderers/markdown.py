@@ -15,11 +15,13 @@ from ..model import (
     Image,
     PageBreak,
     Paragraph,
+    SdwDrawing,
     StyleDefinition,
     Table,
     UnsupportedObject,
     WmfGraphic,
 )
+from ..sdw import SdwDecodeError, sdw_display_size, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size
 
 __all__ = ["render"]
@@ -29,7 +31,6 @@ _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _HEADING_NUMBER = re.compile(
     r"(?:^|\b)(?:heading|head|h)\s*[-_:]?\s*([1-6])(?:\b|$)", re.IGNORECASE
 )
-
 
 def render(document: Document, **_options: object) -> bytes:
     """Return CommonMark-like Markdown without source-controlled raw HTML."""
@@ -76,6 +77,9 @@ def _render_blocks(document: Document, blocks: list[Block]) -> str:
             counters.clear()
         elif isinstance(block, WmfGraphic):
             chunks.append(_wmf_placeholder(block))
+            counters.clear()
+        elif isinstance(block, SdwDrawing):
+            chunks.append(_sdw_marker(block))
             counters.clear()
         elif isinstance(block, UnsupportedObject):
             chunks.append(
@@ -228,6 +232,51 @@ def _wmf_placeholder(graphic: WmfGraphic) -> str:
     return _escape_text(
         f"[WMF preview: {alt} ({graphic.width_px} x {graphic.height_px} pixels)]"
     )
+
+
+def _sdw_marker(drawing: SdwDrawing) -> str:
+    try:
+        sdw_display_size(drawing)
+    except SdwDecodeError:
+        return _escape_text(_sdw_placeholder(drawing))
+    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    return _escape_text(f"[{sdw_preview_caption(drawing)}: {alt}]")
+
+
+def _sdw_placeholder(drawing: SdwDrawing) -> str:
+    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    details = [
+        f"Ami Draw object: {alt}",
+        "no valid companion preview",
+        "vector payload not rendered",
+        f"status={status}",
+        f"reason={reason}",
+    ]
+    length = drawing.declared_length
+    if isinstance(length, int) and not isinstance(length, bool) and 0 <= length <= 2**63 - 1:
+        details.append(f"declared length={length} bytes")
+    digest = drawing.source_sha256
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+        details.append(f"SHA-256={digest.lower()}")
+    return "[" + "; ".join(details) + "]"
+
+
+def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+    if isinstance(value, str):
+        result = value
+    elif isinstance(value, bytes):
+        result = value.decode("utf-8", errors="replace")
+    elif isinstance(value, (bool, int, float)):
+        try:
+            result = str(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+    else:
+        return default
+    result = " ".join(result.split())[:maximum]
+    return result or default
 
 
 def _heading_level(style_name: str | None) -> int | None:

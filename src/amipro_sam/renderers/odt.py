@@ -24,12 +24,14 @@ from ..model import (
     Image,
     PageBreak,
     Paragraph,
+    SdwDrawing,
     StyleDefinition,
     Table,
     TableCell,
     UnsupportedObject,
     WmfGraphic,
 )
+from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
@@ -40,7 +42,6 @@ _HEX_COLOR = re.compile(r"#?([0-9a-fA-F]{6})\Z")
 _MAX_TABLE_COLUMNS = 256
 _COVERED = object()
 _ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
-
 NS = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
     "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
@@ -96,6 +97,7 @@ class _ContentBuilder:
         self._text_style_counter = 0
         self._table_counter = 0
         self._image_counter = 0
+        self._sdw_image_counter = 0
         self.generated_images: list[tuple[str, bytes]] = []
         self._define_list_styles()
         self._define_table_cell_styles()
@@ -148,6 +150,8 @@ class _ContentBuilder:
                 self._add_placeholder(_image_placeholder(block))
             elif isinstance(block, WmfGraphic):
                 self._add_wmf(block)
+            elif isinstance(block, SdwDrawing):
+                self._add_sdw(block)
             elif isinstance(block, UnsupportedObject):
                 self._add_placeholder(f"[Unsupported {block.kind}: {block.description}]")
             elif isinstance(block, Annotation | Footnote | Header | Footer):
@@ -175,6 +179,54 @@ class _ContentBuilder:
                 _q("svg", "width"): f"{width:.6g}in",
                 _q("svg", "height"): f"{height:.6g}in",
             },
+        )
+        ET.SubElement(
+            frame,
+            _q("draw", "image"),
+            {
+                _q("xlink", "href"): name,
+                _q("xlink", "type"): "simple",
+                _q("xlink", "show"): "embed",
+                _q("xlink", "actuate"): "onLoad",
+            },
+        )
+
+    def _add_sdw(self, drawing: SdwDrawing) -> None:
+        try:
+            payload = sdw_png(drawing)
+            width, height = sdw_display_size(
+                drawing, max_width_in=6.25, max_height_in=7.5
+            )
+        except SdwDecodeError:
+            self._add_placeholder(_sdw_placeholder(drawing))
+            return
+        if (
+            not isinstance(payload, bytes)
+            or not payload.startswith(b"\x89PNG\r\n\x1a\n")
+            or not _valid_sdw_display_size(width, height)
+        ):
+            self._add_placeholder(_sdw_placeholder(drawing))
+            return
+        self._sdw_image_counter += 1
+        name = f"Pictures/SDW{self._sdw_image_counter}.png"
+        self.generated_images.append((name, payload))
+
+        caption = ET.SubElement(self.body_text, _q("text", "p"))
+        caption.text = _clean_xml_text(sdw_preview_caption(drawing))
+        paragraph = ET.SubElement(self.body_text, _q("text", "p"))
+        frame = ET.SubElement(
+            paragraph,
+            _q("draw", "frame"),
+            {
+                _q("draw", "name"): f"SDW{self._sdw_image_counter}",
+                _q("text", "anchor-type"): "as-char",
+                _q("svg", "width"): f"{width:.6g}in",
+                _q("svg", "height"): f"{height:.6g}in",
+            },
+        )
+        title = ET.SubElement(frame, _q("svg", "title"))
+        title.text = _clean_xml_text(
+            _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
         )
         ET.SubElement(
             frame,
@@ -769,6 +821,55 @@ def _image_placeholder(image: Image) -> str:
     elif image.data is not None:
         detail += " (embedded image preserved as a placeholder)"
     return f"[{detail}]"
+
+
+def _sdw_placeholder(drawing: SdwDrawing) -> str:
+    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    details = [
+        f"Ami Draw object: {alt}",
+        "no valid companion preview",
+        "vector payload not rendered",
+        f"status={status}",
+        f"reason={reason}",
+    ]
+    length = drawing.declared_length
+    if isinstance(length, int) and not isinstance(length, bool) and 0 <= length <= 2**63 - 1:
+        details.append(f"declared length={length} bytes")
+    digest = drawing.source_sha256
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+        details.append(f"SHA-256={digest.lower()}")
+    return "[" + "; ".join(details) + "]"
+
+
+def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+    if isinstance(value, str):
+        result = value
+    elif isinstance(value, bytes):
+        result = value.decode("utf-8", errors="replace")
+    elif isinstance(value, (bool, int, float)):
+        try:
+            result = str(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+    else:
+        return default
+    result = " ".join(result.split())[:maximum]
+    return result or default
+
+
+def _valid_sdw_display_size(width: object, height: object) -> bool:
+    return (
+        isinstance(width, int | float)
+        and not isinstance(width, bool)
+        and isinstance(height, int | float)
+        and not isinstance(height, bool)
+        and math.isfinite(width)
+        and math.isfinite(height)
+        and 0.0 < width <= 6.25
+        and 0.0 < height <= 7.5
+    )
 
 
 def _container_label(block: Annotation | Footnote | Header | Footer) -> str:

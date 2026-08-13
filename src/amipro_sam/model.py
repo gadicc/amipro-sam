@@ -6,6 +6,7 @@ are consumers of this model; no renderer needs to understand raw SAM syntax.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -143,6 +144,65 @@ class WmfGraphic:
 
 
 @dataclass(slots=True)
+class SdwRecordSummary:
+    """Evidence-backed envelope information for one Ami Draw record.
+
+    Record operation semantics are deliberately not assigned here.  ``offset``
+    is relative to the start of the preserved SDW payload.
+    """
+
+    record_type: int
+    byte_length: int
+    depth: int
+    offset: int
+    point_count: int | None = None
+
+
+@dataclass(slots=True)
+class SdwPreview:
+    """A bounded grayscale/index rendering of an observed ``SS`` companion."""
+
+    width_px: int
+    height_px: int
+    rgb_data: bytes
+    source_sha256: str
+    bits_per_plane: int
+    plane_count: int
+    stride: int
+    opaque_header: tuple[int, int, int, int]
+
+
+@dataclass(slots=True)
+class SdwDrawing:
+    """Structured, inert preservation metadata for an indexed Ami Draw object.
+
+    The original vector and companion bytes remain data, never renderer input.
+    Only ``preview`` crosses into renderers after independent validation.
+    """
+
+    asset_id: str
+    declared_offset: int
+    declared_length: int
+    data: bytes | None = None
+    source_sha256: str | None = None
+    signature_family: str = "unavailable"
+    header_field_1: int | None = None
+    header_field_2: int | None = None
+    direct_record_count: int | None = None
+    bounds: tuple[int, int, int, int] | None = None
+    declared_stream_length: int | None = None
+    records: list[SdwRecordSummary] = field(default_factory=list)
+    trailing_bytes: int = 0
+    status: Literal["validated", "malformed", "unavailable"] = "unavailable"
+    reason: str = ""
+    companion_data: bytes | None = None
+    companion_sha256: str | None = None
+    preview: SdwPreview | None = None
+    alt_text: str = "Ami Draw object"
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
 class UnsupportedObject:
     kind: str
     description: str
@@ -214,6 +274,7 @@ Block: TypeAlias = (
     | Table
     | Image
     | WmfGraphic
+    | SdwDrawing
     | UnsupportedObject
     | Annotation
     | Footnote
@@ -308,6 +369,26 @@ def _blocks_text(blocks: list[Block]) -> str:
             parts.append(
                 f"[WMF preview: {block.width_px} x {block.height_px} pixels]"
             )
+        elif isinstance(block, SdwDrawing):
+            if (
+                isinstance(block.preview, SdwPreview)
+                and isinstance(block.preview.width_px, int)
+                and not isinstance(block.preview.width_px, bool)
+                and isinstance(block.preview.height_px, int)
+                and not isinstance(block.preview.height_px, bool)
+                and block.preview.width_px > 0
+                and block.preview.height_px > 0
+            ):
+                status = block.status if isinstance(block.status, str) else "unavailable"
+                parts.append(
+                    "[Ami Draw companion preview: "
+                    f"{block.preview.width_px} x {block.preview.height_px} pixels; "
+                    f"grayscale/index rendering; vector status={status}]"
+                )
+            else:
+                parts.append(
+                    "[Ami Draw object: vector payload preserved; rendering unavailable]"
+                )
         elif isinstance(block, UnsupportedObject):
             parts.append(f"[Unsupported {block.kind}: {block.description}]")
         elif isinstance(block, Annotation):
@@ -338,4 +419,8 @@ def _jsonable(value: Any) -> Any:
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [_jsonable(item) for item in value]
-    return value
+    if value is None or isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else {"encoding": "non-finite-number"}
+    return {"encoding": "unsupported-value", "type": type(value).__name__}

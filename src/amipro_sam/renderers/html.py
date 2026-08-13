@@ -21,11 +21,13 @@ from ..model import (
     Image,
     PageBreak,
     Paragraph,
+    SdwDrawing,
     StyleDefinition,
     Table,
     UnsupportedObject,
     WmfGraphic,
 )
+from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 
 __all__ = ["render"]
@@ -56,7 +58,6 @@ _JPEG_SOF_MARKERS = {
     0xCF,
 }
 _BMP_HEADER_SIZES = {40, 52, 56, 108, 124}
-
 _CSS = """\
 :root{color-scheme:light;--paper:#fff;--ink:#202124;--muted:#5f6368;--line:#c9cdd2;--note:#fff8dc}
 *{box-sizing:border-box}
@@ -172,6 +173,8 @@ def _render_blocks(document: Document, blocks: list[Block] | None = None) -> str
             result.append(_image(block))
         elif isinstance(block, WmfGraphic):
             result.append(_wmf_graphic(block))
+        elif isinstance(block, SdwDrawing):
+            result.append(_sdw_graphic(block))
         elif isinstance(block, UnsupportedObject):
             label = f"Unsupported {block.kind}: {block.description}"
             result.append(f'<div class="placeholder">[{_text(label)}]</div>\n')
@@ -407,6 +410,78 @@ def _wmf_graphic(graphic: WmfGraphic) -> str:
         f'style="width:{width:g}in;height:{height:g}in">'
         f"<figcaption>{_text(alt)}</figcaption>"
         "</figure>\n"
+    )
+
+
+def _sdw_graphic(drawing: SdwDrawing) -> str:
+    try:
+        data = sdw_png(drawing)
+        width, height = sdw_display_size(drawing)
+    except SdwDecodeError:
+        return f'<div class="placeholder">{_text(_sdw_placeholder(drawing))}</div>\n'
+    if (
+        not isinstance(data, bytes)
+        or not data.startswith(_PNG_SIGNATURE)
+        or not _valid_display_size(width, height)
+    ):
+        return f'<div class="placeholder">{_text(_sdw_placeholder(drawing))}</div>\n'
+    encoded = base64.b64encode(data).decode("ascii")
+    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    return (
+        '<figure class="sdw-preview">'
+        f'<img src="data:image/png;base64,{encoded}" alt="{_attribute(alt)}" '
+        f'style="width:{width:g}in;height:{height:g}in">'
+        f"<figcaption>{_text(sdw_preview_caption(drawing))}</figcaption>"
+        "</figure>\n"
+    )
+
+
+def _sdw_placeholder(drawing: SdwDrawing) -> str:
+    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    details = [
+        f"Ami Draw object: {alt}",
+        "no valid companion preview",
+        "vector payload not rendered",
+        f"status={status}",
+        f"reason={reason}",
+    ]
+    length = drawing.declared_length
+    if isinstance(length, int) and not isinstance(length, bool) and 0 <= length <= 2**63 - 1:
+        details.append(f"declared length={length} bytes")
+    digest = drawing.source_sha256
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+        details.append(f"SHA-256={digest.lower()}")
+    return "[" + "; ".join(details) + "]"
+
+
+def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+    if isinstance(value, str):
+        result = value
+    elif isinstance(value, bytes):
+        result = value.decode("utf-8", errors="replace")
+    elif isinstance(value, (bool, int, float)):
+        try:
+            result = str(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+    else:
+        return default
+    result = " ".join(result.split())[:maximum]
+    return result or default
+
+
+def _valid_display_size(width: object, height: object) -> bool:
+    return (
+        isinstance(width, int | float)
+        and not isinstance(width, bool)
+        and isinstance(height, int | float)
+        and not isinstance(height, bool)
+        and math.isfinite(width)
+        and math.isfinite(height)
+        and 0.0 < width <= 100.0
+        and 0.0 < height <= 100.0
     )
 
 
