@@ -5,8 +5,13 @@ from __future__ import annotations
 import re
 
 from ..model import (
+    Annotation,
+    Block,
     CharacterStyle,
     Document,
+    Footer,
+    Footnote,
+    Header,
     Image,
     PageBreak,
     Paragraph,
@@ -27,19 +32,26 @@ _HEADING_NUMBER = re.compile(
 def render(document: Document, **_options: object) -> bytes:
     """Return CommonMark-like Markdown without source-controlled raw HTML."""
 
+    rendered = _render_blocks(document, document.blocks)
+    if not rendered:
+        return b""
+    return (rendered + "\n").encode("utf-8", errors="backslashreplace")
+
+
+def _render_blocks(document: Document, blocks: list[Block]) -> str:
     chunks: list[str] = []
     counters: dict[int, int] = {}
     index = 0
-    while index < len(document.blocks):
-        block = document.blocks[index]
+    while index < len(blocks):
+        block = blocks[index]
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 chunks.append("[Page break]")
                 counters.clear()
             if block.list_kind is not None:
                 items: list[str] = []
-                while index < len(document.blocks):
-                    candidate = document.blocks[index]
+                while index < len(blocks):
+                    candidate = blocks[index]
                     if (
                         not isinstance(candidate, Paragraph)
                         or candidate.list_kind is None
@@ -65,13 +77,35 @@ def render(document: Document, **_options: object) -> bytes:
                 _escape_text(f"[Unsupported {block.kind}: {block.description}]")
             )
             counters.clear()
+        elif isinstance(block, Annotation):
+            chunks.append(_marked_container("[Annotation]", _render_blocks(document, block.blocks)))
+            counters.clear()
+        elif isinstance(block, Footnote):
+            marker = f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+            chunks.append(_marked_container(marker, _render_blocks(document, block.blocks)))
+            counters.clear()
+        elif isinstance(block, Header | Footer):
+            kind = "Header" if isinstance(block, Header) else "Footer"
+            marker = f"[{kind}: {_placement_label(block.placement)}]"
+            chunks.append(_marked_container(marker, _render_blocks(document, block.blocks)))
+            counters.clear()
         index += 1
 
-    if not chunks:
-        return b""
-    return ("\n\n".join(chunks) + "\n").encode(
-        "utf-8", errors="backslashreplace"
-    )
+    return "\n\n".join(chunks)
+
+
+def _marked_container(marker: str, content: str) -> str:
+    return f"{marker}\n\n{content}" if content else marker
+
+
+def _placement_label(value: str) -> str:
+    return {
+        "all": "all pages",
+        "odd": "odd/right pages",
+        "even": "even/left pages",
+        "odd-even": "odd and even variants",
+        "unknown": "placement unknown",
+    }.get(value, "placement unknown")
 
 
 def _paragraph(

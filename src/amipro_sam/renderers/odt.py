@@ -14,8 +14,13 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from ..errors import RenderError
 from ..model import (
+    Annotation,
+    Block,
     CharacterStyle,
     Document,
+    Footer,
+    Footnote,
+    Header,
     Image,
     PageBreak,
     Paragraph,
@@ -94,9 +99,13 @@ class _ContentBuilder:
         office_body = ET.SubElement(root, _q("office", "body"))
         office_body.append(self.body_text)
 
+        self._add_blocks(self.document.blocks)
+        return _xml_bytes(root)
+
+    def _add_blocks(self, blocks: list[Block]) -> None:
         index = 0
-        while index < len(self.document.blocks):
-            block = self.document.blocks[index]
+        while index < len(blocks):
+            block = blocks[index]
             if isinstance(block, Paragraph) and block.list_kind is not None:
                 list_kind = block.list_kind
                 list_node = ET.SubElement(
@@ -104,8 +113,8 @@ class _ContentBuilder:
                     _q("text", "list"),
                     {_q("text", "style-name"): "LNumber" if list_kind == "number" else "LBullet"},
                 )
-                while index < len(self.document.blocks):
-                    candidate = self.document.blocks[index]
+                while index < len(blocks):
+                    candidate = blocks[index]
                     if not isinstance(candidate, Paragraph) or candidate.list_kind != list_kind:
                         break
                     item = ET.SubElement(list_node, _q("text", "list-item"))
@@ -127,8 +136,10 @@ class _ContentBuilder:
                 self._add_placeholder(_image_placeholder(block))
             elif isinstance(block, UnsupportedObject):
                 self._add_placeholder(f"[Unsupported {block.kind}: {block.description}]")
+            elif isinstance(block, Annotation | Footnote | Header | Footer):
+                self._add_placeholder(_container_label(block))
+                self._add_blocks(block.blocks)
             index += 1
-        return _xml_bytes(root)
 
     def _add_paragraph(
         self,
@@ -703,6 +714,22 @@ def _image_placeholder(image: Image) -> str:
     elif image.data is not None:
         detail += " (embedded image preserved as a placeholder)"
     return f"[{detail}]"
+
+
+def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
+    if isinstance(block, Annotation):
+        return "[Annotation]"
+    if isinstance(block, Footnote):
+        return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+    kind = "Header" if isinstance(block, Header) else "Footer"
+    placement = {
+        "all": "all pages",
+        "odd": "odd/right pages",
+        "even": "even/left pages",
+        "odd-even": "odd and even variants",
+        "unknown": "placement unknown",
+    }.get(block.placement, "placement unknown")
+    return f"[{kind}: {placement}]"
 
 
 def _write_member(archive: ZipFile, name: str, payload: bytes, compression: int) -> None:

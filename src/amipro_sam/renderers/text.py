@@ -4,7 +4,19 @@ from __future__ import annotations
 
 import re
 
-from ..model import Document, Image, PageBreak, Paragraph, Table, UnsupportedObject
+from ..model import (
+    Annotation,
+    Block,
+    Document,
+    Footer,
+    Footnote,
+    Header,
+    Image,
+    PageBreak,
+    Paragraph,
+    Table,
+    UnsupportedObject,
+)
 
 __all__ = ["render"]
 
@@ -19,9 +31,16 @@ def render(document: Document, **_options: object) -> bytes:
     and objects that cannot be represented are emitted as visible labels.
     """
 
+    rendered = _render_blocks(document.blocks)
+    if not rendered:
+        return b""
+    return (rendered + "\n").encode("utf-8", errors="backslashreplace")
+
+
+def _render_blocks(blocks: list[Block]) -> str:
     chunks: list[str] = []
     list_counters: dict[int, int] = {}
-    for block in document.blocks:
+    for block in blocks:
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 chunks.append("\f")
@@ -41,12 +60,34 @@ def render(document: Document, **_options: object) -> bytes:
                 _clean(f"[Unsupported {block.kind}: {block.description}]")
             )
             list_counters.clear()
+        elif isinstance(block, Annotation):
+            chunks.append(_marked_container("[Annotation]", _render_blocks(block.blocks)))
+            list_counters.clear()
+        elif isinstance(block, Footnote):
+            marker = f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+            chunks.append(_marked_container(marker, _render_blocks(block.blocks)))
+            list_counters.clear()
+        elif isinstance(block, Header | Footer):
+            kind = "Header" if isinstance(block, Header) else "Footer"
+            marker = f"[{kind}: {_placement_label(block.placement)}]"
+            chunks.append(_marked_container(marker, _render_blocks(block.blocks)))
+            list_counters.clear()
 
-    if not chunks:
-        return b""
-    return ("\n\n".join(chunks) + "\n").encode(
-        "utf-8", errors="backslashreplace"
-    )
+    return "\n\n".join(chunks)
+
+
+def _marked_container(marker: str, content: str) -> str:
+    return f"{marker}\n{content}\n[End {marker[1:-1]}]" if content else marker
+
+
+def _placement_label(value: str) -> str:
+    return {
+        "all": "all pages",
+        "odd": "odd/right pages",
+        "even": "even/left pages",
+        "odd-even": "odd and even variants",
+        "unknown": "placement unknown",
+    }.get(value, "placement unknown")
 
 
 def _paragraph(paragraph: Paragraph, counters: dict[int, int]) -> str:

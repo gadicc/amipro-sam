@@ -128,7 +128,76 @@ class UnsupportedObject:
     source: SourceSpan | None = None
 
 
-Block: TypeAlias = Paragraph | PageBreak | Table | Image | UnsupportedObject
+@dataclass(slots=True)
+class Annotation:
+    """An inline Ami Pro note with readable nested content and opaque metadata."""
+
+    blocks: list[Block] = field(default_factory=list)
+    metadata: str = ""
+    raw: str = ""
+    terminated: bool = True
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class Footnote:
+    """An inline Ami Pro footnote.
+
+    Footnote numbering is intentionally left unset when the source does not
+    provide an independently verified number.
+    """
+
+    blocks: list[Block] = field(default_factory=list)
+    metadata: str = ""
+    raw: str = ""
+    terminated: bool = True
+    number: int | None = None
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class Header:
+    """Header content from the body stream or a page-layout branch."""
+
+    blocks: list[Block] = field(default_factory=list)
+    placement: Literal["all", "odd", "even", "odd-even", "unknown"] = "unknown"
+    origin: Literal["body", "layout"] = "body"
+    layout_index: int | None = None
+    flags: int | None = None
+    unknown_flag_bits: int = 0
+    metadata: str = ""
+    raw: str = ""
+    terminated: bool = True
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class Footer:
+    """Footer content from the body stream or a page-layout branch."""
+
+    blocks: list[Block] = field(default_factory=list)
+    placement: Literal["all", "odd", "even", "odd-even", "unknown"] = "unknown"
+    origin: Literal["body", "layout"] = "body"
+    layout_index: int | None = None
+    flags: int | None = None
+    unknown_flag_bits: int = 0
+    metadata: str = ""
+    raw: str = ""
+    terminated: bool = True
+    source: SourceSpan | None = None
+
+
+Block: TypeAlias = (
+    Paragraph
+    | PageBreak
+    | Table
+    | Image
+    | UnsupportedObject
+    | Annotation
+    | Footnote
+    | Header
+    | Footer
+)
 
 
 @dataclass(slots=True)
@@ -165,11 +234,26 @@ class SectionRecord:
 
 
 @dataclass(slots=True)
+class FootnoteOptions:
+    flags: int
+    collect_at_page_end: bool
+    reset_number_each_page: bool
+    separator_line: bool
+    start_number: int
+    separator_length_in: float
+    indent_in: float
+    unknown_flag_bits: int = 0
+    raw: str = ""
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
 class Document:
     source_name: str
     encoding: str
     version: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    footnote_options: FootnoteOptions | None = None
     styles: dict[str, StyleDefinition] = field(default_factory=dict)
     blocks: list[Block] = field(default_factory=list)
     unknown_records: list[UnknownRecord] = field(default_factory=list)
@@ -181,22 +265,34 @@ class Document:
 
     @property
     def text(self) -> str:
-        parts: list[str] = []
-        for block in self.blocks:
-            if isinstance(block, Paragraph):
-                parts.append(block.text)
-            elif isinstance(block, PageBreak):
-                parts.append("\f")
-            elif isinstance(block, Table):
-                parts.extend("\t".join(cell.text for cell in row.cells) for row in block.rows)
-            elif isinstance(block, Image):
-                parts.append(f"[{block.alt_text}]")
-            elif isinstance(block, UnsupportedObject):
-                parts.append(f"[Unsupported {block.kind}: {block.description}]")
-        return "\n".join(parts)
+        return _blocks_text(self.blocks)
 
     def to_dict(self) -> dict[str, Any]:
         return _jsonable(self)
+
+
+def _blocks_text(blocks: list[Block]) -> str:
+    parts: list[str] = []
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            parts.append(block.text)
+        elif isinstance(block, PageBreak):
+            parts.append("\f")
+        elif isinstance(block, Table):
+            parts.extend("\t".join(cell.text for cell in row.cells) for row in block.rows)
+        elif isinstance(block, Image):
+            parts.append(f"[{block.alt_text}]")
+        elif isinstance(block, UnsupportedObject):
+            parts.append(f"[Unsupported {block.kind}: {block.description}]")
+        elif isinstance(block, Annotation):
+            parts.append("[Annotation]\n" + _blocks_text(block.blocks))
+        elif isinstance(block, Footnote):
+            label = f"Footnote {block.number}" if block.number is not None else "Footnote"
+            parts.append(f"[{label}]\n" + _blocks_text(block.blocks))
+        elif isinstance(block, Header | Footer):
+            label = type(block).__name__
+            parts.append(f"[{label}: {block.placement} pages]\n" + _blocks_text(block.blocks))
+    return "\n".join(parts)
 
 
 def _jsonable(value: Any) -> Any:

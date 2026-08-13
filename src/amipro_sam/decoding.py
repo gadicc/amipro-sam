@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from .errors import DecodeError, ResourceLimitError
 from .limits import ParseLimits
 from .model import Diagnostic, Severity, SourceSpan
+from .syntax import MultilineContainerScanner
 
 _CHARSET_SECTION = re.compile(
     rb"(?ims)^\[charset\][ \t]*\r?\n(?P<body>.*?)(?=^\[[A-Za-z][^\]\r\n]*\]|\Z)"
@@ -150,18 +151,19 @@ def _binary_line_window(lines: list[str]) -> tuple[int, int]:
     if edoc is None:
         return len(lines), len(lines)
 
-    container = re.compile(r"(?<!<)<:[NFHh]")
     depth = 0
     terminator: int | None = None
+    scanner = MultilineContainerScanner()
     for index in range(edoc + 1, len(normalized)):
         line = normalized[index]
-        if line.startswith(">"):
+        scan = scanner.scan_line(line)
+        if scan.standalone_terminator:
             if depth:
                 depth -= 1
                 continue
             terminator = index
             break
-        depth += sum(1 for _ in container.finditer(line))
+        depth += int(scan.opener is not None)
     if terminator is None:
         return len(lines), len(lines)
 

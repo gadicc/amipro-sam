@@ -10,9 +10,14 @@ import struct
 import zlib
 
 from ..model import (
+    Annotation,
+    Block,
     CharacterStyle,
     Diagnostic,
     Document,
+    Footer,
+    Footnote,
+    Header,
     Image,
     PageBreak,
     Paragraph,
@@ -72,6 +77,9 @@ th{background:#f3f5f7;font-weight:600}
 .placeholder{border:1px solid var(--line);background:#f7f7f7;color:var(--muted);
 font-style:italic;padding:.55rem .7rem;margin:.75rem 0;overflow-wrap:anywhere;
 white-space:pre-wrap}
+.annotation,.footnote,.document-header,.document-footer{border-left:.2rem solid var(--line);
+padding:.35rem .75rem;margin:.75rem 0;background:#fafafa}
+.container-label{font-weight:600;color:var(--muted);margin:.15rem 0 .5rem}
 figure{margin:1rem 0}figure img{display:block;max-width:100%;height:auto}
 figcaption{color:var(--muted);font-size:.9rem;margin-top:.35rem}
 .conversion-warnings{margin-top:1.5rem;background:var(--note);box-shadow:none;
@@ -122,11 +130,12 @@ def render(
     return result.encode("utf-8", errors="backslashreplace")
 
 
-def _render_blocks(document: Document) -> str:
+def _render_blocks(document: Document, blocks: list[Block] | None = None) -> str:
     result: list[str] = []
+    blocks = document.blocks if blocks is None else blocks
     index = 0
-    while index < len(document.blocks):
-        block = document.blocks[index]
+    while index < len(blocks):
+        block = blocks[index]
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 result.append(_page_break())
@@ -135,8 +144,8 @@ def _render_blocks(document: Document) -> str:
                 level = max(0, min(_integer(block.list_level, 0), 15))
                 items = [block]
                 index += 1
-                while index < len(document.blocks):
-                    candidate = document.blocks[index]
+                while index < len(blocks):
+                    candidate = blocks[index]
                     if not isinstance(candidate, Paragraph):
                         break
                     candidate_level = max(
@@ -162,8 +171,40 @@ def _render_blocks(document: Document) -> str:
         elif isinstance(block, UnsupportedObject):
             label = f"Unsupported {block.kind}: {block.description}"
             result.append(f'<div class="placeholder">[{_text(label)}]</div>\n')
+        elif isinstance(block, Annotation):
+            result.append(
+                '<aside class="annotation" role="note">\n'
+                '<p class="container-label">Annotation</p>\n'
+                f"{_render_blocks(document, block.blocks)}</aside>\n"
+            )
+        elif isinstance(block, Footnote):
+            label = f"Footnote {block.number}" if block.number is not None else "Footnote"
+            result.append(
+                '<aside class="footnote" role="doc-footnote">\n'
+                f'<p class="container-label">{_text(label)}</p>\n'
+                f"{_render_blocks(document, block.blocks)}</aside>\n"
+            )
+        elif isinstance(block, Header | Footer):
+            tag = "header" if isinstance(block, Header) else "footer"
+            css_class = "document-header" if tag == "header" else "document-footer"
+            label = f"{tag.title()} - {_placement_label(block.placement)}"
+            result.append(
+                f'<{tag} class="{css_class}" data-placement="{_attribute(block.placement)}">\n'
+                f'<p class="container-label">{_text(label)}</p>\n'
+                f"{_render_blocks(document, block.blocks)}</{tag}>\n"
+            )
         index += 1
     return "".join(result)
+
+
+def _placement_label(value: str) -> str:
+    return {
+        "all": "all pages",
+        "odd": "odd/right pages",
+        "even": "even/left pages",
+        "odd-even": "odd and even variants",
+        "unknown": "placement unknown",
+    }.get(value, "placement unknown")
 
 
 def _paragraph(document: Document, paragraph: Paragraph) -> str:

@@ -10,8 +10,12 @@ import pytest
 
 from amipro_sam.errors import RenderError
 from amipro_sam.model import (
+    Annotation,
     CharacterStyle,
     Document,
+    Footer,
+    Footnote,
+    Header,
     Image,
     PageBreak,
     Paragraph,
@@ -152,6 +156,85 @@ def test_pdf_handles_extreme_indents_and_leading_breaks() -> None:
 
     assert first == second
     assert first.startswith(b"%PDF-")
+
+
+def test_paged_renderers_reflow_typed_notes_headers_and_footers() -> None:
+    document = Document(
+        "containers.sam",
+        "windows-1252",
+        blocks=[
+            Paragraph(runs=[TextRun("Body before")]),
+            Annotation(blocks=[Paragraph(runs=[TextRun("Annotation text")])]),
+            Footnote(blocks=[Paragraph(runs=[TextRun("Footnote text")])]),
+            Header(
+                blocks=[Paragraph(runs=[TextRun("Header text")])],
+                placement="odd",
+                origin="layout",
+            ),
+            Footer(
+                blocks=[Paragraph(runs=[TextRun("Footer text")])],
+                placement="even",
+                origin="layout",
+            ),
+            Paragraph(runs=[TextRun("Body after")]),
+        ],
+    )
+
+    pdf_output = pdf.render(document)
+    odt_output = odt.render(document)
+
+    assert pdf_output.startswith(b"%PDF-")
+    with ZipFile(BytesIO(odt_output)) as archive:
+        odt_text = "".join(ET.fromstring(archive.read("content.xml")).itertext())
+    for expected in (
+        "[Annotation]",
+        "Annotation text",
+        "[Footnote]",
+        "Footnote text",
+        "[Header: odd/right pages]",
+        "Header text",
+        "[Footer: even/left pages]",
+        "Footer text",
+    ):
+        assert expected.replace(" ", "") in odt_text
+
+    if importlib.util.find_spec("pypdf") is not None:
+        import pypdf
+
+        extracted = "\n".join(
+            page.extract_text() or ""
+            for page in pypdf.PdfReader(BytesIO(pdf_output)).pages
+        )
+        assert "Annotation text" in extracted
+        assert "Footnote text" in extracted
+        assert "Header text" in extracted
+        assert "Footer text" in extracted
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("docx") is None,
+    reason="python-docx extra not installed",
+)
+def test_docx_reflows_typed_note_and_page_content() -> None:
+    document = Document(
+        "containers.sam",
+        "windows-1252",
+        blocks=[
+            Annotation(blocks=[Paragraph(runs=[TextRun("Annotation text")])]),
+            Footnote(blocks=[Paragraph(runs=[TextRun("Footnote text")])]),
+            Header(blocks=[Paragraph(runs=[TextRun("Header text")])], placement="all"),
+            Footer(blocks=[Paragraph(runs=[TextRun("Footer text")])], placement="all"),
+        ],
+    )
+
+    with ZipFile(BytesIO(docx.render(document))) as archive:
+        content = archive.read("word/document.xml")
+        extracted = "".join(ET.fromstring(content).itertext())
+
+    assert "[Annotation]" in extracted and "Annotation text" in extracted
+    assert "[Footnote]" in extracted and "Footnote text" in extracted
+    assert "[Header: all pages]" in extracted and "Header text" in extracted
+    assert "[Footer: all pages]" in extracted and "Footer text" in extracted
 
 
 def test_pdf_splits_a_table_row_taller_than_one_page() -> None:

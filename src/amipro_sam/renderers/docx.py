@@ -16,7 +16,12 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from ..errors import RenderError
 from ..model import (
+    Annotation,
+    Block,
     CharacterStyle,
+    Footer,
+    Footnote,
+    Header,
     Image,
     PageBreak,
     Paragraph,
@@ -25,9 +30,7 @@ from ..model import (
     TableCell,
     UnsupportedObject,
 )
-from ..model import (
-    Document as AmiProDocument,
-)
+from ..model import Document as AmiProDocument
 
 __all__ = ["render"]
 
@@ -81,21 +84,7 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
         normal.paragraph_format.line_spacing = 1.1
         _scrub_core_properties(output_document.core_properties)
 
-        for block in document.blocks:
-            if isinstance(block, Paragraph):
-                paragraph = output_document.add_paragraph()
-                _populate_paragraph(paragraph, block, document)
-            elif isinstance(block, PageBreak):
-                output_document.add_page_break()
-            elif isinstance(block, Table):
-                _add_table(output_document, block, document)
-            elif isinstance(block, Image):
-                _add_placeholder(output_document, _image_placeholder(block))
-            elif isinstance(block, UnsupportedObject):
-                _add_placeholder(
-                    output_document,
-                    f"[Unsupported {block.kind}: {block.description}]",
-                )
+        _add_blocks(output_document, document, document.blocks)
 
         buffer = BytesIO()
         output_document.save(buffer)
@@ -104,6 +93,40 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
         raise
     except Exception as exc:
         raise RenderError(f"Could not render DOCX safely: {exc}") from exc
+
+
+def _add_blocks(target: Any, document: AmiProDocument, blocks: list[Block]) -> None:
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            paragraph = target.add_paragraph()
+            _populate_paragraph(paragraph, block, document)
+        elif isinstance(block, PageBreak):
+            target.add_page_break()
+        elif isinstance(block, Table):
+            _add_table(target, block, document)
+        elif isinstance(block, Image):
+            _add_placeholder(target, _image_placeholder(block))
+        elif isinstance(block, UnsupportedObject):
+            _add_placeholder(target, f"[Unsupported {block.kind}: {block.description}]")
+        elif isinstance(block, Annotation | Footnote | Header | Footer):
+            _add_placeholder(target, _container_label(block))
+            _add_blocks(target, document, block.blocks)
+
+
+def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
+    if isinstance(block, Annotation):
+        return "[Annotation]"
+    if isinstance(block, Footnote):
+        return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+    kind = "Header" if isinstance(block, Header) else "Footer"
+    placement = {
+        "all": "all pages",
+        "odd": "odd/right pages",
+        "even": "even/left pages",
+        "odd-even": "odd and even variants",
+        "unknown": "placement unknown",
+    }.get(block.placement, "placement unknown")
+    return f"[{kind}: {placement}]"
 
 
 def _populate_paragraph(

@@ -12,10 +12,15 @@ from .decoding import DecodedSource, decode_bytes
 from .errors import ParseError, ResourceLimitError
 from .limits import ParseLimits
 from .model import (
+    Annotation,
     Block,
     CharacterStyle,
     Diagnostic,
     Document,
+    Footer,
+    Footnote,
+    FootnoteOptions,
+    Header,
     Image,
     Paragraph,
     SectionRecord,
@@ -28,6 +33,9 @@ from .model import (
     TextRun,
     UnknownRecord,
     UnsupportedObject,
+)
+from .syntax import (
+    MultilineContainerScanner,
 )
 
 _MAIN_SECTION = re.compile(r"^\[([A-Za-z][A-Za-z0-9_-]{0,63})\]$")
@@ -44,7 +52,6 @@ _FONT_TAG = re.compile(
 _LINE_SPACING = re.compile(r"^:S\+(?P<value>-?\d+(?:\.\d+)?)$", re.IGNORECASE)
 _PARAGRAPH_LAYOUT = re.compile(r"^:#(?P<first>-?\d+)(?:,(?P<rest>-?\d+))?.*$")
 _FRAME_ANCHOR = re.compile(r"(?<!<)<:(?P<kind>t|A)(?P<index>\d+)>")
-_MULTILINE_CONTAINER = re.compile(r"(?<!<)<:(?P<kind>[NFHh])")
 
 _KNOWN_HEADER_SECTIONS = {
     "ver",
@@ -107,6 +114,30 @@ class _FrameContent:
 class _StructureResult:
     anchored_frames: list[_FrameContent] = field(default_factory=list)
     supplemental_blocks: list[Block] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _OpenContainer:
+    kind: str
+    metadata: str
+    source: SourceSpan
+    raw_lines: list[str] = field(default_factory=list)
+    blocks: list[Block] = field(default_factory=list)
+    paragraph_lines: list[str] = field(default_factory=list)
+    paragraph_source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class _RecordBudget:
+    limit: int
+    used: int = 0
+
+    def charge(self, count: int, description: str) -> None:
+        self.used += count
+        if self.used > self.limit:
+            raise ResourceLimitError(
+                f"{description} exceeds {self.limit} materialized records"
+            )
 
 
 def parse_file(
@@ -303,24 +334,17 @@ def _edoc_terminator(lines: list[tuple[int, str]], start: int) -> int | None:
     """Find the outer EDOC close while skipping multiline annotation closes."""
 
     note_depth = 0
+    scanner = MultilineContainerScanner()
     for index in range(start, len(lines)):
         line = lines[index][1]
-        if line.startswith(">"):
+        scan = scanner.scan_line(line)
+        if scan.standalone_terminator:
             if note_depth:
                 note_depth -= 1
                 continue
             return index
-        note_depth += _multiline_container_openers(line)
+        note_depth += int(scan.opener is not None)
     return None
-
-
-def _multiline_container_openers(line: str) -> int:
-    """Count known containers whose closing ``>`` occurs on a later line."""
-
-    # These Ami Pro records are terminated by a later standalone ``>``.  A
-    # header opener can itself contain a nested formatting tag such as
-    # ``<:H<*->``; that inner angle bracket does not close the container.
-    return sum(1 for _ in _MULTILINE_CONTAINER.finditer(line))
 
 
 def _parse_metadata_and_styles(
@@ -360,6 +384,8 @@ def _parse_metadata_and_styles(
             document.metadata["charset"] = " | ".join(value for value in values if value)
         elif name in {"lang", "desc", "revisions"} and values:
             document.metadata[name] = values[0]
+        elif name == "fopts":
+            _parse_footnote_options(document, section, values)
         elif name == "tag":
             if len(document.styles) >= limits.max_styles:
                 raise ResourceLimitError(f"document exceeds {limits.max_styles} styles")
@@ -375,6 +401,84 @@ def _parse_metadata_and_styles(
                 f"expected one [ver] section, found {counts.get('ver', 0)}",
             )
         )
+
+
+def _parse_footnote_options(
+    document: Document, section: SectionRecord, values: list[str]
+) -> None:
+    raw = "\n".join(section.raw_lines)
+    parsed = [_bounded_small_signed(value) for value in values[:4]]
+    if len(values) < 4 or any(value is None for value in parsed):
+        document.unknown_records.append(
+            UnknownRecord(
+                section="fopts",
+                record_type="footnote-options",
+                raw=raw,
+                source=section.source,
+                reason="malformed footnote options were preserved without interpretation",
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "malformed-footnote-options",
+                "[fopts] requires four bounded integer fields",
+                section.source,
+            )
+        )
+        return
+    flags, start, separator, indent = (int(value) for value in parsed)
+    if not (0 <= flags <= 0xFFFF and 0 <= start <= 9999):
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "footnote-options-out-of-range",
+                "[fopts] flags or start number are outside documented bounds",
+                section.source,
+            )
+        )
+        return
+    if not (0 <= separator <= 32767 and 0 <= indent <= 32767):
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "footnote-options-out-of-range",
+                "[fopts] separator length or indent are outside documented bounds",
+                section.source,
+            )
+        )
+        return
+    unknown_bits = flags & ~7
+    document.footnote_options = FootnoteOptions(
+        flags=flags,
+        collect_at_page_end=bool(flags & 1),
+        reset_number_each_page=bool(flags & 2),
+        separator_line=bool(flags & 4),
+        start_number=start,
+        separator_length_in=separator / 1440.0,
+        indent_in=indent / 1440.0,
+        unknown_flag_bits=unknown_bits,
+        raw=raw,
+        source=section.source,
+    )
+    if unknown_bits:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "footnote-options-unknown-flags",
+                f"[fopts] has unsupported flag bits 0x{unknown_bits:x}",
+                section.source,
+            )
+        )
+
+
+def _bounded_small_signed(value: str) -> int | None:
+    if not re.fullmatch(r"[+-]?\d{1,20}", value):
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _parse_style(section: SectionRecord, decoded: DecodedSource) -> StyleDefinition | None:
@@ -457,6 +561,8 @@ def _parse_structures(
 ) -> _StructureResult:
     result = _StructureResult()
     table_cells = 0
+    layout_index = 0
+    layout_budget = _RecordBudget(limits.max_records)
     assets: dict[str, list[Block]] = {}
     for section in sections:
         if section.name.lower() == "embedded":
@@ -485,6 +591,13 @@ def _parse_structures(
                     section.source,
                 )
             )
+        elif name == "lay":
+            result.supplemental_blocks.extend(
+                _parse_layout_headers_footers(
+                    document, section, layout_index, limits, layout_budget
+                )
+            )
+            layout_index += 1
         elif name == "frm":
             frame_blocks: list[Block] = []
             has_table_marker = any(
@@ -568,6 +681,210 @@ def _parse_structures(
         )
         result.supplemental_blocks.extend(blocks)
     return result
+
+
+def _parse_layout_headers_footers(
+    document: Document,
+    section: SectionRecord,
+    layout_index: int,
+    limits: ParseLimits,
+    record_budget: _RecordBudget,
+) -> list[Block]:
+    """Recover frame-shaped header/footer streams nested in a ``[lay]`` record."""
+
+    branch_types = {
+        "hrght": (Header, "odd"),
+        "hlft": (Header, "even"),
+        "frght": (Footer, "odd"),
+        "flft": (Footer, "even"),
+    }
+    depth_one_sections = [
+        index
+        for index, line in enumerate(section.raw_lines)
+        if re.fullmatch(r"\t\[[A-Za-z][A-Za-z0-9_-]{0,63}\]\s*", line)
+    ]
+    markers: list[tuple[int, str]] = []
+    malformed_markers: list[tuple[int, str]] = []
+    for index, line in enumerate(section.raw_lines):
+        name = line.strip().lower()
+        if name.startswith("[") and name.endswith("]"):
+            name = name[1:-1]
+        indent = len(line) - len(line.lstrip("\t"))
+        if name in branch_types and indent == 1:
+            markers.append((index, name))
+        elif name in branch_types:
+            malformed_markers.append((index, name))
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "malformed-layout-branch-indentation",
+                    f"[{name}] outside the evidenced layout depth was visibly reflowed "
+                    "without page-placement semantics",
+                    section.raw_spans[index],
+                )
+            )
+
+    # Every branch creates both a typed block and one raw-preservation record.
+    # Charge them before materializing either collection.
+    record_budget.charge(
+        len(markers) * 2 + len(malformed_markers) * 2,
+        "layout header/footer parsing",
+    )
+    blocks: list[Block] = []
+    for start, branch_name in markers:
+        end = next(
+            (index for index in depth_one_sections if index > start),
+            len(section.raw_lines),
+        )
+        raw_lines = section.raw_lines[start:end]
+        raw = "\n".join(raw_lines)
+        source = section.raw_spans[start]
+        content: list[Block] = []
+        metadata_lines: list[str] = []
+        terminated = True
+        txt_markers = [
+            index
+            for index in range(start + 1, end)
+            if section.raw_lines[index].strip().lower() == "[txt]"
+            and len(section.raw_lines[index])
+            - len(section.raw_lines[index].lstrip("\t"))
+            == 2
+        ]
+        if not txt_markers:
+            terminated = False
+            metadata_lines = raw_lines[1:]
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "layout-header-footer-without-text",
+                    f"[{branch_name}] placement metadata had no [txt] stream",
+                    source,
+                )
+            )
+        else:
+            if len(txt_markers) > 1:
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "multiple-layout-text-streams-reflowed",
+                        f"[{branch_name}] has {len(txt_markers)} [txt] streams; "
+                        "all were retained in source order",
+                        source,
+                    )
+                )
+            metadata_lines = section.raw_lines[start + 1 : txt_markers[0]]
+            for marker_position, txt_index in enumerate(txt_markers):
+                boundary = (
+                    txt_markers[marker_position + 1]
+                    if marker_position + 1 < len(txt_markers)
+                    else end
+                )
+                stream_lines = [
+                    (index, section.raw_lines[index].lstrip("\t"))
+                    for index in range(txt_index + 1, boundary)
+                ]
+                terminator = _edoc_terminator(stream_lines, 0)
+                selected = (
+                    stream_lines[: terminator + 1]
+                    if terminator is not None
+                    else stream_lines
+                )
+                stream_section = SectionRecord(
+                    name=f"lay/{branch_name}/txt",
+                    source=section.raw_spans[txt_index],
+                    raw_lines=[line for _, line in selected],
+                    raw_spans=[section.raw_spans[index] for index, _ in selected],
+                )
+                _parse_text_stream(
+                    document,
+                    stream_section,
+                    limits,
+                    anchored_frames=[],
+                    used_anchors=set(),
+                    output_blocks=content,
+                    record_budget=record_budget,
+                    stream_label=f"[lay/{branch_name}/txt]",
+                    diagnose_outer_termination=False,
+                )
+                if terminator is None:
+                    terminated = False
+                    document.diagnostics.append(
+                        Diagnostic(
+                            Severity.WARNING,
+                            "unterminated-layout-header-footer",
+                            f"[{branch_name}] [txt] stream reached the branch boundary",
+                            source,
+                        )
+                    )
+
+        container_type, placement = branch_types[branch_name]
+        block = container_type(
+            blocks=content,
+            placement=placement,  # type: ignore[arg-type]
+            origin="layout",
+            layout_index=layout_index,
+            metadata="\n".join(metadata_lines),
+            raw=raw,
+            terminated=terminated,
+            source=source,
+        )
+        blocks.append(block)
+        document.unknown_records.append(
+            UnknownRecord(
+                section=f"lay/{branch_name}",
+                record_type="layout-header" if container_type is Header else "layout-footer",
+                raw=raw,
+                source=source,
+                reason="raw page-placement/frame records retained with typed header/footer content",
+            )
+        )
+
+    for start, branch_name in malformed_markers:
+        end = next(
+            (
+                index
+                for index in sorted(
+                    depth_one_sections
+                    + [marker_start for marker_start, _ in malformed_markers]
+                )
+                if index > start
+            ),
+            len(section.raw_lines),
+        )
+        raw_lines = section.raw_lines[start:end]
+        source = section.raw_spans[start]
+        blocks.append(
+            UnsupportedObject(
+                "malformed layout header/footer",
+                f"[{branch_name}] indentation prevented reliable page placement; "
+                "readable content follows",
+                source,
+            )
+        )
+        for index, line in enumerate(raw_lines[1:], start + 1):
+            value = line.strip()
+            if (
+                not value
+                or value == ">"
+                or re.fullmatch(r"\[(?:lyfrm|frmlay|txt)\]", value, re.IGNORECASE)
+            ):
+                continue
+            record_budget.charge(1, "layout header/footer parsing")
+            paragraph = _parse_inline_paragraph(
+                document, [value], section.raw_spans[index]
+            )
+            if paragraph.text or paragraph.runs:
+                blocks.append(paragraph)
+        document.unknown_records.append(
+            UnknownRecord(
+                section=f"lay/{branch_name}",
+                record_type="malformed-layout-header-footer",
+                raw="\n".join(raw_lines),
+                source=source,
+                reason="malformed layout indentation prevented typed placement",
+            )
+        )
+    return blocks
 
 
 def _frame_flags(section: SectionRecord) -> int:
@@ -917,43 +1234,49 @@ def _parse_text_stream(
     *,
     anchored_frames: list[_FrameContent],
     used_anchors: set[int],
+    output_blocks: list[Block] | None = None,
+    record_budget: _RecordBudget | None = None,
+    stream_label: str = "[edoc]",
+    diagnose_outer_termination: bool = True,
 ) -> None:
-    paragraph_lines: list[str] = []
-    paragraph_source = section.source
+    root_blocks = document.blocks if output_blocks is None else output_blocks
+    top_lines: list[str] = []
+    top_source = section.source
+    stack: list[_OpenContainer] = []
     record_count = 0
-    container_kind: str | None = None
-    container_depth = 0
-    container_lines: list[str] = []
-    container_raw: list[str] = []
-    container_source = section.source
+    saw_outer_terminator = False
+    scanner = MultilineContainerScanner()
 
-    def flush() -> None:
-        nonlocal paragraph_lines, record_count
-        if not paragraph_lines:
+    def count_record(count: int = 1) -> None:
+        nonlocal record_count
+        if record_budget is not None:
+            record_budget.charge(count, f"{stream_label} parsing")
             return
-        record_count += 1
+        record_count += count
         if record_count > limits.max_records:
             raise ResourceLimitError(f"document exceeds {limits.max_records} content records")
-        text = "\n".join(paragraph_lines)
+
+    def append_text_blocks(lines: list[str], source: SourceSpan, target: list[Block]) -> None:
+        if not lines:
+            return
+        count_record()
+        text = "\n".join(lines)
         state = _initial_inline_state(document)
         cursor = 0
         for match in _FRAME_ANCHOR.finditer(text):
             prefix = text[cursor : match.start()]
             if prefix:
                 paragraph = _parse_inline_paragraph(
-                    document,
-                    prefix.split("\n"),
-                    paragraph_source,
-                    state=state,
+                    document, prefix.split("\n"), source, state=state
                 )
                 if paragraph.text or paragraph.runs:
-                    document.blocks.append(paragraph)
-            document.blocks.extend(
+                    target.append(paragraph)
+            target.extend(
                 _resolve_frame_anchor(
                     document,
                     match.group("kind"),
                     _bounded_decimal(match.group("index"), field="frame anchor index"),
-                    paragraph_source,
+                    source,
                     anchored_frames,
                     used_anchors,
                 )
@@ -962,135 +1285,278 @@ def _parse_text_stream(
         suffix = text[cursor:]
         if suffix or cursor == 0:
             paragraph = _parse_inline_paragraph(
-                document,
-                suffix.split("\n"),
-                paragraph_source,
-                state=state,
+                document, suffix.split("\n"), source, state=state
             )
             if paragraph.text or paragraph.runs:
-                document.blocks.append(paragraph)
-        paragraph_lines = []
+                target.append(paragraph)
+
+    def flush_top() -> None:
+        nonlocal top_lines
+        append_text_blocks(top_lines, top_source, root_blocks)
+        top_lines = []
+
+    def flush_container(state: _OpenContainer) -> None:
+        append_text_blocks(
+            state.paragraph_lines,
+            state.paragraph_source or state.source,
+            state.blocks,
+        )
+        state.paragraph_lines = []
+        state.paragraph_source = None
+
+    def finish_container(*, terminated: bool) -> None:
+        state = stack.pop()
+        flush_container(state)
+        block = _make_multiline_container(
+            document,
+            state,
+            terminated=terminated,
+            record_section=stream_label.strip("[]").lower(),
+            stream_label=stream_label,
+        )
+        if stack:
+            stack[-1].blocks.append(block)
+        else:
+            root_blocks.append(block)
 
     for line, line_source in zip(section.raw_lines, section.raw_spans, strict=False):
-        if container_depth:
-            container_raw.append(line)
-            if line.startswith(">"):
-                container_depth -= 1
-                if container_depth == 0:
-                    _emit_multiline_container(
-                        document,
-                        container_kind or "unknown",
-                        container_lines,
-                        container_raw,
-                        container_source,
-                        limits,
-                    )
-                    container_kind = None
-                    container_lines = []
-                    container_raw = []
-                continue
-            container_depth += _multiline_container_openers(line)
-            container_lines.append(line)
+        scan = scanner.scan_line(line)
+        if scan.standalone_terminator:
+            if stack:
+                stack[-1].raw_lines.append(line)
+                finish_container(terminated=True)
+            else:
+                flush_top()
+                saw_outer_terminator = True
+                break
             continue
 
-        opener = _MULTILINE_CONTAINER.search(line)
+        if line.lstrip().startswith(">"):
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "malformed-container-terminator" if stack else "malformed-edoc-terminator",
+                    "a terminator with trailing data was retained as readable text",
+                    line_source,
+                    raw=line,
+                )
+            )
+
+        opener = scan.opener
         if opener:
             prefix = line[: opener.start()]
-            if prefix:
-                if not paragraph_lines:
-                    paragraph_source = line_source
-                paragraph_lines.append(prefix)
-            flush()
-            container_kind = opener.group("kind")
-            container_depth = _multiline_container_openers(line)
-            container_lines = []
-            container_raw = [line[opener.start() :]]
-            container_source = line_source
+            if stack:
+                current = stack[-1]
+                # Retain the nested opener in the parent's direct raw fragment,
+                # but keep the nested payload only in its owning child.  The
+                # enclosing SectionRecord remains the single lossless stream.
+                current.raw_lines.append(line)
+                if prefix:
+                    if not current.paragraph_lines:
+                        current.paragraph_source = line_source
+                    current.paragraph_lines.append(prefix)
+                flush_container(current)
+            else:
+                if prefix:
+                    if not top_lines:
+                        top_source = line_source
+                    top_lines.append(prefix)
+                flush_top()
+
+            if len(stack) >= limits.max_container_depth:
+                raise ResourceLimitError(
+                    f"multiline container nesting exceeds {limits.max_container_depth} levels"
+                )
+            # A typed container plus its raw-preservation record are both
+            # charged in layout streams, which share a cross-branch budget.
+            count_record(2 if record_budget is not None else 1)
+            kind = opener.group("kind")
+            if stack and (kind in {"H", "h"} or stack[-1].kind in {"H", "h"}):
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "unsupported-nested-header-footer",
+                        "nested header/footer records are not valid in the documented grammar; "
+                        "nested content was preserved",
+                        line_source,
+                    )
+                )
+            stack.append(
+                _OpenContainer(
+                    kind=kind,
+                    metadata=line[opener.end() :],
+                    source=line_source,
+                    raw_lines=[line[opener.start() :]],
+                )
+            )
             continue
-        if line.startswith(">"):
-            flush()
-            break
-        if not line:
-            flush()
+
+        if stack:
+            current = stack[-1]
+            current.raw_lines.append(line)
+            if line:
+                if not current.paragraph_lines:
+                    current.paragraph_source = line_source
+                current.paragraph_lines.append(line)
+            else:
+                flush_container(current)
+        elif line:
+            if not top_lines:
+                top_source = line_source
+            top_lines.append(line)
         else:
-            if not paragraph_lines:
-                paragraph_source = line_source
-            paragraph_lines.append(line)
-    if container_depth:
-        _emit_multiline_container(
-            document,
-            container_kind or "unknown",
-            container_lines,
-            container_raw,
-            container_source,
-            limits,
-            terminated=False,
+            flush_top()
+
+    while stack:
+        finish_container(terminated=False)
+    flush_top()
+    if not saw_outer_terminator and diagnose_outer_termination:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "unterminated-edoc",
+                f"{stream_label} text reached the end of its stream without an outer terminator",
+                section.source,
+            )
         )
-    flush()
 
 
-def _emit_multiline_container(
+def _make_multiline_container(
     document: Document,
-    kind: str,
-    lines: list[str],
-    raw_lines: list[str],
-    source: SourceSpan,
-    limits: ParseLimits,
+    state: _OpenContainer,
     *,
-    terminated: bool = True,
-) -> None:
-    labels = {"N": "annotation", "F": "footnote", "H": "header/footer", "h": "header/footer"}
-    label = labels.get(kind, "multiline record")
-    document.blocks.append(
-        UnsupportedObject(
-            label,
-            f"{label} placement metadata was flattened; recovered text follows",
-            source,
-        )
-    )
+    terminated: bool,
+    record_section: str = "edoc",
+    stream_label: str = "[edoc]",
+) -> Block:
+    labels = {"N": "annotation", "F": "footnote", "H": "header", "h": "footer"}
+    label = labels[state.kind]
+    raw = "\n".join(state.raw_lines)
+    metadata = state.metadata.strip()
     document.unknown_records.append(
         UnknownRecord(
-            section="edoc",
-            record_type=f"multiline-{label.replace('/', '-')}",
-            raw="\n".join(raw_lines),
-            source=source,
-            reason="container metadata is not yet interpreted; readable content was reflowed",
+            section=record_section,
+            record_type=f"multiline-{label}",
+            raw=raw,
+            source=state.source,
+            reason=(
+                "direct raw multiline fragments retained alongside the typed "
+                "representation; the enclosing section retains the complete stream"
+            ),
         )
     )
-    document.diagnostics.append(
-        Diagnostic(
-            Severity.WARNING,
-            "multiline-container-reflowed" if terminated else "unterminated-multiline-container",
-            f"{label} text was recovered without its original placement"
-            if terminated
-            else f"unterminated {label} text was recovered to the end of [edoc]",
-            source,
-        )
-    )
-
-    paragraph_lines: list[str] = []
-    paragraphs = 0
-
-    def flush() -> None:
-        nonlocal paragraph_lines, paragraphs
-        if not paragraph_lines:
-            return
-        paragraphs += 1
-        if paragraphs > limits.max_records:
-            raise ResourceLimitError(
-                f"multiline container exceeds {limits.max_records} content records"
+    if not terminated:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                f"unterminated-{label}",
+                f"unterminated {label} content was recovered to the end of {stream_label}",
+                state.source,
             )
-        paragraph = _parse_inline_paragraph(document, paragraph_lines, source)
-        if paragraph.text or paragraph.runs:
-            document.blocks.append(paragraph)
-        paragraph_lines = []
+        )
 
-    for line in lines:
-        if line:
-            paragraph_lines.append(line)
-        else:
-            flush()
-    flush()
+    if state.kind == "N":
+        if not re.fullmatch(r"[+-]?\d+", metadata):
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "annotation-metadata-opaque",
+                    "annotation placement/edit metadata was preserved without interpretation",
+                    state.source,
+                )
+            )
+        return Annotation(state.blocks, metadata, raw, terminated, state.source)
+    if state.kind == "F":
+        if state.metadata:
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "footnote-metadata-unsupported",
+                    "unexpected footnote opener metadata was preserved without interpretation",
+                    state.source,
+                )
+            )
+        return Footnote(state.blocks, metadata, raw, terminated, source=state.source)
+
+    flags = _bounded_optional_flag(metadata)
+    placement = _header_footer_placement(flags)
+    unknown_bits = flags & ~0x1F if flags is not None else 0
+    if flags is None:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                f"{label}-placement-unsupported",
+                f"{label} placement metadata was preserved without interpretation",
+                state.source,
+            )
+        )
+    elif unknown_bits:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                f"{label}-unknown-flag-bits",
+                f"{label} has unsupported placement flag bits 0x{unknown_bits:x}",
+                state.source,
+            )
+        )
+    if flags is not None and (
+        state.kind == "H" and flags & 1 or state.kind == "h" and flags & 2
+    ):
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "header-footer-kind-flag-mismatch",
+                f"{label} command conflicts with its header/footer type flag; "
+                "the command kind was retained",
+                state.source,
+            )
+        )
+    if state.kind == "H":
+        return Header(
+            state.blocks,
+            placement,
+            "body",
+            flags=flags,
+            unknown_flag_bits=unknown_bits,
+            metadata=metadata,
+            raw=raw,
+            terminated=terminated,
+            source=state.source,
+        )
+    return Footer(
+        state.blocks,
+        placement,
+        "body",
+        flags=flags,
+        unknown_flag_bits=unknown_bits,
+        metadata=metadata,
+        raw=raw,
+        terminated=terminated,
+        source=state.source,
+    )
+
+
+def _bounded_optional_flag(value: str) -> int | None:
+    if not re.fullmatch(r"[+-]?\d{1,20}", value):
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _header_footer_placement(flags: int | None) -> str:
+    if flags is None:
+        return "unknown"
+    odd = bool(flags & 4)
+    even = bool(flags & 8)
+    if flags & 16 or odd and even:
+        return "odd-even"
+    if odd:
+        return "odd"
+    if even:
+        return "even"
+    return "all"
 
 
 def _resolve_frame_anchor(
@@ -1331,7 +1797,7 @@ def _apply_inline_tag(
             else value / 20.0
         )
         return None
-    if tag.lower().startswith(":f"):
+    if tag.startswith(":f"):
         descriptor = tag[2:]
         if not descriptor:
             default = document.styles.get(state.style_name or "Body Text")
@@ -1391,6 +1857,9 @@ def _apply_inline_tag(
         return "[Current date]"
     if tag.startswith(":P"):
         return "[Page number]"
+    if re.match(r"^:[NFHh]", tag):
+        state.unknown_tags.append(tag[:200])
+        return f"[Unsupported multiline record: <{tag[:200]}>]"
     if tag in {";", "["}:
         # These are normally consumed by _decode_special_escape.
         return None

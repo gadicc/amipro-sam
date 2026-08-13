@@ -244,7 +244,7 @@ def test_multiline_note_close_does_not_terminate_main_text() -> None:
 
     assert document.text.index("before") < document.text.index("annotation text")
     assert document.text.index("annotation text") < document.text.index("after")
-    assert any(item.code == "multiline-container-reflowed" for item in document.diagnostics)
+    assert any(item.code == "annotation-metadata-opaque" for item in document.diagnostics)
 
 
 def test_multiline_header_close_does_not_terminate_main_text() -> None:

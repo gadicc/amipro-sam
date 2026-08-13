@@ -98,9 +98,26 @@ Other observed commands cover tabs, indents, page breaks, anchors, tables,
 dates/page numbers, bookmarks, fields, merge data, spelling state, notes,
 headers/footers, and revisions. Multiline note, footnote, and header/footer
 containers use their own standalone `>` close inside `[edoc]`; this must not be
-mistaken for the outer document terminator. The parser recovers their readable
-text as labeled reflowed content. Other commands remain in the intermediate
-representation and generate diagnostics.
+mistaken for the outer document terminator. A close is standalone only when the
+physical line contains `>` and whitespace. A line such as `>trailing` is text,
+not a terminator.
+
+Born's reverse-engineering reference identifies `<:N...` as an annotation,
+`<:F` as a footnote, `<:H...` as a header, and `<:h...` as a footer. Header and
+footer flag bits 4 and 8 select odd/right and even/left pages, while bit 16
+denotes odd/even variants; bits 1 and 2 distinguish footer and header in the
+flag word. The parser represents all four as recursive IR objects, retains each
+container's direct raw fragments plus the enclosing section's complete source
+stream, and preserves malformed or unsupported metadata with diagnostics.
+Nested header/footer containers are retained but diagnosed because the
+documented grammar forbids them.
+
+The inspected corpora contain ten annotation records and one inline header
+record. They contain no inline footnote or footer records, so inline footnote
+support is specification-backed and tested synthetically rather than claimed
+as corpus-verified. Annotation metadata in the observed version-4 documents has
+five comma-separated fields rather than only the edit-date field described by
+the older reference; those fields therefore remain opaque.
 
 ## Frames, tables, and embedded objects
 
@@ -112,6 +129,20 @@ anchor flag is set; the zero-based `N` selects those frames in source order. In
 the inspected corpora these references determine table and floating-frame order.
 The current table reader recovers rectangular cell text but does not yet
 reproduce every border, merge, formula, or page coordinate.
+
+Page-layout records contain frame-shaped `[hrght]`, `[frght]`, `[hlft]`, and
+`[flft]` branches for right/odd and left/even headers and footers. Each branch
+may contain `[lyfrm]`/`[frmlay]` placement records followed by a bounded `[txt]`
+stream. Layout-backed header/footer text is represented explicitly and its raw
+geometry is retained for later page-layout work. The inspected corpora contain
+129 nonempty right-header streams and 19 nonempty right-footer streams across
+the installation and private samples; no left-page branches were observed.
+Left-page handling is therefore documented-format-backed and synthetic-tested.
+
+`[fopts]` has four bounded integers: option flags, starting number, separator
+length, and indentation. Known bits request collection at the page end,
+per-page numbering reset, and a separator line. Dimensions use twips. Unknown
+bits and malformed fields are preserved and diagnosed.
 
 The installation corpus contains 29 validated indexed objects: 18 BMP, three
 Ami Draw SDW, and eight standard WMF payloads. Each has an opaque companion block

@@ -17,7 +17,9 @@ discarded or activated.
 | Lists inferred from named styles | Best effort | Supported subset | Supported subset |
 | Tables and cell text | Supported subset | Reflowed | Simple tables/TSV |
 | Table formulas | Cached value recovered; formula preserved in IR | Cached value | Cached value |
-| Text frames, headers, footers, annotations | Text recovered | Anchored/reflowed with warnings | Reflowed |
+| Annotations and inline footnotes | Typed recursive IR; raw metadata retained | Semantic/labeled reflow; footnotes are not native page-bottom objects | Explicit labeled reflow |
+| Body and page-layout headers/footers | Typed IR with odd/even placement and raw frame records | Semantic/labeled reflow; not yet repeated in physical page margins | Explicit placement markers |
+| Ordinary text frames | Text recovered | Anchored/reflowed with warnings | Reflowed |
 | Embedded BMP | Safely indexed and bounded | HTML embeds; paged formats use placeholder | Placeholder |
 | WMF | Preserved as metadata | Placeholder | Placeholder |
 | Ami Draw `.sdw` | Preserved as metadata | Placeholder | Placeholder |

@@ -22,6 +22,8 @@ experimental DOCX output.
 - Common character and paragraph formatting: fonts, size/color, bold, italic,
   underline, strikeout, super/subscript, alignment, spacing, and indents.
 - Text recovery from the main document, text frames, and table cells.
+- Typed annotations, footnotes, and body/layout header/footer streams with raw
+  placement records retained in the intermediate representation.
 - Bounds-checked extraction of embedded BMP data.
 - Visible placeholders for WMF, Ami Draw, OLE, equations, macros, and other
   unsupported objects.

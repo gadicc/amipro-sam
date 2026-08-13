@@ -34,8 +34,13 @@ from reportlab.platypus.doctemplate import LayoutError
 
 from ..errors import RenderError
 from ..model import (
+    Annotation,
+    Block,
     CharacterStyle,
     Document,
+    Footer,
+    Footnote,
+    Header,
     Image,
     PageBreak,
     Paragraph,
@@ -125,7 +130,17 @@ def _render_bytes(document: Document, *, conservative: bool) -> bytes:
 def _primary_story(document: Document) -> list[object]:
     story: list[object] = []
     list_counters: dict[int, int] = {}
-    for block in document.blocks:
+    _append_primary_blocks(document, document.blocks, story, list_counters)
+    return story
+
+
+def _append_primary_blocks(
+    document: Document,
+    blocks: list[Block],
+    story: list[object],
+    list_counters: dict[int, int],
+) -> None:
+    for block in blocks:
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 story.append(ReportLabPageBreak())
@@ -147,13 +162,23 @@ def _primary_story(document: Document) -> list[object]:
                 )
             )
             list_counters.clear()
-    return story
+        elif isinstance(block, Annotation | Footnote | Header | Footer):
+            story.append(_placeholder_flowable(_container_label(block)))
+            list_counters.clear()
+            _append_primary_blocks(document, block.blocks, story, list_counters)
 
 
 def _fallback_story(document: Document) -> list[object]:
     story: list[object] = []
     list_counters: dict[int, int] = {}
-    for block in document.blocks:
+    _append_fallback_blocks(document.blocks, story, list_counters)
+    return story
+
+
+def _append_fallback_blocks(
+    blocks: list[Block], story: list[object], list_counters: dict[int, int]
+) -> None:
+    for block in blocks:
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 story.append(ReportLabPageBreak())
@@ -183,7 +208,26 @@ def _fallback_story(document: Document) -> list[object]:
                 )
             )
             list_counters.clear()
-    return story
+        elif isinstance(block, Annotation | Footnote | Header | Footer):
+            story.append(_fallback_paragraph(_container_label(block), placeholder=True))
+            list_counters.clear()
+            _append_fallback_blocks(block.blocks, story, list_counters)
+
+
+def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
+    if isinstance(block, Annotation):
+        return "[Annotation]"
+    if isinstance(block, Footnote):
+        return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+    kind = "Header" if isinstance(block, Header) else "Footer"
+    placement = {
+        "all": "all pages",
+        "odd": "odd/right pages",
+        "even": "even/left pages",
+        "odd-even": "odd and even variants",
+        "unknown": "placement unknown",
+    }.get(block.placement, "placement unknown")
+    return f"[{kind}: {placement}]"
 
 
 def _is_reportlab_layout_failure(error: BaseException) -> bool:
