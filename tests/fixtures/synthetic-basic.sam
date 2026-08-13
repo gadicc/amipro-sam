@@ -1,0 +1,61 @@
+[ver]
+	4
+[sty]
+
+[files]
+[charset]
+	82
+	ANSI (Windows, IBM CP 1252)
+[tag]
+	Body Text
+	2
+	[fnt]
+		Times New Roman
+		240
+		0
+		49152
+	[algn]
+		1
+		1
+		0
+		0
+		0
+	[spc]
+		1
+		240
+		1
+		0
+		0
+	Body Text
+	0
+	0
+[tag]
+	Title
+	8
+	[fnt]
+		Arial
+		360
+		0
+		49153
+	[algn]
+		4
+		1
+		0
+		0
+		0
+	[spc]
+		1
+		360
+		1
+		0
+		144
+	Title
+	0
+	0
+[edoc]
+@Title@Synthetic preservation sample
+
+@Body Text@Plain text with <+!>bold<-!>, <+">italic<-">, <+#>underline<-#>, and literal <<markup<;>.
+
+Second paragraph with trailing text.
+>

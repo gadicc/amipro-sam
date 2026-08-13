@@ -1,0 +1,219 @@
+"""Intermediate representation shared by all output formats.
+
+The model deliberately retains source locations and unknown records.  Renderers
+are consumers of this model; no renderer needs to understand raw SAM syntax.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Literal, TypeAlias
+
+
+class Severity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass(slots=True)
+class SourceSpan:
+    line: int
+    column: int
+    byte_offset: int
+    end_byte_offset: int
+
+
+@dataclass(slots=True)
+class Diagnostic:
+    severity: Severity
+    code: str
+    message: str
+    source: SourceSpan | None = None
+    raw: str | None = None
+
+
+@dataclass(slots=True)
+class CharacterStyle:
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    strike: bool = False
+    superscript: bool = False
+    subscript: bool = False
+    font_family: str | None = None
+    font_size_pt: float | None = None
+    color: str | None = None
+
+    def merged(self, **changes: Any) -> CharacterStyle:
+        values = asdict(self)
+        values.update(changes)
+        return CharacterStyle(**values)
+
+
+@dataclass(slots=True)
+class TextRun:
+    text: str
+    style: CharacterStyle = field(default_factory=CharacterStyle)
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class Paragraph:
+    runs: list[TextRun] = field(default_factory=list)
+    style_name: str | None = None
+    alignment: Literal["left", "right", "center", "justify"] | None = None
+    left_indent_in: float | None = None
+    right_indent_in: float | None = None
+    first_line_indent_in: float | None = None
+    space_before_pt: float | None = None
+    space_after_pt: float | None = None
+    line_spacing: float | None = None
+    page_break_before: bool = False
+    keep_with_next: bool = False
+    list_kind: Literal["bullet", "number"] | None = None
+    list_level: int = 0
+    source: SourceSpan | None = None
+
+    @property
+    def text(self) -> str:
+        return "".join(run.text for run in self.runs)
+
+
+@dataclass(slots=True)
+class PageBreak:
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class TableCell:
+    blocks: list[Paragraph] = field(default_factory=list)
+    column_span: int = 1
+    row_span: int = 1
+
+    @property
+    def text(self) -> str:
+        return "\n".join(block.text for block in self.blocks)
+
+
+@dataclass(slots=True)
+class TableRow:
+    cells: list[TableCell] = field(default_factory=list)
+    is_header: bool = False
+
+
+@dataclass(slots=True)
+class Table:
+    rows: list[TableRow] = field(default_factory=list)
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class Image:
+    reference: str | None = None
+    data: bytes | None = None
+    media_type: str | None = None
+    alt_text: str = "Embedded image"
+    width_in: float | None = None
+    height_in: float | None = None
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class UnsupportedObject:
+    kind: str
+    description: str
+    source: SourceSpan | None = None
+
+
+Block: TypeAlias = Paragraph | PageBreak | Table | Image | UnsupportedObject
+
+
+@dataclass(slots=True)
+class StyleDefinition:
+    name: str
+    parent: str | None = None
+    character: CharacterStyle = field(default_factory=CharacterStyle)
+    alignment: Literal["left", "right", "center", "justify"] | None = None
+    left_indent_in: float | None = None
+    right_indent_in: float | None = None
+    first_line_indent_in: float | None = None
+    space_before_pt: float | None = None
+    space_after_pt: float | None = None
+    line_spacing: float | None = None
+    raw: str | None = None
+    source: SourceSpan | None = None
+
+
+@dataclass(slots=True)
+class UnknownRecord:
+    section: str | None
+    record_type: str
+    raw: str
+    source: SourceSpan
+    reason: str
+
+
+@dataclass(slots=True)
+class SectionRecord:
+    name: str
+    source: SourceSpan
+    raw_lines: list[str] = field(default_factory=list)
+    raw_spans: list[SourceSpan] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class Document:
+    source_name: str
+    encoding: str
+    version: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    styles: dict[str, StyleDefinition] = field(default_factory=dict)
+    blocks: list[Block] = field(default_factory=list)
+    unknown_records: list[UnknownRecord] = field(default_factory=list)
+    diagnostics: list[Diagnostic] = field(default_factory=list)
+    sections: list[SectionRecord] = field(default_factory=list)
+    source_directory: Path | None = None
+    original_size: int = 0
+    newline: str = "\r\n"
+
+    @property
+    def text(self) -> str:
+        parts: list[str] = []
+        for block in self.blocks:
+            if isinstance(block, Paragraph):
+                parts.append(block.text)
+            elif isinstance(block, PageBreak):
+                parts.append("\f")
+            elif isinstance(block, Table):
+                parts.extend("\t".join(cell.text for cell in row.cells) for row in block.rows)
+            elif isinstance(block, Image):
+                parts.append(f"[{block.alt_text}]")
+            elif isinstance(block, UnsupportedObject):
+                parts.append(f"[Unsupported {block.kind}: {block.description}]")
+        return "\n".join(parts)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _jsonable(self)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, bytes):
+        return {"length": len(value), "encoding": "not-inlined"}
+    if is_dataclass(value):
+        result = {
+            item.name: _jsonable(getattr(value, item.name)) for item in fields(value)
+        }
+        result["type"] = type(value).__name__
+        return result
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item) for item in value]
+    return value
