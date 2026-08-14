@@ -14,6 +14,10 @@ from .amipro_install import (
     OUTER_TIME_LIMIT_SECONDS as AMIPRO_INSTALL_TIME_LIMIT_SECONDS,
 )
 from .amipro_install import install_amipro_checkpoint
+from .amipro_launch_probe import (
+    OUTER_TIME_LIMIT_SECONDS as AMIPRO_LAUNCH_TIME_LIMIT_SECONDS,
+)
+from .amipro_launch_probe import launch_amipro_ready
 from .compare import compare_analyses
 from .constants import (
     COMPARE_SCHEMA,
@@ -106,6 +110,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="affirm your right to use the supplied local proprietary media",
     )
     install_amipro.set_defaults(handler=_command_install_amipro)
+
+    launch_amipro = subparsers.add_parser(
+        "launch-amipro",
+        help="prove Ami Pro reaches its editor and exits cleanly",
+    )
+    _common(launch_amipro, backend=False)
+    launch_amipro.add_argument("--checkpoint-key")
+    launch_amipro.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=AMIPRO_LAUNCH_TIME_LIMIT_SECONDS,
+        help=(
+            "outer wall-clock deadline "
+            f"(maximum {AMIPRO_LAUNCH_TIME_LIMIT_SECONDS}s)"
+        ),
+    )
+    launch_amipro.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the cached runtime made from proprietary media",
+    )
+    launch_amipro.set_defaults(handler=_command_launch_amipro)
 
     smoke = subparsers.add_parser("smoke", help="run one invented-document lifecycle smoke test")
     _common(smoke, backend=True)
@@ -528,6 +554,36 @@ def _command_install_amipro(args: argparse.Namespace) -> int:
         text=(
             f"Ami Pro install candidate ready: {result['checkpoint_key']}\n"
             "Next: run a separate Ami Pro launch-and-clean-exit probe."
+        ),
+    )
+    return EXIT_OK
+
+
+def _command_launch_amipro(args: argparse.Namespace) -> int:
+    if not args.confirm_proprietary_media_rights:
+        raise OracleError(
+            "the real Ami Pro launch probe requires --confirm-proprietary-media-rights",
+            exit_code=EXIT_USAGE,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+            exit_code=EXIT_MISSING,
+        )
+    result = launch_amipro_ready(
+        home,
+        image,
+        checkpoint_key=args.checkpoint_key,
+        timeout_seconds=args.timeout_seconds,
+    )
+    _emit(
+        args,
+        result,
+        text=(
+            f"Ami Pro runtime ready: {result['runtime_key']}\n"
+            "Next: open one invented SAM in the Phase 2 smoke test."
         ),
     )
     return EXIT_OK
