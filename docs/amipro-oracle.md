@@ -4,11 +4,12 @@ The oracle is an opt-in, local test system for comparing this converter with Ami
 Windows 3.1. It is deliberately separate from the normal converter: public CI and ordinary
 conversion never execute Ami Pro or require proprietary media.
 
-The current milestone provides a real, bounded Windows 3.1 Setup driver for the exact supplied
-six-floppy profile plus an independent, media-free Program Manager boot/clean-exit gate. The gate
-has produced a content-addressed **Windows-ready base**. Ami Pro installation is still required;
-no real rendering result has been produced, and no current manifest is accepted as a fidelity
-baseline. See the [investigation and adversarial plan](plans/amipro-oracle-plan.md).
+The current milestone provides a real, bounded Windows 3.1 Setup driver, an independent
+Program Manager boot/clean-exit gate, and an exact-dialog Ami Pro 3.1 installer. These phases have
+produced content-addressed **Windows-ready** and **Ami Pro install-candidate** bases. A separate
+Ami Pro launch/clean-exit gate and invented-document smoke are still required; no real rendering
+result has been produced, and no current manifest is accepted as a fidelity baseline. See the
+[investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
 
@@ -18,6 +19,7 @@ Run from the repository root:
 ./scripts/amipro-oracle doctor
 ./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
+./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -112,18 +114,19 @@ has a unique name and cidfile. Host UI actions first verify that exact CID and i
 cleanup targets that identity rather than a reusable name. Killing only the `podman run` process
 group is not treated as sufficient container cleanup.
 
-The Windows installer and boot-probe phases retain their state traces, generated configurations,
-bounded stdout/stderr, changed-screen archives, observer status, raw and normalized runtime trees,
-and process cleanup results. The boot gate additionally retains the accepted Program Manager and
-Exit Windows frames. Stable checkpoint manifests exclude volatile job paths/timing; returned
-results name the ignored evidence jobs that back them. Troubleshooting starts with captured
-evidence, not manual guest inspection.
+The Windows installer, boot-probe, and Ami Pro installer phases retain their state traces,
+generated configurations, bounded stdout/stderr, changed-screen archives, observer status, raw
+and normalized runtime trees, and process cleanup results. The boot gate retains the accepted
+Program Manager and Exit Windows frames. The Ami Pro installer retains all seven recognized
+installer states plus the post-install Program Manager and Exit Windows frames. Stable checkpoint
+manifests exclude volatile job paths/timing; returned results name the ignored evidence jobs that
+back them. Troubleshooting starts with captured evidence, not manual guest inspection.
 
 The prior failed Wine attempt has been copied, hash-verified, and retained in a local ignored
 content-addressed evidence namespace. It is not part of the oracle runtime, and no Wine prefix or
 proprietary executable was copied into source.
 
-## Windows bootstrap and boot gate
+## Windows bootstrap, boot gate, and Ami Pro install
 
 After building the locked toolchain, run the exact supplied-media phase with an explicit affirmation
 that you have the right to use both local proprietary media sets:
@@ -157,6 +160,32 @@ bytes. The accepted Program Manager and Exit Windows screenshots hash to
 `0938a62a7d80d6feae2f80db5cf40515479f49444ebe54264f60af259e289df4`, respectively. A second
 invocation integrity-checked and reused the same cache without starting the guest. These
 observations prove the Windows lifecycle gate, not Ami Pro fidelity.
+
+Install Ami Pro only into a disposable clone of that Windows-ready runtime:
+
+```console
+./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
+```
+
+If more than one Windows-ready runtime exists, add `--runtime-key HASH`. The installer mounts only
+the verified flattened eight-floppy source read-only and the disposable job writable. It advances
+only after matching seven exact, cursor-free dialog-title crops, then separately proves Program
+Manager, confirms Exit Windows, validates the DOS return sentinel, checks `AMIPRO.EXE` and the
+installer-created directory/INI topology, and seals a new cache. It does not accept a flat payload
+copy as an installation.
+
+The exercised run on 2026-08-14 promoted Windows-ready parent
+`efab02fe92a782e9d3a59540d7b8caddbff2740cbbee9a9cf1285654d8e83bd3` to Ami Pro install candidate
+`c7c79b26e9779a3c2f95b00c8f2301e95523cde960d1e287aacc79aa9dee6745`. The container exited zero
+without timeout after 223.88 seconds. The sealed tree contains 924 files in 14 directories totaling
+28,946,822 bytes; installed `AMIPRO.EXE` matches
+`555506d1558d61579d5c6fee8bf5fa9d960aa05a20a5d171240ac2e0ea73cbbd`. The post-install Program
+Manager and Exit Windows frames hash to
+`ab1cf3925d8f14986f27b5ea70a0f333754ee8271286d0e9f4bd1e2c65165a92` and
+`103131c51e5a51bca7dc5c371eecd95e2abdaa014ec6f3518266a1a1f195761f`. Evidence job
+`install-amipro-c7c79b26e977-a9gyaes6` remains local and ignored. A second invocation verified and
+reused the cache without executing Setup. This proves the installation checkpoint, not that Ami
+Pro launches, renders, or prints correctly.
 
 The supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup
 remains a later phase. Nothing fetches a driver, WPD, PPD, font, Windows, or Ami Pro bytes.

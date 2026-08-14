@@ -1,12 +1,13 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phase 0 committed; exact Windows media statically verified; the bounded Setup driver and
-independent Program Manager boot/clean-exit gate both passed on 2026-08-14. Phase 1 remains
-incomplete until Ami Pro is installed into a disposable clone of the Windows-ready base.
+Status: Phase 1 complete. Exact Windows and Ami Pro media profiles, the bounded Windows Setup
+driver, the independent Program Manager boot/clean-exit gate, and the exact-dialog Ami Pro
+installer all passed on 2026-08-14. Phase 2 begins with a separate Ami Pro launch/clean-exit gate.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
-Windows 3.1 media. It now has a verified Windows-ready base but not an Ami Pro runtime.
-Proprietary execution requires the user's explicit right-to-use affirmation.
+Windows 3.1 media. It now has verified Windows-ready and Ami Pro install-candidate bases, but no
+document-rendering result. Proprietary execution requires the user's explicit right-to-use
+affirmation.
 
 ## Scope and legal boundary
 
@@ -320,6 +321,7 @@ The public surface is:
 ./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights \
   --win31-media PATH --amipro-media PATH
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
+./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -406,12 +408,19 @@ pass.
 
 ## Current stop condition
 
-The exact media profile, Setup driver, and separate media-free Program Manager gate are implemented
-and exercised. The Windows-ready runtime key is
-`efab02fe92a782e9d3a59540d7b8caddbff2740cbbee9a9cf1285654d8e83bd3`; its acceptance job retained
-the stable Program Manager and Exit Windows frames, clean process result, and sealed 215-file tree.
-The next implementation target is the Ami Pro installer phase, using a disposable clone of that
-base and the existing read-only eight-floppy profile.
+Phase 1 is implemented and exercised. Windows-ready runtime
+`efab02fe92a782e9d3a59540d7b8caddbff2740cbbee9a9cf1285654d8e83bd3` was cloned for the bounded
+Ami Pro installer. All seven exact installer dialog states, the post-install Program Manager, the
+Exit Windows confirmation, a zero DOS return sentinel, the expected executable hash, and required
+INI/directory side effects were validated before publishing install candidate
+`c7c79b26e9779a3c2f95b00c8f2301e95523cde960d1e287aacc79aa9dee6745`. Its sealed tree contains
+924 files in 14 directories totaling 28,946,822 bytes. Evidence job
+`install-amipro-c7c79b26e977-a9gyaes6` is local and ignored, and cache reuse was verified without
+restarting Setup.
+
+The next implementation target is a separate, media-free Ami Pro launch/known-state/clean-exit
+gate over a disposable clone of this install candidate. Only after that gate passes should an
+invented SAM document be introduced for the Phase 2 smoke.
 
 For a fresh local rebuild, first affirm the right to use the supplied media:
 
@@ -427,8 +436,13 @@ media through the repository. Then run:
 
 ```console
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
+./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ```
 
 The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed
 closed without promotion. The explicit 8.3 sentinel and regression test were added before the
 successful run. Neither Windows-ready cache nor its screenshots are publishable source artifacts.
+The Ami Pro installer also failed closed during development when Windows remained open after Setup
+and when a blinking cursor raced whole-screen confirmation decoding. The committed driver now
+performs an explicit Program Manager exit and decodes one identity-checked observer snapshot. The
+successful install candidate and all failed-attempt screenshots remain local, ignored artifacts.
