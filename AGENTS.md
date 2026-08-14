@@ -57,13 +57,18 @@ until `spec/evidence.md` and `spec/sam-format.md` reflect that result. Pure refa
 tooling changes, and renderer-only changes need no speculative RFC edit when they add
 no format evidence.
 
-For every new or changed semantic claim:
+For every new or changed format claim:
 
 1. Give the claim a stable ID in `spec/evidence.md`.
-2. Record the source IDs, dependency analysis, confidence, and important alternatives.
-3. Update the relevant table or grammar in `spec/sam-format.md`.
-4. Link detailed analysis rather than copying it into the specification.
-5. Only then change parser/model/renderer behavior, with invented synthetic fixtures
+2. Classify it as **grammar/structure**, **semantics**, or **native behavior/rendering**.
+   Split a row when those dimensions have different confidence; do not give a bundle
+   of claims the confidence of its best-supported part.
+3. Record the source IDs, dependency analysis, confidence, and important alternatives.
+4. Check that every cited source supports the exact claim and dimension, rather than
+   merely recognizing the same record or command.
+5. Update the relevant table or grammar in `spec/sam-format.md`.
+6. Link detailed analysis rather than copying it into the specification.
+7. Only then change parser/model/renderer behavior, with invented synthetic fixtures
    and compatibility notes where output changes.
 
 Use these confidence terms consistently:
@@ -81,6 +86,32 @@ KOffice notes and KOffice code are one source family. A private corpus may have
 unknown save provenance and must not automatically be treated as independent of an
 import/export filter. Synthetic tests validate our behavior; they do not establish
 Ami Pro behavior.
+
+Apply these source-fitness limits:
+
+- Observing a record, value, or correlation can establish grammar or occurrence; it
+  does not by itself establish meaning or visible effect.
+- A prior importer/exporter establishes what that implementation recognizes or
+  emits. Its output is not evidence of native Ami Pro behavior unless its own test
+  material records a controlled comparison with Ami Pro.
+- Treat the archived KOffice filter as an unfinished, limited text/basic-format
+  compatibility implementation. Its notes and code are useful leads for the exact
+  fields they discuss, but its tests are sample documents rather than a discovered
+  rendering oracle, and it is not support for frame, image, table, page-fidelity, or
+  pixel-fidelity claims merely because it recognizes SAM.
+- Treat Born's published chapter as detailed secondary reverse engineering. It is
+  useful for grammar and semantic hypotheses, but no documented native-output test
+  harness has been found; preserve and resolve conflicts with direct observations.
+- Static W4W analysis establishes the behavior of that converter subsystem, which
+  may itself be lossy. It does not automatically establish native Ami Pro behavior.
+- Only a controlled real-Ami-Pro oracle experiment establishes native visible
+  behavior. Scope the conclusion to the recorded Ami Pro version, fonts, printer
+  driver, environment, fixture, and measured variable.
+
+Exact typography, line breaking, pagination, geometry, and raster appearance remain
+**open** unless a rendering claim cites controlled native evidence. Agreement among
+secondary descriptions may confirm a field's semantic role without confirming its
+visual result.
 
 When evidence conflicts, preserve both records, mark the older claim contradicted or
 superseded, and explain the resolution. Do not silently upgrade confidence.

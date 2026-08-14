@@ -22,11 +22,13 @@ samples, so version-specific assumptions must stay visible.
 
 ## Status language
 
-Every semantic mapping is labeled **confirmed**, **strong**, **tentative**,
+Every claim is classified as grammar/structure, semantics, or native
+behavior/rendering and labeled **confirmed**, **strong**, **tentative**,
 **contradicted**, or **open** using the definitions in [`evidence.md`](evidence.md).
-Syntax may be strongly established while the meaning of one or more fields remains
-open. A conforming preservation reader should retain unknown fields and make no
-stronger claim than the evidence supports.
+Syntax may be strongly established while field meanings remain open; meanings may be
+established while Ami Pro's exact visual result remains open. A conforming
+preservation reader should retain unknown fields and make no stronger claim than the
+evidence supports.
 
 `MUST`, `SHOULD`, and `MAY` describe this project's interoperability contract, not an
 official Lotus standard. This independent specification is not affiliated with or
@@ -36,11 +38,13 @@ endorsed by the format's rights holders.
 
 A format change should include, in one reviewable change:
 
-1. a new or updated claim in `evidence.md`;
+1. a new or updated, dimension-specific claim in `evidence.md`;
 2. the corresponding grammar or command-table change in `sam-format.md`;
 3. links to detailed evidence and an explicit dependency analysis;
 4. synthetic conformance fixtures when implementation behavior changes; and
 5. compatibility notes for any changed conversion output.
 
 Implementation code and tests can demonstrate that this toolkit behaves as intended,
-but cannot by themselves establish what Ami Pro means.
+but cannot by themselves establish what Ami Pro means or how Ami Pro renders it. A
+prior compatibility filter likewise proves only its own behavior unless it records a
+controlled native comparison.

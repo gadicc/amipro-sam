@@ -223,6 +223,12 @@ Pro 3.1 installation media, and private regression documents. No proprietary
 executables, help files, templates, fonts, manuals, or samples are distributed.
 Synthetic fixtures contain invented content only.
 
+Prior importers are treated as interoperability leads, not rendering authorities.
+In particular, the archived KOffice filter was an unfinished text/basic-format
+implementation with sample documents rather than a discovered Ami Pro comparison
+harness. The public RFC records grammar, semantic, and native-rendering confidence
+separately in [`spec/evidence.md`](spec/evidence.md).
+
 The interoperability research includes hash-gated, bounded static disassembly
 windows from lawfully owned Ami Pro conversion modules. It does not execute,
 instrument, modify, or distribute vendor programs, extracted segments, resources,

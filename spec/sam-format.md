@@ -8,6 +8,11 @@ loss-preserving parsing: when syntax is established but semantics are uncertain,
 reader should retain the original record, expose the uncertainty, and avoid inventing
 layout behavior. Claim IDs refer to [`evidence.md`](evidence.md).
 
+Confidence is dimension-specific. A command may have confirmed grammar and a strong
+semantic role while its exact Ami Pro layout or appearance remains open. No
+third-party filter output is native-rendering evidence unless a cited controlled
+comparison establishes that relationship.
+
 ## 1. Conventions
 
 - Text examples show decoded characters. Byte decoding is selected from a BOM,
@@ -35,8 +40,11 @@ paragraph text and inline commands
 optional indexed binary payloads and companion data
 [Embedded]
 asset directory rows
-zero-padded decimal directory offset
+zero-padded decimal directory offset in the observed version-4 corpora
 ```
+
+The outer order is `SAM-CONTAINER-001`; the terminal pointer has the narrower,
+version-scoped claim `SAM-EMBEDDED-POINTER-001`.
 
 A reader MUST validate all offsets, lengths, counts, and nesting before allocating or
 slicing. It MUST NOT execute macros, DDE, OLE, dynamic fields, or external paths. An
@@ -61,13 +69,13 @@ are not yet catalogued well enough to make a complete value table.
 | `[ver]` | Observed version `4`; secondary sources describe `3` | Select versioned grammar while retaining the raw value | `4` confirmed; `3` tentative, `SAM-CONTAINER-001` |
 | `[charset]` | Identifier plus human-readable description | Select byte decoding without treating the identifier as a code-page number | confirmed for observed `82`/CP1252, `SAM-CHARSET-001` |
 | `[tag]` | Style name/envelope followed by indented subrecords | Define a named paragraph style; retain unknown subrecords | confirmed, `SAM-STYLE-001` |
-| `[lay]` | Layout flags/size followed by right/left and header/footer branches | Define page geometry and page variants | mixed confirmed/open fields, `SAM-PAGE-001` |
-| `[rght]`, `[lft]` | Nine-number geometry prefix plus possible tail | Right/odd and left/even page rectangles/margins | confirmed prefix, `SAM-PAGE-001` |
-| `[hrght]`, `[hlft]`, `[frght]`, `[flft]` | Layout header/footer branches | Preserve or materialize page furniture for the applicable variant | strong; transition details open, `SAM-PAGE-001` |
+| `[lay]` | Layout flags/size followed by right/left and header/footer branches | Define page geometry and page variants | grammar confirmed; field semantics strong; native pagination/rendering open, `SAM-PAGE-001` |
+| `[rght]`, `[lft]` | Nine-number geometry prefix plus possible tail | Right/odd and left/even page rectangles/margins | grammar confirmed; field semantics strong; exact native geometry open, `SAM-PAGE-001` |
+| `[hrght]`, `[hlft]`, `[frght]`, `[flft]` | Layout header/footer branches | Preserve or materialize page furniture for the applicable variant | grammar/semantics strong; transition and native placement open, `SAM-PAGE-001` |
 | `[frm]` | Frame envelope with nested layout/text/table/image records | Materialize a frame and its readable children; retain placement fields | strong, `SAM-FRAME-001` |
 | `[pg]` | Observed page-position/layout hint records | Retain as hints; do not infer allocation or a page transition from position alone | open |
-| `[edoc]` | Text stream terminated by standalone `>` | Parse paragraphs, styles, escapes, inline commands, and nested streams | confirmed, `SAM-TEXT-001` |
-| `[Embedded]` | Rows containing ID, extension, asset offset/length, preview offset/length | Validate and index inert embedded payloads | confirmed, `SAM-EMBEDDED-001` |
+| `[edoc]` | Text stream terminated by standalone `>` | Parse paragraphs, styles, escapes, inline commands, and nested streams | stream grammar confirmed; physical-line paragraph semantics strong, `SAM-TEXT-001`, `SAM-TEXT-PARAGRAPH-001` |
+| `[Embedded]` | Rows containing ID, extension, asset offset/length, companion/preview offset/length | Validate and index inert embedded payloads | row grammar/semantics confirmed, `SAM-EMBEDDED-001`; observed terminal pointer confirmed, `SAM-EMBEDDED-POINTER-001` |
 | `[newmac]`, `[macro]`, `[frmmac]` | Active-content sections | Preserve bounded metadata only; never execute | syntax confirmed, byte semantics incomplete, `SAM-ACTIVE-001` |
 | `[files]`, `[prn]`, `[port]`, `[book]`, `[master]`, `[recfile]` | External-file/print/book metadata | Preserve; never automatically open a document-controlled path | syntax confirmed, field semantics incomplete, `SAM-ACTIVE-001` |
 | `[revisions]` | Exact single `0` is the observed no-revisions state | Record revision state; preserve nonzero/additional values as unresolved | tentative, `SAM-REVISION-001` |
@@ -81,8 +89,8 @@ not an inheritance parent (`SAM-STYLE-001`).
 
 | Subrecord | Fields and known values | Meaning / expected reader output | Confidence and provenance |
 |---|---|---|---|
-| `[fnt]` | `family`, `size_twips`, `packed_color`, `flags`, then possible tail | Set character style. Packed color uses red bits 0–7, green 8–15, blue 16–23. Known low bits cover bold, italic, underline variants, strikeout, super/subscript. Preserve unknown bits/tail | confirmed known prefix/subset, `SAM-STYLE-FONT-001` |
-| `[algn]` | `flags`, `unit`, `all_indent`, `first_position`, `rest_position`, then possible tail | Low flag bits: 1 left/default, 2 right, 4 center, 8 justify. Positions are twips. Preserve nondefault/high-bit behavior not yet explained | strong prefix, mixed tentative/open semantics, `SAM-STYLE-ALIGN-001` |
+| `[fnt]` | `family`, `size_twips`, `packed_color`, `flags`, then possible tail | Set character style. Packed color uses red bits 0–7, green 8–15, blue 16–23. Known low bits cover bold, italic, underline variants, strikeout, super/subscript. Preserve unknown bits/tail | grammar and known low-bit meanings confirmed; native metrics/appearance open, `SAM-STYLE-FONT-001` |
+| `[algn]` | `flags`, `unit`, `all_indent`, `first_position`, `rest_position`, then possible tail | Low flag bits: 1 left/default, 2 right, 4 center, 8 justify. Positions are twips. Preserve nondefault/high-bit behavior not yet explained | grammar/low-bit meanings strong; exact geometry and rendering open, `SAM-STYLE-ALIGN-001` |
 | `[spc]` | At least five numeric fields; common tail `1`, `100` | Record paragraph spacing. The common tail is neutral; preserve nondefault flags/tightness rather than guessing | tentative, `SAM-STYLE-SPACING-001` |
 | `[brk]` | Numeric flags | Page/column break and keep behavior exists, but only separately evidenced bits should be applied | mixed confirmed/open, `SAM-STYLE-001` |
 | `[line]`, `[spec]`, `[nfmt]` | Observed nested fields | Preserve raw until individual fields have ledger claims | syntax confirmed; semantics open, `SAM-STYLE-001` |
@@ -96,7 +104,9 @@ also retains and reports the remainder.
 Within `[edoc]`, a blank physical line ends a paragraph. Consecutive nonblank physical
 lines are storage continuations and concatenate without an invented space or newline.
 A line containing only optional whitespace plus `>` closes the current text stream.
-`>trailing` is text, not a close (`SAM-TEXT-001`).
+`>trailing` is text, not a close. Stream delimiters are confirmed
+(`SAM-TEXT-001`); physical-line paragraph interpretation is strong but still lacks a
+native behavioral observation (`SAM-TEXT-PARAGRAPH-001`).
 
 Named paragraph styles use `@Style Name@`; `@@` is a literal at sign.
 
@@ -115,7 +125,9 @@ Named paragraph styles use `@Style Name@`; `@@` is a literal at sign.
 The table catalogs all inline families currently interpreted or explicitly recognized
 by the project. Unknown commands MUST remain visible or structurally preserved. A
 field range below describes safely recognized syntax; it does not imply that all
-values have established Ami Pro behavior.
+values have established Ami Pro behavior. “Confirmed” or “strong” inline meanings do
+not certify exact glyph metrics, line breaking, pagination, or visual appearance;
+those rendering dimensions remain open until isolated by the native oracle.
 
 ### 6.1 Character and paragraph state
 
@@ -133,17 +145,17 @@ values have established Ami Pro behavior.
 | `<+A>` | no payload | Right alignment | confirmed, `SAM-INLINE-STYLE-001` |
 | `<+B>` | no payload | Center alignment | confirmed, `SAM-INLINE-STYLE-001` |
 | `<+C>` | no payload | Justified alignment | confirmed, `SAM-INLINE-STYLE-001` |
-| `<:f>` | no payload | Restore character state from the current paragraph style | confirmed, `SAM-INLINE-FONT-001` |
-| `<:fSIZE>` | signed bounded twips | Set font size; omitted properties come from current style | confirmed, `SAM-INLINE-FONT-001` |
-| `<:fSIZE,FAMILY>` | size and escaped family | Set size/family; leading family discriminator digits are metadata rather than family text | confirmed, `SAM-INLINE-FONT-001` |
-| `<:fSIZE,FAMILY,R,G,B>` | RGB channels bounded/clamped to 0–255 | Set size, family, and color | confirmed shape/meaning, `SAM-INLINE-FONT-001` |
-| `<:fSIZE,FAMILY,>` | compact observed form | Apply present size/family and restore default color | confirmed from corpus behavior, `SAM-INLINE-FONT-001` |
-| `<:S+-1>` / `-2` / `-3` | three sentinel values | Single / 1.5 / double line spacing | confirmed, `SAM-INLINE-SPACING-001` |
+| `<:f>` | no payload | Proposed restore of character state from the current paragraph style | tentative semantics; native behavior open, `SAM-INLINE-FONT-RESET-001` |
+| `<:fSIZE>` | signed bounded twips | Set font size; omitted-property inheritance remains to be isolated | grammar confirmed; meaning strong; reset details tentative, `SAM-INLINE-FONT-001`, `SAM-INLINE-FONT-RESET-001` |
+| `<:fSIZE,FAMILY>` | size and escaped family | Set size/family; leading family discriminator digits are metadata rather than family text | grammar confirmed; meaning strong; native metrics open, `SAM-INLINE-FONT-001` |
+| `<:fSIZE,FAMILY,R,G,B>` | RGB channels bounded/clamped to 0–255 | Set size, family, and color | grammar confirmed; meaning strong; native appearance open, `SAM-INLINE-FONT-001` |
+| `<:fSIZE,FAMILY,>` | compact observed form | Apply present size/family; proposed restoration of default color | grammar confirmed; reset semantics tentative, `SAM-INLINE-FONT-001`, `SAM-INLINE-FONT-RESET-001` |
+| `<:S+-1>` / `-2` / `-3` | three sentinel values | Single / 1.5 / double line spacing | grammar confirmed; meaning strong; exact native spacing open, `SAM-INLINE-SPACING-001` |
 | `<:S+N>` | bounded finite numeric value | Other spacing quantity; retain exact value and avoid stronger unit claims | syntax confirmed, semantics tentative, `SAM-INLINE-SPACING-001` |
-| `<:S->` | no payload | Restore current style line spacing | confirmed, `SAM-INLINE-SPACING-001` |
-| `<:>` | no payload | Restore current style character state | confirmed, `SAM-INLINE-CONTROL-001` |
-| `<:s>` | no payload | Nonprinting spelling state | confirmed, `SAM-INLINE-CONTROL-001` |
-| `<:p>` | no payload | Page break before following visible paragraph | confirmed, `SAM-INLINE-CONTROL-001` |
+| `<:S->` | no payload | Restore current style line spacing | grammar confirmed; meaning strong; exact native spacing open, `SAM-INLINE-SPACING-001` |
+| `<:>` | no payload | Restore current style character state | grammar confirmed; meaning strong; native behavior open, `SAM-INLINE-CONTROL-001` |
+| `<:s>` | no payload | Nonprinting spelling state | grammar confirmed; meaning strong; native behavior open, `SAM-INLINE-CONTROL-001` |
+| `<:p>` | no payload | Page break before following visible paragraph | grammar confirmed; meaning strong; native pagination open, `SAM-INLINE-CONTROL-001` |
 | `<:p...>` | noncanonical payload | Retain as an unsupported variant; do not infer payload semantics | syntax strong, payload open, `SAM-INLINE-CONTROL-001` |
 
 ### 6.2 Geometry, anchors, and dynamic content
@@ -178,7 +190,9 @@ Malformed metadata should not allow an inner close to truncate the outer documen
 `[lay]` page-size codes 1–7 map to Letter, Legal, A3, A4, A5, B5, and custom.
 Corroborated feature bits include landscape `256`, non-alternating pages `512`,
 mirrored margins `1024`, second header `2048`, and second footer `4096`
-(`SAM-PAGE-001`). The exact page where secondary variants begin is open.
+(`SAM-PAGE-001`). These are strong semantic mappings, not native-rendering claims.
+The exact page where secondary variants begin, Ami Pro pagination, and exact visible
+geometry remain open.
 
 The nine-field `[rght]`/`[lft]` prefix describes page/print rectangles and margins in
 twips. Readers should validate derived rectangles before using them. Invalid,
@@ -215,10 +229,13 @@ An `[Embedded]` directory row has the shape:
 ID EXTENSION ASSET_OFFSET ASSET_LENGTH PREVIEW_OFFSET PREVIEW_LENGTH
 ```
 
-The file ends with a zero-padded decimal directory offset (`SAM-EMBEDDED-001`). A
-reader MUST validate directory and payload ranges against the correct stream origin,
-reject overlap/out-of-range arithmetic, cap decoded dimensions and work, and keep
-unknown payloads inert.
+In the observed version-4 corpora, the file ends with a zero-padded decimal directory
+offset (`SAM-EMBEDDED-POINTER-001`). Born's secondary account describes an ASCII
+hexadecimal locator, so readers SHOULD preserve the raw locator and MUST NOT extend
+the decimal claim to unobserved versions without new evidence. A reader MUST validate
+directory and payload ranges against the correct stream origin, reject
+overlap/out-of-range arithmetic, cap decoded dimensions and work, and keep unknown
+payloads inert.
 
 Known payload families include BMP/WMF images, Ami Draw SDW data and `SS` companions,
 OLE, and equations. Recognition of a payload signature is not permission to pass its

@@ -5,7 +5,7 @@ the format to explain the parser; they are not a complete vendor specification.
 
 ## Evidence and provenance
 
-Confirmed behavior was cross-checked among:
+Different claims in these notes draw on:
 
 - 13 SAM documents and 108 standalone SDW graphics from a locally owned Ami Pro
   3.1 installation, inspected only for interoperability and never copied into
@@ -18,10 +18,20 @@ Confirmed behavior was cross-checked among:
 - Günter Born, *Das AMI Pro Dateiformat (Version 3.0/4.0)*, a detailed
   secondary reverse-engineering reference.
 
+These sources are not interchangeable. Corpus inspection establishes occurrence,
+shape, ranges, and correlations, but not visible behavior. KOffice describes an
+unfinished text/basic-format compatibility filter; its notes and code are one source
+family, its sample files are not a discovered Ami Pro comparison harness, and its
+output is not visual ground truth. Born is a broader secondary account but does not
+document a native-output harness. Static W4W analysis establishes that converter's
+behavior, which may be lossy. Exact Ami Pro layout, typography, and pagination remain
+open until an isolated real-oracle observation is recorded in
+[`../spec/evidence.md`](../spec/evidence.md).
+
 No proprietary source, documentation, or sample content was copied into the
 implementation or fixtures.
 
-## Confirmed container structure
+## Observed container structure
 
 A typical version-4 document is a mixed text/binary stream:
 
@@ -34,7 +44,7 @@ paragraph text and inline commands
 optional binary payloads and companion data
 [Embedded]
 object directory
-zero-padded decimal directory offset
+zero-padded decimal directory offset in the observed version-4 corpora
 ```
 
 Records normally use CRLF and tab indentation. Section names repeat and their
@@ -130,10 +140,11 @@ coverage, and the deterministic CJK derivation recipe are in
 layout dimensions use twips: 20 twips per point and 1,440 per inch. Packed style
 colors use red in bits 0-7, green in 8-15, and blue in 16-23.
 
-Confirmed character flag bits include bold, italic, underline, word underline,
-and double underline. Confirmed alignment bits represent left, right, center, and
-justified paragraphs. Break flags can request page/column breaks and paragraph
-keep behavior; only the currently verified subset is rendered.
+Corroborated character flag meanings include bold, italic, underline, word underline,
+and double underline. Corroborated alignment bits represent left, right, center, and
+justified paragraphs. Exact native glyph metrics and geometry have not yet been
+verified. Break flags can request page/column breaks and paragraph keep behavior;
+only the currently supported subset is rendered.
 
 The public KOffice notes also identify the top-level style envelope as shortcut
 key, following-style name, and two zero sentinels. The following style controls
@@ -164,7 +175,8 @@ classified as opaque rather than silently treated as supported.
 lone `>` ends a text stream. Named styles appear as `@Style Name@`; `@@` is a
 literal at sign.
 
-Confirmed inline formatting:
+Corroborated inline command meanings follow. These labels do not establish exact Ami
+Pro font metrics, spacing, line breaking, or pagination:
 
 | Command | Meaning |
 |---|---|
@@ -272,9 +284,11 @@ including [paper size, margins, odd/even pages, and mirrored
 margins](https://public.dhe.ibm.com/software/lotus/desktop/LotusDoc/10701.txt),
 [inserted layouts](https://public.dhe.ibm.com/software/lotus/desktop/LotusDoc/10702.txt),
 and [fixed and floating headers](https://public.dhe.ibm.com/software/lotus/desktop/LotusDoc/10741.txt).
-The byte-level mappings below are independently corroborated by Born's
-reverse-engineering reference and the LGPL KOffice/KWord
+The field shapes and labels below are described by Born's reverse-engineering
+reference and the LGPL KOffice/KWord
 [Ami Pro filter notes](https://sources.debian.org/src/koffice/1%3A1.6.3-7/filters/kword/amipro/FileFormat.txt/).
+The KOffice importer itself hardcodes target page geometry, so it does not
+behaviorally validate these mappings or native layout fidelity.
 The vendor guide and Born book are copyrighted references; the toolkit cites
 and paraphrases them but copies neither prose nor sample bytes.
 
@@ -414,6 +428,12 @@ directory bytes as an asset. The directory is capped at 4,096 physical records
 (and callers may lower that ceiling) before offsets or object placeholders are
 materialized. Skipped indexed spans are not implicit line breaks: undeclared
 text on both sides still shares one line-length budget.
+
+The decimal interpretation is directly corroborated by byte-offset matches in the
+observed version-4 installation and private corpora. Born's secondary account calls
+the locator ASCII hexadecimal. That conflict remains explicit in
+`SAM-EMBEDDED-POINTER-001`; it may reflect a version or context not represented by the
+inspected files, and the parser's behavior is not evidence that Born is wrong.
 
 ### Windows Metafile payloads
 
