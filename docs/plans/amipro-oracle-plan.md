@@ -1,13 +1,12 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phase 0 committed; exact Windows media statically verified and the bounded Setup/install-
-candidate driver implemented, 2026-08-14. Phase 1 remains incomplete until the candidate passes a
-separate Program Manager boot/clean-exit probe and Ami Pro is installed.
+Status: Phase 0 committed; exact Windows media statically verified; the bounded Setup driver and
+independent Program Manager boot/clean-exit gate both passed on 2026-08-14. Phase 1 remains
+incomplete until Ami Pro is installed into a disposable clone of the Windows-ready base.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
-Windows 3.1 media. It does not claim that a usable guest exists yet. Proprietary execution requires
-the user's explicit right-to-use affirmation; no proprietary Setup run had occurred when this
-status was written.
+Windows 3.1 media. It now has a verified Windows-ready base but not an Ami Pro runtime.
+Proprietary execution requires the user's explicit right-to-use affirmation.
 
 ## Scope and legal boundary
 
@@ -320,6 +319,7 @@ The public surface is:
 ./scripts/amipro-oracle doctor
 ./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights \
   --win31-media PATH --amipro-media PATH
+./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -343,8 +343,10 @@ diagnostics. Host absolute source paths are omitted by default.
 - Implement `doctor`, canonical media manifests, cache keys, generated config, bounded process
   runner/state machine, evidence preservation, and fake backend.
 - Build and verify the rootless OCI toolchain; record its digest and installed-package manifest.
-- Given supplied Windows media, automate Windows setup and Ami Pro installer side effects without
-  manual interaction, reach a known Program Manager state, exit cleanly, and re-hash the runtime.
+- Given supplied Windows media, automate Windows setup, reach a known Program Manager state in a
+  separate media-free run, exit cleanly, and re-hash the runtime.
+- Install Ami Pro and verify its installer side effects without manual interaction before calling
+  Phase 1 complete.
 - Unit tests cover mutation-during-hash, symlinks/special files, name collisions, cache poisoning,
   timeouts, invalid transitions, atomic manifests, and missing-media status.
 
@@ -404,8 +406,14 @@ pass.
 
 ## Current stop condition
 
-The exact media profile and Setup driver are implemented, but a Setup return is deliberately only
-an install candidate. To run that opt-in local phase, affirm the right to use the supplied media:
+The exact media profile, Setup driver, and separate media-free Program Manager gate are implemented
+and exercised. The Windows-ready runtime key is
+`efab02fe92a782e9d3a59540d7b8caddbff2740cbbee9a9cf1285654d8e83bd3`; its acceptance job retained
+the stable Program Manager and Exit Windows frames, clean process result, and sealed 215-file tree.
+The next implementation target is the Ami Pro installer phase, using a disposable clone of that
+base and the existing read-only eight-floppy profile.
+
+For a fresh local rebuild, first affirm the right to use the supplied media:
 
 ```console
 ./scripts/amipro-oracle bootstrap \
@@ -415,5 +423,12 @@ an install candidate. To run that opt-in local phase, affirm the right to use th
 ```
 
 or set `WIN31_MEDIA_DIR` and `AMIPRO_MEDIA_DIR` in ignored `.env.local`. Do not provide or download
-media through the repository. The next required gate is a separate media-free Program Manager
-boot/clean-exit probe; only then may the Ami Pro installer phase begin.
+media through the repository. Then run:
+
+```console
+./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
+```
+
+The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed
+closed without promotion. The explicit 8.3 sentinel and regression test were added before the
+successful run. Neither Windows-ready cache nor its screenshots are publishable source artifacts.

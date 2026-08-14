@@ -4,11 +4,11 @@ The oracle is an opt-in, local test system for comparing this converter with Ami
 Windows 3.1. It is deliberately separate from the normal converter: public CI and ordinary
 conversion never execute Ami Pro or require proprietary media.
 
-The current milestone also provides a real, bounded Windows 3.1 Setup driver for the exact supplied
-six-floppy profile. It produces only a content-addressed **install candidate**: a separate
-Program Manager boot/clean-exit probe and the Ami Pro installation are still required. No real
-rendering result has been produced, and no current manifest is accepted as a fidelity baseline.
-See the [investigation and adversarial plan](plans/amipro-oracle-plan.md).
+The current milestone provides a real, bounded Windows 3.1 Setup driver for the exact supplied
+six-floppy profile plus an independent, media-free Program Manager boot/clean-exit gate. The gate
+has produced a content-addressed **Windows-ready base**. Ami Pro installation is still required;
+no real rendering result has been produced, and no current manifest is accepted as a fidelity
+baseline. See the [investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
 
@@ -17,6 +17,7 @@ Run from the repository root:
 ```console
 ./scripts/amipro-oracle doctor
 ./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights
+./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -107,20 +108,22 @@ authoritative because DOSBox-X `-time-limit` is emulated-time based and exits ze
 The checked-in OCI invocation builder additionally fixes `--pull=never`, `--network=none`, a
 read-only root, dropped capabilities, no-new-privileges, resource limits, private IPC, rootless
 user mapping, and a single writable `/oracle/job` bind. Media binds are read-only. Each invocation
-has a unique name and cidfile so a future real supervisor can explicitly stop, kill, and remove the
-container after client failure; killing only the `podman run` process group is not sufficient.
+has a unique name and cidfile. Host UI actions first verify that exact CID and its instance label;
+cleanup targets that identity rather than a reusable name. Killing only the `podman run` process
+group is not treated as sufficient container cleanup.
 
-The Windows installer phase retains its state trace, generated configuration, bounded stdout/stderr,
-changed-screen archive, last and last-nonuniform screenshots, observer status, raw and normalized
-runtime trees, and process cleanup result. Its stable checkpoint manifest excludes volatile job
-paths/timing; the returned result names the ignored evidence job that backs it. Troubleshooting
-starts with captured evidence, not manual guest inspection.
+The Windows installer and boot-probe phases retain their state traces, generated configurations,
+bounded stdout/stderr, changed-screen archives, observer status, raw and normalized runtime trees,
+and process cleanup results. The boot gate additionally retains the accepted Program Manager and
+Exit Windows frames. Stable checkpoint manifests exclude volatile job paths/timing; returned
+results name the ignored evidence jobs that back them. Troubleshooting starts with captured
+evidence, not manual guest inspection.
 
 The prior failed Wine attempt has been copied, hash-verified, and retained in a local ignored
 content-addressed evidence namespace. It is not part of the oracle runtime, and no Wine prefix or
 proprietary executable was copied into source.
 
-## What is still required
+## Windows bootstrap and boot gate
 
 After building the locked toolchain, run the exact supplied-media phase with an explicit affirmation
 that you have the right to use both local proprietary media sets:
@@ -132,8 +135,28 @@ that you have the right to use both local proprietary media sets:
   --amipro-media /absolute/path/to/owned/ami-pro-3.1-media
 ```
 
-Do not add media to the repository. A successful command currently means “Windows install candidate
-created and statically verified,” not “oracle ready.” The next gate is a separate media-free
-Program Manager boot/clean-exit probe. The supplied Windows set contains `PSCRIPT.DRV` and a built-in
-PostScript model, but printer setup remains a later phase. Nothing fetches a driver, WPD, PPD, font,
-Windows, or Ami Pro bytes.
+Do not add media to the repository. A successful `bootstrap` means “Windows install candidate
+created and statically verified,” not “oracle ready.” Promote that candidate through the separate,
+media-free boot gate:
+
+```console
+./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
+```
+
+If more than one install candidate exists, add `--checkpoint-key HASH`. The boot job exposes only a
+disposable clone, not either media source or the cache. It requires a stable Program Manager frame,
+the Exit Windows confirmation frame, a clean return from `WIN.COM`, and a post-run tree seal before
+publishing a Windows-ready base.
+
+The exercised local run on 2026-08-14 promoted parent checkpoint
+`9d425d232367a64014b00eb98e5950a068d310475908e74b961505bf5f562cb9` to Windows-ready runtime
+`efab02fe92a782e9d3a59540d7b8caddbff2740cbbee9a9cf1285654d8e83bd3`. The container exited zero
+without timeout after 34.25 seconds; the sealed runtime contains 215 files totaling 8,502,865
+bytes. The accepted Program Manager and Exit Windows screenshots hash to
+`9030dc0024600f145008a52f15c8addde74e22711536d117b46c1bb3f1b8bac1` and
+`0938a62a7d80d6feae2f80db5cf40515479f49444ebe54264f60af259e289df4`, respectively. A second
+invocation integrity-checked and reused the same cache without starting the guest. These
+observations prove the Windows lifecycle gate, not Ami Pro fidelity.
+
+The supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup
+remains a later phase. Nothing fetches a driver, WPD, PPD, font, Windows, or Ami Pro bytes.
