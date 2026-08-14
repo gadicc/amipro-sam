@@ -14,6 +14,7 @@ from .constants import (
     EXPECTED_AMIPRO_EXE_SHA256,
     EXPECTED_AMIPRO_FLOPPY_SHA256,
     EXPECTED_AMIPRO_PAYLOAD_MEDIA_DIGEST,
+    EXPECTED_WIN31_FLOPPY_SHA256,
     HASH_CHUNK_BYTES,
     MAX_MEDIA_FILE_BYTES,
     MAX_MEDIA_FILES,
@@ -214,6 +215,51 @@ def inventory_media(path: Path, *, kind: str) -> dict[str, Any]:
         "total_bytes": sum(int(record["size"]) for record in records),
         "source_writable_files": sum(bool(record["source_writable"]) for record in records),
     }
+
+    if kind == "windows-3.1":
+        hashes_by_path = {
+            str(record["path"]).casefold(): str(record["sha256"]) for record in records
+        }
+        supplied_floppies = {
+            name: hashes_by_path.get(name) for name in EXPECTED_WIN31_FLOPPY_SHA256
+        }
+        if supplied_floppies != EXPECTED_WIN31_FLOPPY_SHA256:
+            raise MediaIntegrityError(
+                "Windows media does not match the supplied six-floppy Windows 3.1 set",
+                exit_code=EXIT_INTEGRITY,
+            )
+        selected_records = [
+            record
+            for record in records
+            if str(record["path"]).casefold() in EXPECTED_WIN31_FLOPPY_SHA256
+        ]
+        selected_input = {
+            "schema": MEDIA_SCHEMA,
+            "kind": kind,
+            "files": [
+                {
+                    "path": record["path"],
+                    "size": record["size"],
+                    "sha256": record["sha256"],
+                }
+                for record in selected_records
+            ],
+        }
+        ignored_records = [record for record in records if record not in selected_records]
+        result.update(
+            {
+                **selected_input,
+                "digest": digest_json(selected_input),
+                "file_count": len(selected_records),
+                "total_bytes": sum(int(record["size"]) for record in selected_records),
+                "source_writable_files": sum(
+                    bool(record["source_writable"]) for record in selected_records
+                ),
+                "source_inventory_digest": digest_json(digest_input),
+                "ignored_files": ignored_records,
+                "media_profile": "supplied-windows-3.1-english-six-floppy-v1",
+            }
+        )
 
     if kind == "amipro":
         executable_hashes = [

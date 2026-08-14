@@ -187,6 +187,17 @@ def _command_doctor(args: argparse.Namespace) -> int:
                         ),
                     }
                 )
+            if media["windows"].get("ignored_files"):
+                warnings.append(
+                    {
+                        "code": "ignored-win31-directory-files",
+                        "message": (
+                            f"ignored {len(media['windows']['ignored_files'])} non-media "
+                            "file(s); only the verified Disk01.img through Disk06.img enter "
+                            "the media key"
+                        ),
+                    }
+                )
         if amipro is None:
             issues.append(
                 {
