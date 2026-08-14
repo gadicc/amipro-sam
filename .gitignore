@@ -11,3 +11,4 @@ output/
 tmp/
 .amipro-oracle/
 toolchain/.build/
+.amipro-research/

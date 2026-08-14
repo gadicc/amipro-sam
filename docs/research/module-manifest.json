@@ -1,0 +1,4779 @@
+{
+  "modules": [
+    {
+      "container": "NE",
+      "name": "123.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 6,
+        "relocation_count": 182,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "612cf866999e859cd19277147b9aafaaa1a09cb5ae533a04fdd06fd2ae89b52b",
+      "size": 27328,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "123VER30.FLT",
+      "ne": {
+        "automatic_data_segment": 7,
+        "direct_segment_count": 7,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 10,
+        "relocation_count": 1797,
+        "resource_count": 4,
+        "segment_count": 7,
+        "selfload_segment_count": 7,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "53e6e82521aa4b7a1aa07abdebab7b141df0879f18c5ad594c3190be2230bc37",
+      "size": 147376,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "AMICHART.DLL",
+      "ne": {
+        "automatic_data_segment": 16,
+        "direct_segment_count": 16,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 14,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 20,
+        "relocation_count": 1512,
+        "resource_count": 97,
+        "segment_count": 16,
+        "selfload_segment_count": 16,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "60afcd2307d4a7631b9ce554e202b3ad80939347e5250fb296b8e5367471ab7a",
+      "size": 162080,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIDLG.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 1,
+        "initial_ip": 130,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 3,
+        "named_export_count": 3,
+        "relocation_count": 43,
+        "resource_count": 4,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "478b6e6c229e639b0bf2bf5c35201a6bdb17f8959f5d36bf28d11dda724fbf44",
+      "size": 5136,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIDRAW.DLL",
+      "ne": {
+        "automatic_data_segment": 27,
+        "direct_segment_count": 27,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 1024,
+        "initial_cs": 25,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 35,
+        "relocation_count": 1126,
+        "resource_count": 101,
+        "segment_count": 27,
+        "selfload_segment_count": 27,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "56762a18dca4a132ea485da4a19e846fa248e1c02b52ecca15ba206c9ac3a0e6",
+      "size": 156256,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIENV.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 1564,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 14
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 2,
+        "named_export_count": 3,
+        "relocation_count": 37,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [],
+        "role": "environment_support_candidate",
+        "status": "candidate_only"
+      },
+      "sha256": "d3e1f6e28d585153e9e0093778f0c0b0a1a6cfe3161a05f924898346c88287a6",
+      "size": 11208,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIEQN.DLL",
+      "ne": {
+        "automatic_data_segment": 98,
+        "direct_segment_count": 98,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 624,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 4,
+        "named_export_count": 34,
+        "relocation_count": 7703,
+        "resource_count": 622,
+        "segment_count": 98,
+        "selfload_segment_count": 98,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "3171f9fe452ddc35ca9b13d14a0475f01694189f28673dec5a281695d95527f9",
+      "size": 830272,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIFM.EXE",
+      "ne": {
+        "automatic_data_segment": 5,
+        "direct_segment_count": 5,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 4,
+        "initial_ip": 881,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 770,
+        "module_reference_count": 4,
+        "named_export_count": 10,
+        "relocation_count": 293,
+        "resource_count": 19,
+        "segment_count": 5,
+        "selfload_segment_count": 5,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [],
+        "role": "file_manager_candidate",
+        "status": "candidate_only"
+      },
+      "sha256": "6a77d5f0d737319fbe7a886f08911eef24eaa116659dc278d604e76c61caea62",
+      "size": 62208,
+      "suffix": ".EXE"
+    },
+    {
+      "container": "NE",
+      "name": "AMIFONT.DLL",
+      "ne": {
+        "automatic_data_segment": 7,
+        "direct_segment_count": 7,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 49921,
+        "module_reference_count": 3,
+        "named_export_count": 47,
+        "relocation_count": 148,
+        "resource_count": 0,
+        "segment_count": 7,
+        "selfload_segment_count": 7,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [],
+        "role": "font_metrics_candidate",
+        "status": "candidate_only"
+      },
+      "sha256": "880bf10fb876be9d255fb427d3ec92188071e49917d911889e9042af67bb6bd5",
+      "size": 34074,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIICN8.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 145,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "3d6b2f4ab45143663618d096c47af1fe6943fcd39c3a27381473840b88dd11b0",
+      "size": 129120,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIICNE.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 145,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f5085e3805b36a75c4d6013463071f3b948d8a2fdaf282d227db759deb403772",
+      "size": 50384,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIICNV.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 145,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "686fa3f60f505b6a1c1c6a2fc27950256f7734d45ef5d03631315b2582c36d70",
+      "size": 61024,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIIMAGE.DLL",
+      "ne": {
+        "automatic_data_segment": 22,
+        "direct_segment_count": 22,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 4,
+        "named_export_count": 16,
+        "relocation_count": 3570,
+        "resource_count": 10,
+        "segment_count": 22,
+        "selfload_segment_count": 22,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "fccd8e57304c408950a5310ba41f36de009deae88a5306d03f2dadf71e6534e6",
+      "size": 231936,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMILOTUS.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 13936,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 50
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 25,
+        "relocation_count": 99,
+        "resource_count": 13,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [],
+        "role": "lotus_integration_candidate",
+        "status": "candidate_only"
+      },
+      "sha256": "2173b922daf45d87365f7ab632bfbfbfb4136890d2d7259073aa65251b073c09",
+      "size": 80320,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIMACRO.DLL",
+      "ne": {
+        "automatic_data_segment": 28,
+        "direct_segment_count": 28,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 8,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 15,
+        "relocation_count": 1236,
+        "resource_count": 7,
+        "segment_count": 28,
+        "selfload_segment_count": 28,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "9669f2eae676ec2601928817c6f77eadf439071ffd9972a8955716526d751488",
+      "size": 174624,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIMAIL2.DLL",
+      "ne": {
+        "automatic_data_segment": 4,
+        "direct_segment_count": 4,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 96,
+        "initial_cs": 2,
+        "initial_ip": 66,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 14,
+          "minor": 8
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 3,
+        "named_export_count": 8,
+        "relocation_count": 76,
+        "resource_count": 6,
+        "segment_count": 4,
+        "selfload_segment_count": 4,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "5c45d578d164a9e50bdbea65b58b4dc7fa6865943c426bef2ccaedc5b6c35c62",
+      "size": 11104,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIMEM.DLL",
+      "ne": {
+        "automatic_data_segment": 4,
+        "direct_segment_count": 4,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 12,
+        "relocation_count": 31,
+        "resource_count": 1,
+        "segment_count": 4,
+        "selfload_segment_count": 4,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "0a6b2dda623f051df8b57a80560965bf12445ceabb21e8e9efaa5236f1b936b0",
+      "size": 11920,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMINOTES.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 12652,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 6,
+        "named_export_count": 20,
+        "relocation_count": 122,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "5b3f0b4f68ea02c7d9c86da71fcf619f23bf8d7c4e83040bd9bd08810d6cc385",
+      "size": 17472,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIORGFT.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 6,
+        "relocation_count": 127,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "81b7d71629bc6708ae71a84b2c2e3f3f3f7a25e961acd6c0e6bf585e65fc6fc1",
+      "size": 20784,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "AMIPAINT.DLL",
+      "ne": {
+        "automatic_data_segment": 7,
+        "direct_segment_count": 7,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 128,
+        "initial_cs": 6,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 448,
+        "resource_count": 3,
+        "segment_count": 7,
+        "selfload_segment_count": 7,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "2b319c9cb55bb1801e1434d287ff1167faa0899b7bfb525351dc24decbbeda5d",
+      "size": 34400,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIPREV.FON",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 1,
+        "relocation_count": 0,
+        "resource_count": 6,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "127ddf4859c7f2ca7703231005767d49ef4aadbadafccd7ec8eb33878493f083",
+      "size": 9280,
+      "suffix": ".FON"
+    },
+    {
+      "container": "NE",
+      "name": "AMIPRINT.EXE",
+      "ne": {
+        "automatic_data_segment": 5,
+        "direct_segment_count": 5,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 176,
+        "initial_cs": 4,
+        "initial_ip": 17,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 15,
+          "minor": 18
+        },
+        "module_flags_raw": 778,
+        "module_reference_count": 4,
+        "named_export_count": 5,
+        "relocation_count": 261,
+        "resource_count": 10,
+        "segment_count": 5,
+        "selfload_segment_count": 5,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [],
+        "role": "print_pipeline_candidate",
+        "status": "candidate_only"
+      },
+      "sha256": "8b60c908b6670098d120a953615cd5c317c394677e67eb4ed4fdab3d2a5e067f",
+      "size": 34224,
+      "suffix": ".EXE"
+    },
+    {
+      "container": "NE",
+      "name": "AMIPRO.EXE",
+      "ne": {
+        "automatic_data_segment": 209,
+        "direct_segment_count": 1,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 5,
+        "initial_ip": 1,
+        "iterated_segment_count": 208,
+        "linker_version": {
+          "major": 15,
+          "minor": 18
+        },
+        "module_flags_raw": 2826,
+        "module_reference_count": 9,
+        "named_export_count": 54,
+        "relocation_count": 3,
+        "resource_count": 85,
+        "segment_count": 209,
+        "selfload_segment_count": 209,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 208
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [
+          "SAMMYTEXTPROC"
+        ],
+        "role": "primary_document_application",
+        "status": "directional_exports_observed"
+      },
+      "sha256": "555506d1558d61579d5c6fee8bf5fa9d960aa05a20a5d171240ac2e0ea73cbbd",
+      "size": 888224,
+      "suffix": ".EXE"
+    },
+    {
+      "container": "NE",
+      "name": "AMIPROUI.DLL",
+      "ne": {
+        "automatic_data_segment": 142,
+        "direct_segment_count": 1,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 2616,
+        "iterated_segment_count": 141,
+        "linker_version": {
+          "major": 15,
+          "minor": 18
+        },
+        "module_flags_raw": 35585,
+        "module_reference_count": 6,
+        "named_export_count": 166,
+        "relocation_count": 3,
+        "resource_count": 321,
+        "segment_count": 142,
+        "selfload_segment_count": 142,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 141
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [],
+        "role": "user_interface_candidate",
+        "status": "candidate_only"
+      },
+      "sha256": "4378e439aff955fb8a7dbd3a22ba041ff4cbbfce23b20fbe1a069b9374bc7a35",
+      "size": 479488,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIQIMP.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 3,
+        "relocation_count": 9,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "75cb0b1dcb67a2d38c49efe871d60dcefe4c7d284db325fa75259f4b04ead3c2",
+      "size": 4032,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIQKML.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 3,
+        "named_export_count": 20,
+        "relocation_count": 470,
+        "resource_count": 6,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f443f2ba9af1a08102a24fb850a261d8e426b28d07aaafb90c681cb2b9d1ceab",
+      "size": 51200,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIRTF.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 48628,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 9,
+        "relocation_count": 190,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "a78c6bc70c00f3aee4e8530597b8478e0dd3f57c1ff16fa5cd6f9da04edf028a",
+      "size": 60112,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "AMISCRB.FON",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 1,
+        "relocation_count": 0,
+        "resource_count": 12,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "0c932d18fda3e751f44b79b00e6fcc0454c4f1c55fdb4579426811dd1b0510ce",
+      "size": 50496,
+      "suffix": ".FON"
+    },
+    {
+      "container": "NE",
+      "name": "AMISCRE.FON",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 1,
+        "relocation_count": 0,
+        "resource_count": 12,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "05602094b52e1ca99347631afbf063f33ac2af40c2b9fbb21f41e1058f84b5eb",
+      "size": 63488,
+      "suffix": ".FON"
+    },
+    {
+      "container": "NE",
+      "name": "AMISK.EXE",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 1473,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 770,
+        "module_reference_count": 4,
+        "named_export_count": 1,
+        "relocation_count": 40,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "12dbeb27f405e055e5d59e9b8360d0474ee9148076e01f426942004f1d456f00",
+      "size": 5440,
+      "suffix": ".EXE"
+    },
+    {
+      "container": "NE",
+      "name": "AMISYMB.FON",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 1,
+        "relocation_count": 0,
+        "resource_count": 3,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "4c7b1e22e1d06ad9274fe3fa391eceb3f461d26d4899b98bb5f6da0d4fc29901",
+      "size": 8672,
+      "suffix": ".FON"
+    },
+    {
+      "container": "NE",
+      "name": "AMISYME.FON",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 1,
+        "relocation_count": 0,
+        "resource_count": 3,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "18a0c0c300aaa3e3aa3ffdd9ac0188ff033a1b81eaa3e306ca249e32dda10d67",
+      "size": 10592,
+      "suffix": ".FON"
+    },
+    {
+      "container": "NE",
+      "name": "AMISYMI.FON",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 1,
+        "relocation_count": 0,
+        "resource_count": 3,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "6fc0dd4f27e2598b49f33d96e926c1fa936d1353748e1a5e94b9609338380f50",
+      "size": 10624,
+      "suffix": ".FON"
+    },
+    {
+      "container": "NE",
+      "name": "AMIUICNT.DLL",
+      "ne": {
+        "automatic_data_segment": 15,
+        "direct_segment_count": 15,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 1421,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 18,
+        "relocation_count": 367,
+        "resource_count": 9,
+        "segment_count": 15,
+        "selfload_segment_count": 15,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "e0c57e36362c266f96308104fa66be341202d757bca6949182e104a6d8a85eb1",
+      "size": 47808,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIWMF.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 10535,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 13,
+        "relocation_count": 66,
+        "resource_count": 3,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f56702ed88e097c59c7f2c2cb04924661e69e419a2fad5fe04265b51befbb91f",
+      "size": 13584,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIXEXP.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 8,
+        "relocation_count": 15,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "5deb564929fae007e9cadb396dc8042395a8b674d2c7644e147ddfe34b84fd57",
+      "size": 3168,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AMIXIMP.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 5234,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 7,
+        "relocation_count": 24,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b80d3316d5fed4dc5afb1668f16dc222943ba2dc3a657f6db4f5a55795b929cf",
+      "size": 6656,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "AP.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 1875,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 2,
+        "relocation_count": 14,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "e9578e265120cdd804cd9625328eae1d7347d883083959cd1ca24028245dbf42",
+      "size": 5539,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "ASCII.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 9,
+        "relocation_count": 21,
+        "resource_count": 1,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "acb46d2a09633694f25d1d64b8dcab7f1b9badab3db0f2c0423bb664a3465f48",
+      "size": 10096,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "AUTOREC.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 4,
+        "relocation_count": 15,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "9ba1d2cb8b357f564c531a32b6bd7e36b17d9eeb40ef8e37cfedff25098e75a8",
+      "size": 17824,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "CGM.FLT",
+      "ne": {
+        "automatic_data_segment": 13,
+        "direct_segment_count": 13,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 6,
+        "relocation_count": 742,
+        "resource_count": 5,
+        "segment_count": 13,
+        "selfload_segment_count": 13,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "ed9d00b5ab7b3017e450828a6fad25e9e6b9c6ad3baf681b0dc4fead92afc060",
+      "size": 48208,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "COMPOBJ.DLL",
+      "ne": {
+        "automatic_data_segment": 17,
+        "direct_segment_count": 17,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 128,
+        "initial_cs": 2,
+        "initial_ip": 84,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 4,
+        "named_export_count": 142,
+        "relocation_count": 340,
+        "resource_count": 2,
+        "segment_count": 17,
+        "selfload_segment_count": 17,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "df3953edd506b24096c8097d51010571d0fdc52bd0cad17d1a9d748297815719",
+      "size": 102400,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "DBASE.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 6,
+        "relocation_count": 35,
+        "resource_count": 2,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "17074f4cf88ed267fca4305b720ce9147d16076d6fb4cec54ba60c25fe0612e3",
+      "size": 14048,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "DIF.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 10,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b8df08cb20dda48a4ffb52752628c79aee1706badef72b876cf92f94a7a07d27",
+      "size": 9984,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "DRAWMAN.DLL",
+      "ne": {
+        "automatic_data_segment": 4,
+        "direct_segment_count": 4,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 3,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 3,
+        "relocation_count": 383,
+        "resource_count": 0,
+        "segment_count": 4,
+        "selfload_segment_count": 4,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f6a28590a2d3fb25cab9477acb10f225f84d2edaf8b3910c8b371efcfde09b0f",
+      "size": 52119,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "DW4.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 9,
+        "relocation_count": 31,
+        "resource_count": 6,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "be74997ddcd10c5db487abd2468897135597b18070b87accdcc5cdd17268d257",
+      "size": 38032,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "DXF.FLT",
+      "ne": {
+        "automatic_data_segment": 8,
+        "direct_segment_count": 8,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 2,
+        "initial_ip": 66,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 30
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 6,
+        "relocation_count": 1070,
+        "resource_count": 4,
+        "segment_count": 8,
+        "selfload_segment_count": 8,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "a2cc37a954f11ca843795424a9bd72ff2172e523469ceff0b93e826ab0d40073",
+      "size": 41376,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "EMAIL.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 1,
+        "initial_ip": 20496,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 8,
+        "relocation_count": 168,
+        "resource_count": 1,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "e6ea1eff94cb725cad3e1dd6a763c10d51e0149ab6190f5a0d3d43cd47da6f15",
+      "size": 28256,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "EMM.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 8,
+        "relocation_count": 9,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b12369b67034ef54c6aed11d076d9c030e228a50cff7c81f133bab81c5f4b81d",
+      "size": 8096,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "ENABLE.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 11,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "502ece1019fae5fb14412af4522484d5f1473a5b437c9a52d1da0c49c1a47023",
+      "size": 15584,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "ENABLE4X.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 144,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 14,
+          "minor": 2
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 28,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "beb63402e93a6ae50a13482ce366fdaf1e3213b4b28781d42e83e0b40c981211",
+      "size": 20464,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "EPS.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 1782,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 3,
+        "relocation_count": 10,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "1eb5d35d2de36a0c9454c6ab750d7b873d76522409c538fbdd2f1c02d376c844",
+      "size": 3390,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "EXCEL50F.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 5,
+        "named_export_count": 7,
+        "relocation_count": 633,
+        "resource_count": 4,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f552866284679454103feed1403ec5c71273b14f61797ceeabad37aa1f03fa3f",
+      "size": 53568,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "EXCELFLT.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 7,
+        "relocation_count": 183,
+        "resource_count": 4,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "a4fee3042f276fe0cdb4a59cfe55c360cc8206aa30bb24804ef76a7786e3d08a",
+      "size": 36512,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "FFT.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 144,
+        "initial_cs": 1,
+        "initial_ip": 16,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 7,
+        "relocation_count": 7,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "6344181328e472cb79fcc44a9fcc52f1d0e2a6651242ff5a73fe1c867936ef48",
+      "size": 10944,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "FILEDATE.DLL",
+      "ne": {
+        "automatic_data_segment": 6,
+        "direct_segment_count": 6,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 256,
+        "initial_cs": 1,
+        "initial_ip": 1534,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 6,
+          "minor": 1
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 6,
+        "named_export_count": 3,
+        "relocation_count": 205,
+        "resource_count": 0,
+        "segment_count": 6,
+        "selfload_segment_count": 6,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "3ebb7435a241ee7cfcaa8076163c8e9ce90b5c8644d397f5074d65d630cd330e",
+      "size": 12800,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "FLFLT.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 19832,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 4,
+        "relocation_count": 521,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "77b7c244910d678df75a0903401e27bd9439e10c5c7b1fdfbf476563bf8df156",
+      "size": 27857,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "FONTDLL.EXE",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 0,
+          "minor": 0,
+          "raw": 0
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 656,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 1
+        },
+        "module_flags_raw": 32769,
+        "module_reference_count": 2,
+        "named_export_count": 4,
+        "relocation_count": 25,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "eb20ede36e745b49094bbfe248cf97dbd830763708da0099c580556b6a7a82f5",
+      "size": 2644,
+      "suffix": ".EXE"
+    },
+    {
+      "container": "NE",
+      "name": "FXPALVGA.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 11,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "65a4f3a45a834709711f47aaef1b063a694284186cb04ba1d222dc8360f21951",
+      "size": 9488,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G501F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 27790,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "074abb3eef8bc90eebf606710b749c7e5e0b9f326e8beb68238bd2634539c419",
+      "size": 34832,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G501T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 29812,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 39,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "de82820ade151067dff52d22837d3a6a5be1b000045261f65c364a433ec7f0d9",
+      "size": 37184,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G502F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 35044,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "aed274e3f3f40515b4a850e03f6cf400f8997cff7b52b694fa99056b318398e5",
+      "size": 45664,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G502T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 31138,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 39,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "47ee31b39445829a639b9df67bcf976fa0c8c44296d1ff71fc1a1b08ba72bae9",
+      "size": 40816,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G503F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 29574,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "d7a8a1bd617df7a79d4ce6937e188f769e396e8477fbc766db80f0b79c013cfd",
+      "size": 36112,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G503T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 31172,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 39,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "08be57db3becc637d79d5de796c033632512b830cd5984bea9e6bab11ed91254",
+      "size": 38528,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G513F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 29042,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "d2f0dd22288b8b55f2fda8623c3d5823b0b23c0259d85345b8be8a145d126e7a",
+      "size": 35264,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G513T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 28454,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 39,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "8f670762ceb6a9658c273412160fbef0cdcc9a20eff10eeb90a39cdf11d4c5f3",
+      "size": 35008,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G603F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 49751,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 1059,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "3cb600bb07cd1a40aaf67f9f525221785bdc3ee36964b01decebb9352d9f6151",
+      "size": 69120,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G603T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 46105,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 684,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "970077476ae65f9568686eb6613d82b886c6e9234f2b6f8e7c908efc6e381a75",
+      "size": 63376,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G606F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 29286,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "35d97c317fb21bcdbc2a8a602ea0bb85394431f833e0cbd471c714ccff3f1b20",
+      "size": 36592,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G606T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 43227,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 684,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "06b5fc83c61af283a902b604f719c375a5d56623e05c32d79ab36e63b7b67bc1",
+      "size": 58032,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G610F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 33634,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "d98a6c3d41828fb7da8444701c2659f2c1792356053c633e2e005774ec0aea9f",
+      "size": 40032,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G610T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 47539,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 684,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "3fb37765db1a61ab39bf55e67750e1cfb50327527bd6a40ea9af81b02dce47f0",
+      "size": 63664,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G614F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 31446,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "bd8fed578a11fc34d99e272b02101073316856e3b637717a8e579dd8ba195b53",
+      "size": 37760,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G614T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 45835,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 684,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "a071b68070bceb812307af87bb5b9b562b882f1ae75cd7447d4ab0f0e8e75039",
+      "size": 62832,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G615F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 48545,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 32777,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 294,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "6ffab8849f7620839e78ed08983e59735543aa841c3dde1081371cc80e78cea9",
+      "size": 63018,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "G4G615T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 44395,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 14,
+        "relocation_count": 685,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "d50629cc287c61c34caa1ed95b1e6c3d037a259190ea10bb1c48eb6dedb39f54",
+      "size": 61120,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "HPGL.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 30363,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 4,
+        "relocation_count": 1013,
+        "resource_count": 3,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "624847b61db92f01990af06e6785e6f5b9b253fe90cfb97365c18d15249d7fa0",
+      "size": 44192,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "IWP.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 8,
+        "relocation_count": 38,
+        "resource_count": 2,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "bd5489d2f0473ee8b7acfd09b4c41082356d7a490787c9a9bb5963ac7fea9a37",
+      "size": 21072,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "L1WNET.DLL",
+      "ne": {
+        "automatic_data_segment": 5,
+        "direct_segment_count": 5,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 13,
+          "minor": 9
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 0,
+        "named_export_count": 5,
+        "relocation_count": 4,
+        "resource_count": 0,
+        "segment_count": 5,
+        "selfload_segment_count": 5,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "83ee43db70e08e1ffcfc6ed8f74f5460d6431eb16f85a51ced1282fafdea7146",
+      "size": 5616,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LICENSER.EXE",
+      "ne": {
+        "automatic_data_segment": 17,
+        "direct_segment_count": 17,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 16,
+        "initial_ip": 1313,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 770,
+        "module_reference_count": 3,
+        "named_export_count": 4,
+        "relocation_count": 306,
+        "resource_count": 8,
+        "segment_count": 17,
+        "selfload_segment_count": 17,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f42f99e5b15d50ee68185a1b2f83f184ea6dbd1b13268081c72130921f2f8763",
+      "size": 37056,
+      "suffix": ".EXE"
+    },
+    {
+      "container": "NE",
+      "name": "LSPEGAIC.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 16,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "086a60676a99c00e87da0c9dae65aba686952a81e1b1e5db65659d1bbe5a48d3",
+      "size": 7248,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LSPVGAIC.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 16,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "5489edd8d38739c5bfa1cb9497a825e4cb797348aef44512ad01f17318c9e326",
+      "size": 7264,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LTSBUB01.DLL",
+      "ne": {
+        "automatic_data_segment": 5,
+        "direct_segment_count": 5,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 66,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 14,
+          "minor": 4
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 16,
+        "relocation_count": 94,
+        "resource_count": 1,
+        "segment_count": 5,
+        "selfload_segment_count": 5,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "ce92638cddc47040a517574ed08bdf078e68ec41197f5f05f2c71307d7d19669",
+      "size": 9360,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LTSCE01.DLL",
+      "ne": {
+        "automatic_data_segment": 5,
+        "direct_segment_count": 5,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 13,
+          "minor": 4
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 2,
+        "named_export_count": 5,
+        "relocation_count": 39,
+        "resource_count": 12,
+        "segment_count": 5,
+        "selfload_segment_count": 5,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "4d03f743470c7d4067faae491b0f8210858cb5181b73a9f50edd90b9c69b48c8",
+      "size": 77056,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LTSDLG02.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 176,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 15,
+          "minor": 18
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 24,
+        "relocation_count": 109,
+        "resource_count": 4,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "677194d16fee23618921d50ff6713f690355778cde26c59a34d9f6d2eceb8a07",
+      "size": 20144,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LTSICN02.DLL",
+      "ne": {
+        "automatic_data_segment": 11,
+        "direct_segment_count": 11,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 8,
+        "relocation_count": 1790,
+        "resource_count": 13,
+        "segment_count": 11,
+        "selfload_segment_count": 11,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "47f57e12851d6e162fe1d47b83cce911b1675cd2531c5928d7c0362535b2ae16",
+      "size": 99776,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "LTSICN05.DLL",
+      "ne": {
+        "automatic_data_segment": 17,
+        "direct_segment_count": 1,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 96,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 16,
+        "linker_version": {
+          "major": 15,
+          "minor": 16
+        },
+        "module_flags_raw": 35585,
+        "module_reference_count": 3,
+        "named_export_count": 9,
+        "relocation_count": 3,
+        "resource_count": 15,
+        "segment_count": 17,
+        "selfload_segment_count": 17,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 16
+      },
+      "sha256": "c6983d4de11f7dde1d0eda89b126a38042f690af8103aa9d7e36f013b2c04c09",
+      "size": 86368,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "MACMSG.STR",
+      "ne": {
+        "automatic_data_segment": 0,
+        "direct_segment_count": 0,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 1
+        },
+        "module_flags_raw": 33536,
+        "module_reference_count": 0,
+        "named_export_count": 0,
+        "relocation_count": 0,
+        "resource_count": 19,
+        "segment_count": 0,
+        "selfload_segment_count": 0,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "710c421a42c39adf0eafbde2f1021e93caffa8ca8d72bda8690cac6ab3d56fbc",
+      "size": 15872,
+      "suffix": ".STR"
+    },
+    {
+      "container": "NE",
+      "name": "MM.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 10,
+        "relocation_count": 36,
+        "resource_count": 2,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "5df3658791a19062e234626c5226f53c44aac04d487d7e7455c1ea31c17d43ac",
+      "size": 34256,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "MSCRIPT.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 10,
+        "relocation_count": 32,
+        "resource_count": 73,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "041ac84af1a01852385558342869ea6e1d0e8c6521071f9e50d267cb415f571e",
+      "size": 42928,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "OLE2.DLL",
+      "ne": {
+        "automatic_data_segment": 32,
+        "direct_segment_count": 32,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 128,
+        "initial_cs": 30,
+        "initial_ip": 84,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33545,
+        "module_reference_count": 7,
+        "named_export_count": 146,
+        "relocation_count": 1786,
+        "resource_count": 17,
+        "segment_count": 32,
+        "selfload_segment_count": 32,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "354da2a46a513949b0d80b0da3dfe4f05a977a80d0b3092e1dba6d01f93b5890",
+      "size": 313344,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "OUTDLL.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 645,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 21,
+        "relocation_count": 104,
+        "resource_count": 1,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "2e44c439f01b4bac50d9a6d4d1f6ca53cfb8aaac2f2916fc78e0bc5bbea3f719",
+      "size": 13344,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "OW.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 10,
+        "relocation_count": 192,
+        "resource_count": 4,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b890f416aa66706a7522915672bb6116ca1a80125adb016775005584d55e8d14",
+      "size": 34400,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "PARADOX.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 1,
+        "initial_ip": 21412,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 7,
+        "relocation_count": 97,
+        "resource_count": 17,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b146c33f35206f8a7d25c3be91c71f130af2f6d40e6024ee775dfb51e0e463c7",
+      "size": 40288,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "PCX.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 4450,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 2,
+        "relocation_count": 15,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "dcbe744cd96f5f6c9f63c9b511980d15a9dc340b0e72b357302c4b364986ae98",
+      "size": 7072,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "PEACH.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 8,
+        "relocation_count": 9,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "ecc0adc08f3f9ed0813014db40a90bbb0cfd6d9b20887ef9489b769678de591c",
+      "size": 10912,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "PIC.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 16,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 3,
+        "relocation_count": 22,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "9420478ea250d42225bbaebd8125f47cf7bd4b9d38cbcf6c08a4634f16ac70d7",
+      "size": 7223,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "PWFLT.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 7,
+        "relocation_count": 21,
+        "resource_count": 1,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "e08fdb406931f92cd23ea223d2991494bcf71f8c4e82f34630e0de426f36ea30",
+      "size": 18432,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "PXENGWIN.DLL",
+      "ne": {
+        "automatic_data_segment": 87,
+        "direct_segment_count": 87,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 0,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 1
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 84,
+        "relocation_count": 2554,
+        "resource_count": 0,
+        "segment_count": 87,
+        "selfload_segment_count": 87,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "024e26b28cf1ecfa9075241fc20895a95f3c5dfb4db5bb2441fb41f51eb25017",
+      "size": 201431,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "RFT.FLT",
+      "ne": {
+        "automatic_data_segment": 4,
+        "direct_segment_count": 4,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 1,
+        "initial_ip": 46134,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 9,
+        "relocation_count": 208,
+        "resource_count": 2,
+        "segment_count": 4,
+        "selfload_segment_count": 4,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f7fa2b8b3c3e493bcedcb1725b1b7a8a58282ec2a0c0633c8313e41c683004cf",
+      "size": 70176,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "SAMNA.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 16956,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 18,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "55cb50a0fc927b52d114208c082cec4fea4a203d3579027143167eecfab14651",
+      "size": 23456,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "SCALC.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 6,
+        "relocation_count": 180,
+        "resource_count": 2,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "d272c66100f82b4bde5b002f26a915dbdcf50555a264afc6ae35ad359f3913c9",
+      "size": 27792,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "SK8514IC.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 14,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "85e2b35249fc3498e23475a79893c1fad5a3bc1bc50dddb5c6c8eaeeb37bc3bc",
+      "size": 12816,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "SKEGAIC.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 15,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "25a6c8990121ad0edb334ba576af67713993f720df5930089d673260a5e24987",
+      "size": 6592,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "SKVGAIC.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 125,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 1,
+        "relocation_count": 4,
+        "resource_count": 14,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "910c8e4b51c7b1504e26d52fbca0c3fb08cc37ea74f714ea07d2a9132a1e935a",
+      "size": 7136,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "SMART.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 7,
+        "relocation_count": 77,
+        "resource_count": 1,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "afdfe5998f15297e3aee0de50a3c83d9ae636151d7a11aa8b6e756f4ac00338e",
+      "size": 18416,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "SSDIF.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 5,
+        "relocation_count": 161,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "973d6db3f98722915ef531d0b70b0abc1e6bafc6bf824a46b0d0c7c11949d585",
+      "size": 18624,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "STORAGE.DLL",
+      "ne": {
+        "automatic_data_segment": 11,
+        "direct_segment_count": 11,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 11390,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 10,
+        "relocation_count": 250,
+        "resource_count": 1,
+        "segment_count": 11,
+        "selfload_segment_count": 11,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "18bf6fcefa7fab93aca71b2c63d07a6a2a9db399937711aebabc291734364075",
+      "size": 157184,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "SWITCH.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 645,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 21,
+        "relocation_count": 104,
+        "resource_count": 15,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "9a4dc980f2a69f791c8e8591e18f807660073754825551cfdde98756d1f07686",
+      "size": 620304,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "SYM.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 5,
+        "relocation_count": 167,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "c62b3f9217e8151e8463cffb74efcc8835c879ada72482338f514e9e9f08d059",
+      "size": 32672,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "TIFF.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 3728,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 3,
+        "relocation_count": 45,
+        "resource_count": 1,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "4358ee74824897f21652d1711a527bcc1f2030d74391cdd0020df3962ea4dcd5",
+      "size": 18656,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "TIFF2.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 3728,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 3,
+        "relocation_count": 45,
+        "resource_count": 1,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "699b2592e32a5ff5ad19d3d410344a9a4e4d0428829fe4d72501c556a172c4da",
+      "size": 18784,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "W4W17F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 3828,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 40,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "e9496cc966882688cdb95b5d859c3d4ea8518c7f98c4d3d8a0f15ad875f8aef3",
+      "size": 75136,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W17T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 3666,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 39,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b84b965668e113238ad473b68e76784c580ce561abdce114afabdf3cf3ed79c8",
+      "size": 71728,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W23F.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 32072,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 41,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "028fc19b781ab5d915e1294d84f69385e583ba03ba4a17daafa86e984b04fd38",
+      "size": 38848,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W23T.DLL",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 39992,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 39,
+        "resource_count": 2,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "8519bc69c2316b4f3136ab61ca3481ae022eb339c7b4e62dc3458eff281d52b6",
+      "size": 47184,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W33F.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 4096,
+        "initial_cs": 1,
+        "initial_ip": 3960,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 42,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [
+          "FILTERFROM",
+          "WFWFROM"
+        ],
+        "role": "word_for_word_reader_filter_candidate",
+        "status": "directional_exports_observed"
+      },
+      "sha256": "a2f34efd5191ee1bd71e7410a689266f861932e1c6f734ff7a3c47f3dcd95759",
+      "size": 108176,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W33T.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 4096,
+        "initial_cs": 1,
+        "initial_ip": 4104,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 43,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "role_evidence": {
+        "required_exports_missing": [],
+        "required_exports_observed": [
+          "FILTERTO",
+          "WFWTO"
+        ],
+        "role": "word_for_word_writer_filter_candidate",
+        "status": "directional_exports_observed"
+      },
+      "sha256": "0a1fd9f33120f16f2b96a5eb7716ee35d52ad2829fc1d610eb17302bd9c8eba1",
+      "size": 110960,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W44T.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 4096,
+        "initial_cs": 1,
+        "initial_ip": 3968,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 43,
+        "resource_count": 3,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "9c209b2acd00b0bf8f7498e6b209f65c064d29111555b39e4f60c297702ce4a7",
+      "size": 136080,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W48F.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 4922,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 45,
+        "resource_count": 2,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "5408e7854700c7622cc5e5c4468a045749ef0911d1323bd0881d8a786e2d5f80",
+      "size": 127520,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W48T.DLL",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 4694,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 44,
+        "resource_count": 2,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "487d8f23e8c72365d93a0b86f9bf53ba57e19bd8ff47aa6ac06f9acb5b7a613c",
+      "size": 132064,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "W4W49F.DLL",
+      "ne": {
+        "automatic_data_segment": 4,
+        "direct_segment_count": 4,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 10,
+          "raw": 778
+        },
+        "header_offset": 3584,
+        "initial_cs": 1,
+        "initial_ip": 4024,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 60
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 14,
+        "relocation_count": 46,
+        "resource_count": 2,
+        "segment_count": 4,
+        "selfload_segment_count": 4,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "7728382a6726b922ebce682afc1bac42b8e8b2cf5ce1be365e975e9335698411",
+      "size": 138624,
+      "suffix": ".DLL"
+    },
+    {
+      "container": "NE",
+      "name": "WORD.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 12,
+        "relocation_count": 131,
+        "resource_count": 7,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "7f66673871601150a926da2d6cc8d9dd0dfe17793c937951d2517611fae1e61e",
+      "size": 47200,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WP.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 592,
+        "initial_cs": 1,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 11,
+        "relocation_count": 412,
+        "resource_count": 5,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "a75c59fee00f81718c3b9a21c304d775ce7ce9e6b28273f0ec1b2662dd13b69e",
+      "size": 49552,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WP42.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 8016,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 11,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "36ac39458c05502465d50b4de932d9e82c5c3f41d90274e950babf98e43814c1",
+      "size": 9941,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WPG.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 20091,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 15,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 3,
+        "named_export_count": 4,
+        "relocation_count": 282,
+        "resource_count": 1,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "3ba365f8216b9b982bc3c1d86b0621fe62096cf5e153bb9f7b5c2084861151c0",
+      "size": 26112,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WPGEXP.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 1024,
+        "initial_cs": 1,
+        "initial_ip": 5397,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 5,
+          "minor": 10
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 3,
+        "relocation_count": 31,
+        "resource_count": 0,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "be41e7f0968e63c24ae1aedb856726d59fdbd0c0898ae90a2dcff4cbcceaff67",
+      "size": 8272,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WRITEFLT.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 1,
+        "named_export_count": 8,
+        "relocation_count": 17,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "b23e401bcb924a2c66125da251f4cf261d626c821b718d0b4849697d433b9745",
+      "size": 13856,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WS2000R1.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 10,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f68c64b28d8820dfc3daf83056c929141dbf03f8d2af1f35e08c5b2bbc1f67f5",
+      "size": 10208,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WS2000R3.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 10,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "8b73492f507636f80a5dced7c8e35839e311d4e10885dde034fa5f3ef57651af",
+      "size": 11200,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WS50.FLT",
+      "ne": {
+        "automatic_data_segment": 3,
+        "direct_segment_count": 3,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 176,
+        "initial_cs": 2,
+        "initial_ip": 0,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 10,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 2,
+        "named_export_count": 8,
+        "relocation_count": 10,
+        "resource_count": 0,
+        "segment_count": 3,
+        "selfload_segment_count": 3,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "05c78b12732a0d83fb80b6d89753471453e2544f3d3d030225abc9a9f732c29d",
+      "size": 14144,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WWORD10.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 49014,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 15,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 10,
+        "relocation_count": 194,
+        "resource_count": 11,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "f1f3cac84fac7147a05b586385dd2c1a590ba8592105f72ff1a53958bbdcd300",
+      "size": 61312,
+      "suffix": ".FLT"
+    },
+    {
+      "container": "NE",
+      "name": "WWORD20.FLT",
+      "ne": {
+        "automatic_data_segment": 2,
+        "direct_segment_count": 2,
+        "expected_windows_version": {
+          "major": 3,
+          "minor": 0,
+          "raw": 768
+        },
+        "header_offset": 128,
+        "initial_cs": 1,
+        "initial_ip": 50756,
+        "iterated_segment_count": 0,
+        "linker_version": {
+          "major": 15,
+          "minor": 0
+        },
+        "module_flags_raw": 33537,
+        "module_reference_count": 4,
+        "named_export_count": 10,
+        "relocation_count": 185,
+        "resource_count": 11,
+        "segment_count": 2,
+        "selfload_segment_count": 2,
+        "target_os": "windows",
+        "unsupported_loaded_mapping_count": 0
+      },
+      "sha256": "efd9bf19bdef2d49dc4604ad90cbcaead42691933e8ea52667a4d7a9015c12eb",
+      "size": 62912,
+      "suffix": ".FLT"
+    }
+  ],
+  "payload_summary": {
+    "directory_entry_count": 662,
+    "ne_module_count": 134,
+    "regular_file_bytes": 19870333,
+    "regular_file_count": 659,
+    "skipped_directory_count": 3
+  },
+  "schema": "amipro-ne-module-manifest-v1",
+  "selection": {
+    "maximum_directory_entries": 4096,
+    "maximum_file_bytes": 67108864,
+    "maximum_name_bytes": 255,
+    "maximum_total_bytes": 536870912,
+    "resource_names_included": false,
+    "scope": "nonrecursive_regular_files_with_mz_ne_signature"
+  },
+  "tools": {
+    "probes": [
+      {
+        "available": true,
+        "executable_sha256": "a17411b9174e90c47035229ba0e57e5f2f57deff8b1449eb23ed0e17855116f9",
+        "name": "file",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "recognition only; no segment or xref model",
+        "version": "file-5.48"
+      },
+      {
+        "available": true,
+        "executable_sha256": "3cb9cf89106cc7a067c38f9008a53bd0cab221424f76aee796ef81e222e2162d",
+        "name": "sha256sum",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "input-integrity utility",
+        "version": "sha256sum (GNU coreutils) 9.11"
+      },
+      {
+        "available": true,
+        "executable_sha256": "5da8b2aeb32aa73eb1ced8f38bd3cbb179a68572f49e20f6c3883b4e889b39b1",
+        "name": "winedump",
+        "probe_args": [
+          "--help"
+        ],
+        "probe_exit_code": 1,
+        "research_context": "NE metadata/resource dumper; no disassembly",
+        "version": null
+      },
+      {
+        "available": true,
+        "executable_sha256": "65a8a7d7f3a93d03aaa1bc38fc62687a2edf73b830fbb895003a2da8e6564ac6",
+        "name": "wine",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "version query only; vendor execution is forbidden",
+        "version": "wine-11.14"
+      },
+      {
+        "available": true,
+        "executable_sha256": "3769ec65e3899f8493dbfed1963be9b25dad4248603050507e89282c41db46d0",
+        "name": "objdump",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "rejects NE container; raw binary/i8086 adapter",
+        "version": "GNU objdump (GNU Binutils) 2.46.1"
+      },
+      {
+        "available": true,
+        "executable_sha256": "9075887a183780765cef5aece369ea18370575db46ca43843d5bb12d7183f46b",
+        "name": "objcopy",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "container capability probe only",
+        "version": "GNU objcopy (GNU Binutils) 2.46.1"
+      },
+      {
+        "available": true,
+        "executable_sha256": "196257bba7b9fc07f6fdfe7e348abf7e84088b9c40a07cf8f2b37e16c7b5467e",
+        "name": "llvm-objdump",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "rejects NE container",
+        "version": "LLVM version 22.1.8"
+      },
+      {
+        "available": true,
+        "executable_sha256": "52f46d57b59ba60521f4dc4887f026f4187afd1984514d7dcca8b71446615e75",
+        "name": "llvm-readobj",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "rejects NE container",
+        "version": "LLVM version 22.1.8"
+      },
+      {
+        "available": true,
+        "executable_sha256": "fe5112dec29e5790fbcd65169b2ed20984af2dfec33692f935e61b424b996e30",
+        "name": "ndisasm",
+        "probe_args": [
+          "-v"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "raw x86-16 decoder; no NE mapping or fixups",
+        "version": "NDISASM version 3.02 compiled on Jun 30 2026"
+      },
+      {
+        "available": true,
+        "executable_sha256": "ef0f8f8e612ce52bdf2dd9e45e11449cd9d9c12d2fb60975deeecb68192de2b6",
+        "name": "cstool",
+        "probe_args": [
+          "-v"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "raw x86-16 decoder; no NE loader",
+        "version": "cstool for Capstone Disassembler, v5.0.9"
+      },
+      {
+        "available": true,
+        "executable_sha256": "f802383f13b8331aabaf779def00a356c8d2b8148255170b75b03028f4d23ad4",
+        "name": "7z",
+        "probe_args": [
+          "i"
+        ],
+        "probe_exit_code": 0,
+        "research_context": "archive/resource capability probe",
+        "version": "7-Zip 26.02 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25"
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "wrestool",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "resource extractor; extraction remains disabled",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "icotool",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "resource extractor; extraction remains disabled",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "ghidra",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "not used without a validated custom mapping",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "analyzeHeadless",
+        "probe_args": [
+          "-help"
+        ],
+        "probe_exit_code": null,
+        "research_context": "not used without a validated custom mapping",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "radare2",
+        "probe_args": [
+          "-v"
+        ],
+        "probe_exit_code": null,
+        "research_context": "NE mapping must be independently validated",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "rabin2",
+        "probe_args": [
+          "-v"
+        ],
+        "probe_exit_code": null,
+        "research_context": "NE mapping must be independently validated",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "rizin",
+        "probe_args": [
+          "-v"
+        ],
+        "probe_exit_code": null,
+        "research_context": "unavailable tools remain unassessed",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "rz-bin",
+        "probe_args": [
+          "-v"
+        ],
+        "probe_exit_code": null,
+        "research_context": "unavailable tools remain unassessed",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "pedump",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "NE capability must be observed, not assumed",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "readpe",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "NE capability must be observed, not assumed",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "pev",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "NE capability must be observed, not assumed",
+        "version": null
+      },
+      {
+        "available": false,
+        "executable_sha256": null,
+        "name": "restool",
+        "probe_args": [
+          "--version"
+        ],
+        "probe_exit_code": null,
+        "research_context": "resource extraction remains disabled",
+        "version": null
+      }
+    ],
+    "python": {
+      "implementation": "cpython",
+      "version": "3.14.6"
+    },
+    "python_modules": [
+      {
+        "available": true,
+        "name": "pefile",
+        "research_context": "PE parser; rejects NE containers in the recorded behavior probe",
+        "version": "2024.8.26"
+      }
+    ],
+    "schema": "amipro-ne-tool-probes-v1"
+  },
+  "trust_anchor": {
+    "name": "AMIPRO.EXE",
+    "sha256": "555506d1558d61579d5c6fee8bf5fa9d960aa05a20a5d171240ac2e0ea73cbbd",
+    "size": 888224
+  }
+}
