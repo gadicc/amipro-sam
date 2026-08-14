@@ -835,7 +835,7 @@ def test_frame_text_requires_a_standalone_container_aware_terminator() -> None:
     )
     document = parse_bytes(source)
 
-    assert "FRAME\n>trailing\n[invented]\nopaque" in document.text
+    assert "FRAME>trailing[invented]opaque" in document.text
     diagnostic = next(
         item for item in document.diagnostics if item.code == "unterminated-frame-text"
     )
@@ -973,7 +973,7 @@ def test_marker_lookalikes_inside_layout_and_frame_text_are_not_subrecords() -> 
         ),
     )
     frame_document = parse_bytes(frame)
-    assert "BEFORE\n[invented]\nAFTER" in frame_document.text
+    assert "BEFORE[invented]AFTER" in frame_document.text
     assert not any(
         item.code == "frame-subrecord-opaque" for item in frame_document.diagnostics
     )
@@ -989,7 +989,7 @@ def test_marker_lookalikes_inside_layout_and_frame_text_are_not_subrecords() -> 
         ),
     )
     table_document = parse_bytes(table)
-    assert "BEFORE\n[invented]\nAFTER" in table_document.text
+    assert "BEFORE[invented]AFTER" in table_document.text
     assert not any(
         item.code == "frame-subrecord-opaque" for item in table_document.diagnostics
     )

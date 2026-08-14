@@ -193,6 +193,12 @@ mistaken for the outer document terminator. A close is standalone only when the
 physical line contains `>` and whitespace. A line such as `>trailing` is text,
 not a terminator.
 
+Within text content, a blank physical line terminates a paragraph. Consecutive
+nonblank physical lines are storage continuations and are concatenated without
+inventing a space or line break; real files can split a word at that boundary.
+The private corpus contains 2,529 such boundaries in 1,682 parsed paragraphs,
+including 574 alphanumeric word splits across 133 files.
+
 The private corpus contains 11,446 `<:#x,width>` forms across 299 files. In
 8,860 corpus cases with usable page geometry, the second value is within five
 twips of the body measure; two-column files reuse a half-width measure at

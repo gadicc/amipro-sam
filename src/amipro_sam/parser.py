@@ -3667,7 +3667,10 @@ def _parse_inline_paragraph(
     record_budget: _RecordBudget | None = None,
     record_label: str = "inline runs",
 ) -> Paragraph:
-    text = "\n".join(lines)
+    # SAM uses a blank physical line as the paragraph delimiter.  Nonblank
+    # physical lines inside that record are storage continuations and may even
+    # split a word, so introducing a newline (or a space) corrupts the text.
+    text = "".join(lines)
     state = state or _initial_inline_state(document)
     paragraph = Paragraph(source=source)
     buffer: list[str] = []

@@ -78,6 +78,51 @@ def test_inline_formatting_and_escapes() -> None:
     assert document.encoding == "cp1252"
 
 
+def test_nonblank_physical_lines_are_paragraph_continuations() -> None:
+    document = parse_bytes(
+        sam("@Body Text@hel\nlo with \nspace\n\nnext paragraph")
+    )
+    paragraphs = [block for block in document.blocks if isinstance(block, Paragraph)]
+
+    assert [paragraph.text for paragraph in paragraphs] == [
+        "hello with space",
+        "next paragraph",
+    ]
+
+
+def test_physical_line_continuations_apply_inside_frame_text() -> None:
+    extra = """[frm]
+\t1
+\t[txt]
+hel
+lo
+>
+"""
+    document = parse_bytes(sam("body", extra=extra))
+    frame = next(block for block in document.blocks if isinstance(block, Frame))
+    paragraph = next(block for block in frame.blocks if isinstance(block, Paragraph))
+
+    assert paragraph.text == "hello"
+
+
+def test_physical_line_continuations_apply_inside_table_cells() -> None:
+    extra = """[frm]
+\t3
+\t[tbl]
+\t\t 1 1 0 0
+\t[data]
+\t\t\t 0 0 0 0 0
+hel
+lo
+\t\t[e]
+"""
+    document = parse_bytes(sam("body", extra=extra))
+    frame = next(block for block in document.blocks if isinstance(block, Frame))
+    table = next(block for block in frame.blocks if isinstance(block, Table))
+
+    assert table.rows[0].cells[0].text == "hello"
+
+
 def test_html_like_source_is_only_text_in_ir() -> None:
     document = parse_bytes(sam("Hello <[>script<;>alert(1)<< /script<;>"))
     assert "[script>alert(1)< /script>" in document.text
