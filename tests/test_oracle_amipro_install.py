@@ -142,7 +142,12 @@ def _write_observer(diagnostics: Path, payload: bytes) -> None:
 
 def _synthetic_ui_profile(
     tmp_path: Path,
-) -> tuple[tuple[dict[str, object], ...], dict[str, object], bytes]:
+) -> tuple[
+    tuple[dict[str, object], ...],
+    dict[str, object],
+    bytes,
+    dict[str, object],
+]:
     payload = _screen()
     screen = tmp_path / "screen.png"
     screen.write_bytes(payload)
@@ -155,6 +160,18 @@ def _synthetic_ui_profile(
     observed, _ = install_module._screen_state(screen, provisional)
     state = {**provisional, "title_sha256": observed["title_sha256"]}
     states = (state,)
+    confirmation = tmp_path / "confirmation.png"
+    confirmation.write_bytes(_program_manager_screen(blue_pixels=8_000, variant=2))
+    provisional_exit: dict[str, object] = {
+        "name": "exit-windows-confirmation",
+        "box": [0, 0, 2, 1],
+        "title_sha256": "0" * 64,
+    }
+    observed_exit, _ = install_module._screen_state(confirmation, provisional_exit)
+    exit_state = {
+        **provisional_exit,
+        "title_sha256": observed_exit["title_sha256"],
+    }
     profile = {
         "name": "synthetic-installer-profile-v1",
         "screen_width": install_module.SCREEN_WIDTH,
@@ -164,8 +181,9 @@ def _synthetic_ui_profile(
         "poll_seconds": 0.25,
         "states": list(states),
         "post_install_exit_profile": install_module.boot_module.UI_PROFILE,
+        "exit_confirmation_state": exit_state,
     }
-    return states, profile, payload
+    return states, profile, payload, exit_state
 
 
 def _program_manager_screen(*, blue_pixels: int, variant: int) -> bytes:
@@ -229,7 +247,7 @@ def test_install_config_batch_and_key_are_pinned() -> None:
 
 
 def test_installer_crop_profile_rejects_changed_pixels(tmp_path: Path) -> None:
-    states, _profile, payload = _synthetic_ui_profile(tmp_path)
+    states, _profile, payload, _exit_state = _synthetic_ui_profile(tmp_path)
     screen = tmp_path / "screen.png"
     screen.write_bytes(payload)
 
@@ -255,7 +273,7 @@ def test_install_checkpoint_promotes_reuses_and_rejects_tampered_evidence(
     install_module._normalize_runtime_metadata(parent_runtime)
     flat_source = home / "cache" / "media" / ("e" * 64) / "source"
     flat_source.mkdir(parents=True)
-    states, profile, screen_payload = _synthetic_ui_profile(tmp_path)
+    states, profile, screen_payload, exit_state = _synthetic_ui_profile(tmp_path)
     calls = 0
 
     def select(
@@ -298,10 +316,16 @@ def test_install_checkpoint_promotes_reuses_and_rejects_tampered_evidence(
         )
         ready, _ = install_module.boot_module._screen_metrics(ready_path)
         confirmation, _ = install_module.boot_module._screen_metrics(confirmation_path)
+        confirmation_title, _ = install_module._screen_state(
+            confirmation_path,
+            exit_state,
+        )
+        confirmation_title["path"] = confirmation_path.name
         driver["program_manager_exit"] = {
             "profile": install_module.boot_module.UI_PROFILE,
             "ready": {"path": ready_path.name, **ready},
             "confirmation": {"path": confirmation_path.name, **confirmation},
+            "confirmation_title": confirmation_title,
             "actions": [
                 {"action": "alt-f4", "exit_code": 0},
                 {"action": "enter", "exit_code": 0},
@@ -326,6 +350,7 @@ def test_install_checkpoint_promotes_reuses_and_rejects_tampered_evidence(
 
     monkeypatch.setattr(install_module, "INSTALLER_STATES", states)
     monkeypatch.setattr(install_module, "INSTALLER_UI_PROFILE", profile)
+    monkeypatch.setattr(install_module, "EXIT_WINDOWS_STATE", exit_state)
     monkeypatch.setattr(install_module, "_require_verified_image", lambda _record: None)
     monkeypatch.setattr(install_module, "_select_windows_ready", select)
     monkeypatch.setattr(

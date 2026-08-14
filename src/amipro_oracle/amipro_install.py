@@ -72,6 +72,11 @@ OUTER_TIME_LIMIT_SECONDS = 300
 UI_DRIVER_TIMEOUT_SECONDS = 260
 SCREEN_WIDTH = 1024
 SCREEN_HEIGHT = 768
+EXIT_WINDOWS_STATE = {
+    "name": "exit-windows-confirmation",
+    "box": [367, 386, 657, 411],
+    "title_sha256": "b8c1cbaa2a233cd400f55dfa2b02ca9be595379a4ed8decf8d8db6bcba1b13e0",
+}
 
 INSTALLER_STATES: tuple[dict[str, object], ...] = (
     {
@@ -126,6 +131,7 @@ INSTALLER_UI_PROFILE = {
     "poll_seconds": 0.25,
     "states": list(INSTALLER_STATES),
     "post_install_exit_profile": boot_module.UI_PROFILE,
+    "exit_confirmation_state": EXIT_WINDOWS_STATE,
 }
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -621,17 +627,21 @@ def _drive_installer(
     )
     if exit_key["exit_code"] != 0:
         raise OracleError("cannot request the Program Manager exit", exit_code=EXIT_BACKEND)
-    confirmation_metrics, confirmation_payload = boot_module._wait_for_screen(
+    confirmation_title, confirmation_payload = _wait_installer_state(
         screen,
+        EXIT_WINDOWS_STATE,
         stop=stop,
         deadline=deadline,
-        predicate=lambda metrics: boot_module._is_exit_confirmation(
-            metrics,
-            str(ready_metrics["sha256"]),
-        ),
     )
     confirmation_path = job / "diagnostics" / "installer-exit-confirmation.png"
     atomic_write(confirmation_path, confirmation_payload)
+    confirmation_title["path"] = confirmation_path.name
+    confirmation_metrics, _ = boot_module._screen_metrics(confirmation_path)
+    if not boot_module._is_exit_confirmation(
+        confirmation_metrics,
+        str(ready_metrics["sha256"]),
+    ):
+        raise OracleError("Windows exit confirmation is invalid", exit_code=EXIT_BACKEND)
     confirm_key = exec_podman_checked(
         invocation,
         ("xdotool", "key", "--window", window, "Return"),
@@ -652,6 +662,7 @@ def _drive_installer(
                 "path": confirmation_path.name,
                 **confirmation_metrics,
             },
+            "confirmation_title": confirmation_title,
             "actions": [
                 {"action": "alt-f4", "exit_code": exit_key["exit_code"]},
                 {"action": "enter", "exit_code": confirm_key["exit_code"]},
@@ -778,15 +789,21 @@ def _validate_ui_evidence(job: Path) -> dict[str, object]:
     try:
         ready, _ = boot_module._screen_metrics(ready_path)
         confirmation, _ = boot_module._screen_metrics(confirmation_path)
+        confirmation_title, _ = _screen_state(
+            confirmation_path,
+            EXIT_WINDOWS_STATE,
+        )
     except OracleError as exc:
         raise OracleError(
             "Ami Pro post-install Windows-exit evidence is invalid",
             exit_code=EXIT_INTEGRITY,
         ) from exc
+    confirmation_title["path"] = confirmation_path.name
     expected_exit = {
         "profile": boot_module.UI_PROFILE,
         "ready": {"path": ready_path.name, **ready},
         "confirmation": {"path": confirmation_path.name, **confirmation},
+        "confirmation_title": confirmation_title,
         "actions": [
             {"action": "alt-f4", "exit_code": 0},
             {"action": "enter", "exit_code": 0},
