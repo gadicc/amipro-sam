@@ -3,6 +3,7 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export AMIPRO_ORACLE_REPO_ROOT="$repo_root"
+export AMIPRO_ORACLE_LOAD_LOCAL_ENV=1
 
 if [ -n "${PYTHONPATH:-}" ]; then
     export PYTHONPATH="$repo_root/src:$PYTHONPATH"

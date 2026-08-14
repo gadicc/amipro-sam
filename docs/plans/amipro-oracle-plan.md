@@ -1,11 +1,13 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phase 0 committed; safe Phase 1 scaffolding implemented and real bootstrap blocked on
-Windows 3.1 media, 2026-08-14.
+Status: Phase 0 committed; exact Windows media statically verified and the bounded Setup/install-
+candidate driver implemented, 2026-08-14. Phase 1 remains incomplete until the candidate passes a
+separate Program Manager boot/clean-exit probe and Ami Pro is installed.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
-Windows 3.1 media. It does not claim that a usable guest exists yet. Windows 3.1 installation
-media is the current hard blocker for guest bootstrap.
+Windows 3.1 media. It does not claim that a usable guest exists yet. Proprietary execution requires
+the user's explicit right-to-use affirmation; no proprietary Setup run had occurred when this
+status was written.
 
 ## Scope and legal boundary
 
@@ -103,10 +105,29 @@ verified against that metadata. A flat copy is rejected as an installation metho
 
 ### Windows 3.1 media
 
-No Windows 3.1 media path was supplied or found in the repository. No lawful bootstrap or guest
-launch can be attempted until the user supplies the directory or image-set path. Media validation
-must inventory and hash the supplied files before any extraction and must reject symlinks,
-devices, sockets, and paths that change during hashing.
+The locally supplied set contains six 1,474,560-byte FAT12 images. Static inspection identifies
+plain Microsoft Windows 3.1 Setup revision `3.1.040`, with American English as the default. The
+images were opened read-only and hash to:
+
+| Image | SHA-256 |
+| --- | --- |
+| `Disk01.img` | `86a56b7068993037ae950d0c81b29029b154e8c068c3f72f5e5e51a5833be8e2` |
+| `Disk02.img` | `c8343fd2b8be589df1d3634cd73c7e6eb493e1009a7b58fdbaf856db113665c7` |
+| `Disk03.img` | `1f5e2bd0d96d1aabd4e83690f208f4b0b637f029bf53c93f0823291fe1fb6f0f` |
+| `Disk04.img` | `ba4f934f75b80d8e7652a077b49724db67c7daa5c529cc877cb91a32f99ae576` |
+| `Disk05.img` | `4560f34f960b54bec30a4d8cd90c94fc4e6d1f45814c8659d1e5626afce9c8c3` |
+| `Disk06.img` | `3747b2670dfbc5c5e91396853f372a1ffd6aa876e5af442518172bfb59a4ad15` |
+
+The pure in-repository FAT12 extractor yields 467 collision-free root files totaling 8,305,739
+bytes, with extraction digest
+`362e55b05f737072f61f11b385b5214cb96354e8115e21ef938f8142e3d80504`.
+The media includes `PSCRIPT.DRV`; `CONTROL.INF` maps the built-in `QMS ColorScript 100` model to it,
+so this profile does not require downloading a printer driver or WPD.
+
+An adjacent unselected text file says the archive came from WinWorld. That is provenance evidence,
+not proof of a license or right to use the bytes. The driver therefore requires the explicit
+right-to-use affirmation before executing Setup and never copies this media into Git or the OCI
+image.
 
 ## Open-source runtime decision
 
@@ -297,7 +318,8 @@ The public surface is:
 
 ```console
 ./scripts/amipro-oracle doctor
-./scripts/amipro-oracle bootstrap --win31-media PATH --amipro-media PATH
+./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights \
+  --win31-media PATH --amipro-media PATH
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -382,14 +404,16 @@ pass.
 
 ## Current stop condition
 
-Safe Phase 1 scaffolding, tests, OCI recipe, and the fake backend can be completed now. A lawful
-Windows runtime cannot. To cross that gate, provide the exact local directory or image-set path as:
+The exact media profile and Setup driver are implemented, but a Setup return is deliberately only
+an install candidate. To run that opt-in local phase, affirm the right to use the supplied media:
 
 ```console
 ./scripts/amipro-oracle bootstrap \
+  --confirm-proprietary-media-rights \
   --win31-media /absolute/path/to/owned/windows-3.1-media \
-  --amipro-media '/home/dragon/Downloads/Ami Pro 3.1 (3.5)'
+  --amipro-media /absolute/path/to/owned/ami-pro-3.1-media
 ```
 
-or set `WIN31_MEDIA_DIR` to that Windows media path. Do not provide or download media through the
-repository.
+or set `WIN31_MEDIA_DIR` and `AMIPRO_MEDIA_DIR` in ignored `.env.local`. Do not provide or download
+media through the repository. The next required gate is a separate media-free Program Manager
+boot/clean-exit probe; only then may the Ami Pro installer phase begin.

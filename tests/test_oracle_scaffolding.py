@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from amipro_oracle import cli as oracle_cli
 from amipro_oracle import media as media_module
 from amipro_oracle import oci as oci_module
+from amipro_oracle import process as process_module
 from amipro_oracle import toolchain as toolchain_module
 from amipro_oracle.compare import compare_analyses
 from amipro_oracle.config import dosbox_config
@@ -247,6 +249,94 @@ def test_doctor_reports_missing_media_without_creating_state(
         "missing-amipro-media",
     }
     assert not home.exists()
+
+
+def test_local_env_loader_accepts_only_quoted_media_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local_env = tmp_path / ".env.local"
+    marker = tmp_path / "must-not-exist"
+    local_env.write_text(
+        "\n".join(
+            (
+                'WIN31_MEDIA_DIR="/media/Windows 3.1"',
+                "export AMIPRO_MEDIA_DIR='/media/Ami Pro'",
+                f"UNRELATED=$(touch {marker})",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("WIN31_MEDIA_DIR", raising=False)
+    monkeypatch.delenv("AMIPRO_MEDIA_DIR", raising=False)
+
+    try:
+        oracle_cli._load_local_env(local_env)
+
+        assert os.environ["WIN31_MEDIA_DIR"] == "/media/Windows 3.1"
+        assert os.environ["AMIPRO_MEDIA_DIR"] == "/media/Ami Pro"
+        assert not marker.exists()
+    finally:
+        os.environ.pop("WIN31_MEDIA_DIR", None)
+        os.environ.pop("AMIPRO_MEDIA_DIR", None)
+
+
+def test_real_bootstrap_requires_rights_confirmation_and_dispatches_windows_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    windows_path = tmp_path / "windows"
+    amipro_path = tmp_path / "amipro"
+    monkeypatch.setattr(
+        oracle_cli,
+        "oracle_home",
+        lambda _value=None, **_kwargs: home,
+    )
+    assert oracle_cli.main(["bootstrap", "--backend", "real", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["exit_code"] == 2
+
+    monkeypatch.setattr(
+        oracle_cli,
+        "_require_real_media",
+        lambda _args: (windows_path, amipro_path),
+    )
+    monkeypatch.setattr(
+        oracle_cli,
+        "inventory_media",
+        lambda _path, *, kind: {
+            "kind": kind,
+            "digest": "a" * 64 if kind == "windows-3.1" else "b" * 64,
+        },
+    )
+    monkeypatch.setattr(oracle_cli, "_toolchain_image", lambda _home: {"image": True})
+    monkeypatch.setattr(
+        oracle_cli,
+        "bootstrap_windows_checkpoint",
+        lambda *_args: {
+            "schema": "amipro-oracle-windows-checkpoint-v1",
+            "status": "windows-install-candidate",
+            "checkpoint_key": "c" * 64,
+        },
+    )
+
+    assert (
+        oracle_cli.main(
+            [
+                "bootstrap",
+                "--backend",
+                "real",
+                "--confirm-proprietary-media-rights",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "windows-install-candidate"
+    assert result["amipro_media_validated"] is True
+    assert result["next_phase"] == "program-manager-boot-probe"
 
 
 def test_doctor_reports_recorded_image_mismatch_as_integrity_failure(
@@ -492,6 +582,19 @@ def test_generated_config_uses_non_overwriting_capture_directory() -> None:
     assert "automountall=false" in generated
     assert "automount drive directories=false" in generated
     assert "synchronize time=false" in generated
+    assert "[config]\ncountry=1" in generated
+    assert "freesizecap=fixed" in generated
+
+
+def test_toolchain_lock_hashes_its_build_inputs() -> None:
+    lock = toolchain_module.load_lock()
+    toolchain_root = toolchain_module.lock_path().parent
+
+    assert sha256_file(toolchain_root / "Containerfile") == lock["containerfile_sha256"]
+    assert (
+        sha256_file(toolchain_root / "oracle-entrypoint")
+        == lock["dosbox_x"]["entrypoint_sha256"]
+    )
 
 
 def test_recorded_image_probe_requires_current_lock_and_matching_image_label(
@@ -927,3 +1030,94 @@ def test_bounded_process_captures_output_and_raises_stable_timeout(
     assert process_result["command"][0] == sys.executable
     assert timeout_stdout.is_file()
     assert timeout_stderr.is_file()
+
+
+def test_bounded_process_truncates_logs_and_enforces_writable_tree_quota(
+    tmp_path: Path,
+) -> None:
+    stdout = tmp_path / "truncated.stdout"
+    stderr = tmp_path / "truncated.stderr"
+    result = run_bounded(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('A' * 5000); print('B' * 5000, file=sys.stderr)",
+        ],
+        stdout_path=stdout,
+        stderr_path=stderr,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+    )
+    assert result["stdout_capture"]["truncated"] is True
+    assert result["stderr_capture"]["truncated"] is True
+    assert b"amipro-oracle omitted" in stdout.read_bytes()
+    assert stdout.stat().st_size < 1200
+
+    watched = tmp_path / "watched"
+    watched.mkdir()
+    with pytest.raises(OracleError) as caught:
+        run_bounded(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path; import time; "
+                    f"Path({str(watched / 'large.bin')!r}).write_bytes(b'X' * 8192); "
+                    "time.sleep(5)"
+                ),
+            ],
+            stdout_path=tmp_path / "quota.stdout",
+            stderr_path=tmp_path / "quota.stderr",
+            timeout_seconds=5,
+            watch_path=watched,
+            max_tree_bytes=1024,
+        )
+    assert caught.value.exit_code == EXIT_INTEGRITY
+    assert caught.value.process_result["timed_out"] is False
+
+    final_burst = tmp_path / "final-burst"
+    final_burst.mkdir()
+    with pytest.raises(OracleError) as caught:
+        run_bounded(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path; "
+                    f"Path({str(final_burst / 'large.bin')!r})"
+                    ".write_bytes(b'X' * 8192)"
+                ),
+            ],
+            stdout_path=tmp_path / "final-burst.stdout",
+            stderr_path=tmp_path / "final-burst.stderr",
+            timeout_seconds=5,
+            watch_path=final_burst,
+            max_tree_bytes=1024,
+        )
+    assert caught.value.exit_code == EXIT_INTEGRITY
+    assert caught.value.process_result["final_tree_bytes"] >= 8192
+
+
+def test_writable_tree_sampler_tolerates_concurrent_create_unlink(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "churn"
+    root.mkdir()
+    stopped = threading.Event()
+
+    def churn() -> None:
+        path = root / "temporary"
+        while not stopped.is_set():
+            path.write_bytes(b"x")
+            path.unlink(missing_ok=True)
+
+    worker = threading.Thread(target=churn)
+    worker.start()
+    try:
+        for _ in range(2000):
+            size, entries = process_module._bounded_tree_usage(root, 100)
+            assert size >= 0
+            assert entries >= 0
+    finally:
+        stopped.set()
+        worker.join(timeout=2)

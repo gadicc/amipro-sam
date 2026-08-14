@@ -16,7 +16,7 @@
     "signed": false,
     "release_immutable": false,
     "source_date_epoch": 1783900800,
-    "entrypoint_sha256": "9eb89cdfab977c7a8e9e425f17202978dae7bcd71922c9ba1249c6ed3a5754e4",
+    "entrypoint_sha256": "1218d63cdd6e277e44bef3b9fbb45747cb51f3a31f0981ef403f720c83ca6f4f",
     "configure": [
       "--enable-sdl2",
       "--disable-alsa-midi",

@@ -213,3 +213,16 @@ def test_fat12_extraction_bounds_forged_inventory_before_reading(tmp_path: Path)
             {**identity, "digest": digest_json(identity)},
             tmp_path / "output",
         )
+
+
+def test_fat12_extraction_rejects_geometry_larger_than_the_fat(tmp_path: Path) -> None:
+    media = tmp_path / "media"
+    media.mkdir()
+    image = bytearray(_fat12_image([]))
+    image.extend(b"\x00" * ((1000 - 40) * 512))
+    struct.pack_into("<H", image, 19, 1000)
+    path = media / "Disk01.img"
+    path.write_bytes(image)
+
+    with pytest.raises(MediaIntegrityError, match="cluster entry"):
+        extract_fat12_root_images(media, _inventory(path), tmp_path / "output")

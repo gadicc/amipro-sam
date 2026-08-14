@@ -4,12 +4,10 @@ The oracle is an opt-in, local test system for comparing this converter with Ami
 Windows 3.1. It is deliberately separate from the normal converter: public CI and ordinary
 conversion never execute Ami Pro or require proprietary media.
 
-The current milestone provides the safety/reproducibility scaffold, media validation, pinned OCI
-recipe, fake CI backend, bounded process/state helpers, manifests, and structural/raster comparison.
-The real Windows installer driver is not complete, and no real rendering result has been produced.
-No current manifest is accepted as a fidelity baseline: eligibility remains fail-closed until the
-real runner can verify media, runtime, image, process, and capture identities rather than trusting
-self-asserted JSON fields.
+The current milestone also provides a real, bounded Windows 3.1 Setup driver for the exact supplied
+six-floppy profile. It produces only a content-addressed **install candidate**: a separate
+Program Manager boot/clean-exit probe and the Ami Pro installation are still required. No real
+rendering result has been produced, and no current manifest is accepted as a fidelity baseline.
 See the [investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
@@ -18,7 +16,7 @@ Run from the repository root:
 
 ```console
 ./scripts/amipro-oracle doctor
-./scripts/amipro-oracle bootstrap --win31-media PATH --amipro-media PATH
+./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -36,13 +34,15 @@ Add `--json` after the subcommand for machine-readable output. Exit statuses are
 | 5 | deadline exceeded |
 | 6 | backend or internal failure |
 
-`doctor` does not create oracle state. It reports the current lawful blocker exactly:
+`doctor` does not create oracle state. Pass media paths explicitly or put the two allowlisted values
+in the ignored `.env.local`; `scripts/amipro-oracle` loads this file without executing it:
 
-```text
-provide --win31-media PATH or set WIN31_MEDIA_DIR
+```dotenv
+WIN31_MEDIA_DIR="/absolute/path/to/windows-3.1-media"
+AMIPRO_MEDIA_DIR="/absolute/path/to/Ami Pro 3.1 media"
 ```
 
-The Ami path can likewise be set with `AMIPRO_MEDIA_DIR`. Media inventory opens files read-only,
+Explicit `--win31-media` and `--amipro-media` arguments take precedence. Media inventory opens files read-only,
 rejects links and special files, detects concurrent changes, and records canonical hashes. The
 current owned Ami floppy images are host-writable, which `doctor` reports; future container/guest
 mounts must still expose them read-only.
@@ -77,9 +77,6 @@ full DOSBox-X commit and tree, pins fidelity-relevant packages, and embeds the c
 package inventory. The local image record is written below `.amipro-oracle/` and is ignored by
 Git. See [toolchain details](../toolchain/README.md).
 
-At this checkpoint the corrected recipe is tracked, but a final local image digest has not been
-recorded; `doctor` therefore reports `missing-locked-toolchain` until the build completes.
-
 The build fixes its source epoch and rewrites image timestamps. It also fails if the compiled
 DOSBox-X configuration or linked libraries expose pcap, SLIRP, SDL_net, modem, or IPX support.
 The runtime boundary must still use `--network=none`; compile-time removal and OCI isolation are
@@ -113,10 +110,10 @@ user mapping, and a single writable `/oracle/job` bind. Media binds are read-onl
 has a unique name and cidfile so a future real supervisor can explicitly stop, kill, and remove the
 container after client failure; killing only the `podman run` process group is not sufficient.
 
-The real-runner acceptance contract requires every failure to retain its state trace, generated
-configuration, stdout/stderr, screenshots, staged name map, captures, artifact hashes, and
-manifest. The fake backend already retains its available partial artifacts and diagnostics; real
-screenshot/state capture remains part of the media-blocked installer milestone. Troubleshooting
+The Windows installer phase retains its state trace, generated configuration, bounded stdout/stderr,
+changed-screen archive, last and last-nonuniform screenshots, observer status, raw and normalized
+runtime trees, and process cleanup result. Its stable checkpoint manifest excludes volatile job
+paths/timing; the returned result names the ignored evidence job that backs it. Troubleshooting
 starts with captured evidence, not manual guest inspection.
 
 The prior failed Wine attempt has been copied, hash-verified, and retained in a local ignored
@@ -125,14 +122,18 @@ proprietary executable was copied into source.
 
 ## What is still required
 
-To cross the lawful bootstrap gate, supply the exact local path to owned Windows 3.1 media:
+After building the locked toolchain, run the exact supplied-media phase with an explicit affirmation
+that you have the right to use both local proprietary media sets:
 
 ```console
 ./scripts/amipro-oracle bootstrap \
+  --confirm-proprietary-media-rights \
   --win31-media /absolute/path/to/owned/windows-3.1-media \
-  --amipro-media '/home/dragon/Downloads/Ami Pro 3.1 (3.5)'
+  --amipro-media /absolute/path/to/owned/ami-pro-3.1-media
 ```
 
-Do not add media to the repository. Bootstrap must also find a suitable owned Windows 3.1
-PostScript stack—normally `PSCRIPT.DRV` plus a built-in model or `*.WPD` definition—or stop for an
-exact additional licensed-media path. It will not fetch a driver, WPD, PPD, or font.
+Do not add media to the repository. A successful command currently means “Windows install candidate
+created and statically verified,” not “oracle ready.” The next gate is a separate media-free
+Program Manager boot/clean-exit probe. The supplied Windows set contains `PSCRIPT.DRV` and a built-in
+PostScript model, but printer setup remains a later phase. Nothing fetches a driver, WPD, PPD, font,
+Windows, or Ami Pro bytes.

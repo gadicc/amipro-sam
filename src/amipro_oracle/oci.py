@@ -29,6 +29,7 @@ class PodmanInvocation:
     command: tuple[str, ...]
     container_name: str
     cidfile: Path
+    job_root: Path
 
 
 def _mount_argument(mount: BindMount) -> str:
@@ -209,7 +210,7 @@ def build_podman_invocation(
         command.extend(("--mount", argument))
     command.append(f"{image}@{digest}")
     command.extend(dosbox_arguments)
-    return PodmanInvocation(tuple(command), container_name, cidfile)
+    return PodmanInvocation(tuple(command), container_name, cidfile, resolved_job)
 
 
 def cleanup_podman_container(
@@ -233,6 +234,30 @@ def cleanup_podman_container(
         atomic_write_json(diagnostics_path, {"cleanup": results})
         return results
     try:
+        exists = subprocess.run(
+            [executable, "container", "exists", container_id],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+        if exists.returncode == 1:
+            results.append({"status": "absent", "container_id": container_id})
+            atomic_write_json(diagnostics_path, {"cleanup": results})
+            return results
+        if exists.returncode != 0:
+            results.append(
+                {
+                    "status": "skipped",
+                    "reason": "cannot determine whether the container still exists",
+                    "exit_code": exists.returncode,
+                    "output": exists.stdout[:4000],
+                }
+            )
+            atomic_write_json(diagnostics_path, {"cleanup": results})
+            return results
         inspect = subprocess.run(
             [
                 executable,
@@ -320,15 +345,19 @@ def run_podman_bounded(
         raise OracleError("Podman is unavailable or is not rootless", exit_code=EXIT_MISSING)
     command = (executable, *invocation.command[1:])
     try:
-        return run_bounded(
+        result = run_bounded(
             command,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             timeout_seconds=timeout_seconds,
             grace_seconds=grace_seconds,
+            watch_path=invocation.job_root,
         )
     except BaseException as exc:
         cleanup = cleanup_podman_container(invocation, diagnostics_path=cleanup_path)
         if isinstance(exc, OracleError) and exc.process_result is not None:
             exc.process_result["container_cleanup"] = cleanup
         raise
+    cleanup = cleanup_podman_container(invocation, diagnostics_path=cleanup_path)
+    result["container_cleanup"] = cleanup
+    return result

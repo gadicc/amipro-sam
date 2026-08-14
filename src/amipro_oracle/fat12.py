@@ -18,6 +18,7 @@ EXTRACTION_SCHEMA = "amipro-oracle-fat12-extraction-v1"
 _MAX_FLOPPY_BYTES = 4 * 1024 * 1024
 _MAX_IMAGE_COUNT = 64
 _MAX_IMAGE_BYTES = 64 * 1024 * 1024
+_MAX_EXTRACTED_FILES = 4096
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,7 @@ def _parse_root(payload: bytes) -> list[_FatFile]:
         start = first_fat + index * fat_bytes
         if payload[start : start + fat_bytes] != fat:
             raise _fail("FAT12 allocation-table copies differ")
+    _fat12_value(fat, cluster_count + 1)
 
     files: list[_FatFile] = []
     names: set[str] = set()
@@ -311,6 +313,10 @@ def extract_fat12_root_images(
                         f"{extracted.name}"
                     )
                 output_names.add(folded)
+                if len(output_names) > _MAX_EXTRACTED_FILES:
+                    raise _fail(
+                        f"FAT12 extraction exceeds the {_MAX_EXTRACTED_FILES} file limit"
+                    )
                 output = destination / extracted.name
                 atomic_write(output, extracted.payload)
                 output.chmod(0o444)

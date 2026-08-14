@@ -13,10 +13,115 @@ Xvfb "$display" \
     > "$diagnostics/xvfb.log" 2>&1 &
 xvfb_pid=$!
 dosbox_pid=
+observer_pid=
+
+capture_screen() {
+    output=$1
+    DISPLAY="$display" import -window root "png24:$output" >/dev/null 2>&1
+}
+
+observe_screens() {
+    previous="$diagnostics/.observer-previous.png"
+    temporary="$diagnostics/.observer-current.png"
+    summary_temporary="$diagnostics/.observer-status.tmp"
+    index=0
+    captures=0
+    failures=0
+    visual=0
+    status=ok
+    while :; do
+        if capture_screen "$temporary"; then
+            captures=$((captures + 1))
+            changed=1
+            if [ -f "$previous" ]; then
+                difference=$(compare -metric AE "$previous" "$temporary" null: 2>&1 || true)
+                case "$difference" in
+                    ''|*[!0-9]*) difference=999999 ;;
+                esac
+                if [ "$difference" -lt 2000 ]; then
+                    changed=0
+                fi
+            fi
+            colors=$(identify -format '%k' "$temporary" 2>/dev/null || true)
+            case "$colors" in
+                ''|*[!0-9]*)
+                    failures=$((failures + 1))
+                    status=failed
+                    break
+                    ;;
+            esac
+            if [ "$colors" -gt 1 ]; then
+                visual=$((visual + 1))
+                if ! cp "$temporary" "$diagnostics/screen-visual.png"; then
+                    failures=$((failures + 1))
+                    status=failed
+                    break
+                fi
+            fi
+            if [ "$changed" -eq 1 ]; then
+                if [ "$index" -lt 256 ]; then
+                    index=$((index + 1))
+                    target=$(printf '%s/screen-%04d.png' "$diagnostics" "$index")
+                    if ! cp "$temporary" "$target"; then
+                        failures=$((failures + 1))
+                        status=failed
+                        break
+                    fi
+                elif [ ! -f "$diagnostics/screen-limit-reached.txt" ]; then
+                    echo "changed-screen archive limit reached; late screen still updated" \
+                        > "$diagnostics/screen-limit-reached.txt"
+                fi
+            fi
+            if ! cp "$temporary" "$diagnostics/screen-last.png" \
+                || ! mv "$temporary" "$previous"; then
+                failures=$((failures + 1))
+                status=failed
+                break
+            fi
+        else
+            failures=$((failures + 1))
+            rm -f "$temporary"
+            status=failed
+            break
+        fi
+        if ! kill -0 "$dosbox_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.5
+    done
+    rm -f "$previous" "$temporary"
+    if [ "$captures" -lt 1 ] || [ ! -s "$diagnostics/screen-last.png" ]; then
+        status=failed
+    fi
+    final_sha256=missing
+    final_bytes=0
+    if [ -f "$diagnostics/screen-last.png" ]; then
+        final_sha256=$(sha256sum "$diagnostics/screen-last.png" | awk '{print $1}')
+        final_bytes=$(wc -c < "$diagnostics/screen-last.png" | tr -d ' ')
+    fi
+    {
+        echo "schema=amipro-oracle-screen-observer-v1"
+        echo "status=$status"
+        echo "capture_count=$captures"
+        echo "archived_count=$index"
+        echo "visual_count=$visual"
+        echo "failure_count=$failures"
+        echo "final_sha256=$final_sha256"
+        echo "final_bytes=$final_bytes"
+    } > "$summary_temporary"
+    mv "$summary_temporary" "$diagnostics/observer.status"
+    [ "$status" = ok ]
+}
 
 cleanup() {
     trap - EXIT HUP INT TERM
+    if [ -n "$observer_pid" ]; then
+        kill "$observer_pid" 2>/dev/null || true
+        wait "$observer_pid" 2>/dev/null || true
+        observer_pid=
+    fi
     if [ -n "$dosbox_pid" ]; then
+        capture_screen "$diagnostics/screen-before-termination.png" || true
         kill "$dosbox_pid" 2>/dev/null || true
         wait "$dosbox_pid" 2>/dev/null || true
     fi
@@ -41,9 +146,19 @@ done
 
 DISPLAY="$display" /opt/dosbox-x/bin/dosbox-x "$@" &
 dosbox_pid=$!
+observe_screens &
+observer_pid=$!
 set +e
 wait "$dosbox_pid"
 status=$?
 set -e
 dosbox_pid=
+set +e
+wait "$observer_pid"
+observer_status=$?
+set -e
+observer_pid=
+if [ "$observer_status" -ne 0 ] && [ "$status" -eq 0 ]; then
+    status=71
+fi
 exit "$status"

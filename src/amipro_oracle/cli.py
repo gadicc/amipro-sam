@@ -4,13 +4,13 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from .compare import compare_analyses
-from .config import dosbox_config_digest
 from .constants import (
     COMPARE_SCHEMA,
     EXIT_BACKEND,
@@ -18,7 +18,7 @@ from .constants import (
     EXIT_INTEGRITY,
     EXIT_MISSING,
     EXIT_OK,
-    RUNTIME_SCHEMA,
+    EXIT_USAGE,
     VERSION,
 )
 from .errors import OracleError
@@ -27,7 +27,10 @@ from .io import atomic_write_json, digest_json, read_json_object, sha256_file
 from .media import inventory_media
 from .paths import oracle_home, repo_root
 from .runtime import bootstrap_fake
-from .toolchain import load_lock, probe_recorded_image, probe_toolchain
+from .toolchain import probe_recorded_image, probe_toolchain
+from .windows_bootstrap import bootstrap_windows_checkpoint
+
+_LOCAL_ENV_KEYS = frozenset({"WIN31_MEDIA_DIR", "AMIPRO_MEDIA_DIR"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
     _common(bootstrap, backend=True)
     bootstrap.add_argument("--win31-media", type=Path)
     bootstrap.add_argument("--amipro-media", type=Path)
+    bootstrap.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm that you have the right to use the supplied local proprietary media",
+    )
     bootstrap.set_defaults(handler=_command_bootstrap)
 
     smoke = subparsers.add_parser("smoke", help="run one invented-document lifecycle smoke test")
@@ -96,6 +104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if os.environ.get("AMIPRO_ORACLE_LOAD_LOCAL_ENV") == "1":
+            _load_local_env(repo_root() / ".env.local")
         return int(args.handler(args))
     except OracleError as exc:
         _print_error(args, str(exc), exc.exit_code)
@@ -124,6 +134,54 @@ def _configured_media(argument: Path | None, environment_name: str) -> Path | No
         return argument
     value = os.environ.get(environment_name)
     return Path(value) if value else None
+
+
+def _load_local_env(path: Path) -> None:
+    if path.is_symlink():
+        raise OracleError(
+            f"local environment file must not be a symlink: {path}",
+            exit_code=EXIT_INTEGRITY,
+        )
+    if not path.exists():
+        return
+    if not path.is_file():
+        raise OracleError(
+            f"local environment path must be a file: {path}",
+            exit_code=EXIT_INTEGRITY,
+        )
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise OracleError(
+            f"cannot read local environment file: {path}",
+            exit_code=EXIT_INTEGRITY,
+        ) from exc
+    for number, original in enumerate(lines, start=1):
+        line = original.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, raw_value = line.partition("=")
+        key = key.strip()
+        if not separator or key not in _LOCAL_ENV_KEYS:
+            continue
+        lexer = shlex.shlex(raw_value, posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        try:
+            values = list(lexer)
+        except ValueError as exc:
+            raise OracleError(
+                f"invalid {key} value in {path.name} line {number}",
+                exit_code=EXIT_INTEGRITY,
+            ) from exc
+        if len(values) != 1 or not values[0]:
+            raise OracleError(
+                f"{key} in {path.name} line {number} must contain one quoted path",
+                exit_code=EXIT_INTEGRITY,
+            )
+        os.environ.setdefault(key, values[0])
 
 
 def _toolchain_image(home: Path) -> dict[str, Any] | None:
@@ -321,24 +379,42 @@ def _command_bootstrap(args: argparse.Namespace) -> int:
         )
         return EXIT_OK
 
+    if not args.confirm_proprietary_media_rights:
+        raise OracleError(
+            "real bootstrap requires --confirm-proprietary-media-rights; hashes prove identity, "
+            "not your license or right to use the supplied media",
+            exit_code=EXIT_USAGE,
+        )
     windows_path, amipro_path = _require_real_media(args)
     windows = inventory_media(windows_path, kind="windows-3.1")
     amipro = inventory_media(amipro_path, kind="amipro")
-    inputs = {
-        "schema": RUNTIME_SCHEMA,
-        "backend": "real",
-        "windows_media_digest": windows["digest"],
-        "amipro_media_digest": amipro["digest"],
-        "toolchain": load_lock(),
-        "dosbox_config_sha256": dosbox_config_digest(),
-    }
-    runtime_key = digest_json(inputs)
-    raise OracleError(
-        "media validated but the real Windows installer driver cannot run until the locked OCI "
-        "image is built and the Windows-media UI profile is implemented "
-        f"(runtime key {runtime_key})",
-        exit_code=EXIT_BACKEND,
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+            exit_code=EXIT_MISSING,
+        )
+    checkpoint = bootstrap_windows_checkpoint(
+        home,
+        windows_path,
+        windows,
+        image,
     )
+    result = {
+        **checkpoint,
+        "amipro_media_validated": True,
+        "amipro_media_digest": amipro["digest"],
+        "next_phase": "program-manager-boot-probe",
+    }
+    _emit(
+        args,
+        result,
+        text=(
+            f"Windows install candidate ready: {checkpoint['checkpoint_key']}\n"
+            "Next: run the separate Program Manager boot probe before Ami Pro installation."
+        ),
+    )
+    return EXIT_OK
 
 
 def _prepare_new_directory(path: Path) -> Path:
@@ -358,8 +434,8 @@ def _prepare_new_directory(path: Path) -> Path:
 def _command_smoke(args: argparse.Namespace) -> int:
     if args.backend != "fake":
         raise OracleError(
-            "real smoke requires a ready Windows/Ami Pro runtime; bootstrap is blocked on "
-            "Windows media",
+            "real smoke requires a Windows candidate that passed the Program Manager "
+            "boot gate and a verified Ami Pro installation",
             exit_code=EXIT_MISSING,
         )
     fixture = args.input or (repo_root() / "tests" / "fixtures" / "synthetic-basic.sam")
