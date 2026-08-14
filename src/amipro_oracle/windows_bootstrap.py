@@ -1073,6 +1073,7 @@ def _verify_windows_checkpoint(
         or manifest.get("baseline_eligible") is not False
         or manifest.get("printer_profile") != "none"
         or manifest.get("inputs_digest") != digest_json(expected_inputs)
+        or expected_key != digest_json(expected_inputs)
         or recorded_inputs != expected_inputs
         or config_bytes != windows_setup_config().encode("utf-8")
         or shh_bytes != windows_setup_shh()
@@ -1125,6 +1126,35 @@ def _verify_windows_checkpoint(
         )
     _validate_windows_tree(pristine)
     return manifest
+
+
+def verify_windows_install_candidate(
+    home: Path,
+    checkpoint_key: str,
+) -> tuple[Path, dict[str, Any], dict[str, Any], str]:
+    if _SHA256.fullmatch(checkpoint_key) is None:
+        raise OracleError("invalid Windows checkpoint key", exit_code=EXIT_INTEGRITY)
+    root = home / "cache" / "windows" / checkpoint_key
+    if root.parent != home / "cache" / "windows":
+        raise OracleError("unsafe Windows checkpoint path", exit_code=EXIT_INTEGRITY)
+    inputs_path = root / "inputs.json"
+    if inputs_path.is_symlink() or not inputs_path.is_file():
+        raise OracleError("Windows checkpoint inputs are missing", exit_code=EXIT_INTEGRITY)
+    try:
+        inputs = read_json_object(inputs_path)
+    except (OSError, ValueError) as exc:
+        raise OracleError(
+            "Windows checkpoint inputs are invalid",
+            exit_code=EXIT_INTEGRITY,
+        ) from exc
+    manifest = _verify_windows_checkpoint(root, checkpoint_key, inputs)
+    evidence_job = _load_evidence_job(
+        home,
+        root,
+        checkpoint_key,
+        manifest,
+    )
+    return root, manifest, inputs, evidence_job
 
 
 def bootstrap_windows_checkpoint(

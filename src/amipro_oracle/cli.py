@@ -28,6 +28,7 @@ from .media import inventory_media
 from .paths import oracle_home, repo_root
 from .runtime import bootstrap_fake
 from .toolchain import probe_recorded_image, probe_toolchain
+from .windows_boot_probe import OUTER_TIME_LIMIT_SECONDS, boot_windows_ready
 from .windows_bootstrap import bootstrap_windows_checkpoint
 
 _LOCAL_ENV_KEYS = frozenset({"WIN31_MEDIA_DIR", "AMIPRO_MEDIA_DIR"})
@@ -59,6 +60,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="affirm that you have the right to use the supplied local proprietary media",
     )
     bootstrap.set_defaults(handler=_command_bootstrap)
+
+    boot_probe = subparsers.add_parser(
+        "boot-probe",
+        help="prove the installed Windows candidate reaches and exits Program Manager",
+    )
+    _common(boot_probe, backend=False)
+    boot_probe.add_argument("--checkpoint-key")
+    boot_probe.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=OUTER_TIME_LIMIT_SECONDS,
+        help=f"outer wall-clock deadline (maximum {OUTER_TIME_LIMIT_SECONDS}s)",
+    )
+    boot_probe.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the cached runtime made from proprietary media",
+    )
+    boot_probe.set_defaults(handler=_command_boot_probe)
 
     smoke = subparsers.add_parser("smoke", help="run one invented-document lifecycle smoke test")
     _common(smoke, backend=True)
@@ -412,6 +432,36 @@ def _command_bootstrap(args: argparse.Namespace) -> int:
         text=(
             f"Windows install candidate ready: {checkpoint['checkpoint_key']}\n"
             "Next: run the separate Program Manager boot probe before Ami Pro installation."
+        ),
+    )
+    return EXIT_OK
+
+
+def _command_boot_probe(args: argparse.Namespace) -> int:
+    if not args.confirm_proprietary_media_rights:
+        raise OracleError(
+            "the real boot probe requires --confirm-proprietary-media-rights",
+            exit_code=EXIT_USAGE,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+            exit_code=EXIT_MISSING,
+        )
+    result = boot_windows_ready(
+        home,
+        image,
+        checkpoint_key=args.checkpoint_key,
+        timeout_seconds=args.timeout_seconds,
+    )
+    _emit(
+        args,
+        result,
+        text=(
+            f"Windows runtime ready: {result['runtime_key']}\n"
+            "Next: install Ami Pro into a disposable clone of this verified runtime."
         ),
     )
     return EXIT_OK

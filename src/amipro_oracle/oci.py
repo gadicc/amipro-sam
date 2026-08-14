@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import math
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .constants import EXIT_INTEGRITY, EXIT_MISSING
+from .constants import EXIT_BACKEND, EXIT_INTEGRITY, EXIT_MISSING
 from .errors import OracleError
 from .io import atomic_write_json
 from .paths import repo_root
@@ -211,6 +213,109 @@ def build_podman_invocation(
     command.append(f"{image}@{digest}")
     command.extend(dosbox_arguments)
     return PodmanInvocation(tuple(command), container_name, cidfile, resolved_job)
+
+
+def exec_podman_checked(
+    invocation: PodmanInvocation,
+    command: Sequence[str],
+    *,
+    environment: Mapping[str, str] | None = None,
+    timeout_seconds: float = 5,
+) -> dict[str, object]:
+    if (
+        not command
+        or isinstance(command, (str, bytes))
+        or isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not math.isfinite(timeout_seconds)
+        or not 0 < timeout_seconds <= 30
+        or _INSTANCE.fullmatch(invocation.container_name) is None
+        or any(
+            not isinstance(argument, str) or not argument or "\x00" in argument
+            for argument in command
+        )
+    ):
+        raise OracleError("invalid bounded Podman exec command", exit_code=EXIT_INTEGRITY)
+    environment = environment or {}
+    if any(
+        not isinstance(key, str)
+        or not isinstance(value, str)
+        or re.fullmatch(r"[A-Z][A-Z0-9_]*", key) is None
+        or "\x00" in value
+        for key, value in environment.items()
+    ):
+        raise OracleError("invalid bounded Podman exec environment", exit_code=EXIT_INTEGRITY)
+    executable = shutil.which("podman")
+    if executable is None:
+        raise OracleError("rootless Podman is required", exit_code=EXIT_MISSING)
+    if invocation.cidfile.is_symlink() or not invocation.cidfile.is_file():
+        raise OracleError("container cidfile is not available", exit_code=EXIT_BACKEND)
+    if invocation.cidfile.stat().st_size > 128:
+        raise OracleError("container cidfile is oversized", exit_code=EXIT_INTEGRITY)
+    try:
+        container_id = invocation.cidfile.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise OracleError("cannot read container cidfile", exit_code=EXIT_INTEGRITY) from exc
+    if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
+        raise OracleError("container cidfile is invalid", exit_code=EXIT_INTEGRITY)
+    try:
+        exists = subprocess.run(
+            [executable, "container", "exists", container_id],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+        inspect = subprocess.run(
+            [
+                executable,
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "org.amipro-oracle.instance"}}',
+                container_id,
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OracleError(
+            f"cannot verify running container identity: {exc}",
+            exit_code=EXIT_BACKEND,
+        ) from exc
+    if exists.returncode != 0 or inspect.returncode != 0:
+        raise OracleError("oracle container is no longer running", exit_code=EXIT_BACKEND)
+    if inspect.stdout.strip() != invocation.container_name:
+        raise OracleError("oracle container identity label mismatch", exit_code=EXIT_INTEGRITY)
+    exec_command = [executable, "exec"]
+    exec_command.extend(f"--env={key}={value}" for key, value in sorted(environment.items()))
+    exec_command.extend((container_id, *command))
+    try:
+        process = subprocess.run(
+            exec_command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OracleError(
+            f"bounded Podman exec failed: {exc}",
+            exit_code=EXIT_BACKEND,
+        ) from exc
+    return {
+        "command": ["podman", "exec", *command],
+        "exit_code": process.returncode,
+        "stdout": process.stdout[:4000],
+        "stderr": process.stderr[:4000],
+    }
 
 
 def cleanup_podman_container(
