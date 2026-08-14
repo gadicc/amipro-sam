@@ -125,6 +125,7 @@ INSTALLER_UI_PROFILE = {
     "stable_samples": 2,
     "poll_seconds": 0.25,
     "states": list(INSTALLER_STATES),
+    "post_install_exit_profile": boot_module.UI_PROFILE,
 }
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -603,12 +604,59 @@ def _drive_installer(
                 "exit_code": action["exit_code"],
             }
         )
+    ready_metrics, ready_payload = boot_module._wait_for_screen(
+        screen,
+        stop=stop,
+        deadline=deadline,
+        predicate=boot_module._is_program_manager_ready,
+    )
+    ready_path = job / "diagnostics" / "installer-program-manager-ready.png"
+    atomic_write(ready_path, ready_payload)
+    if window is None:
+        raise OracleError("cannot identify the DOSBox-X UI window", exit_code=EXIT_BACKEND)
+    exit_key = exec_podman_checked(
+        invocation,
+        ("xdotool", "key", "--window", window, "alt+F4"),
+        environment={"DISPLAY": ":99"},
+    )
+    if exit_key["exit_code"] != 0:
+        raise OracleError("cannot request the Program Manager exit", exit_code=EXIT_BACKEND)
+    confirmation_metrics, confirmation_payload = boot_module._wait_for_screen(
+        screen,
+        stop=stop,
+        deadline=deadline,
+        predicate=lambda metrics: boot_module._is_exit_confirmation(
+            metrics,
+            str(ready_metrics["sha256"]),
+        ),
+    )
+    confirmation_path = job / "diagnostics" / "installer-exit-confirmation.png"
+    atomic_write(confirmation_path, confirmation_payload)
+    confirm_key = exec_podman_checked(
+        invocation,
+        ("xdotool", "key", "--window", window, "Return"),
+        environment={"DISPLAY": ":99"},
+    )
+    if confirm_key["exit_code"] != 0:
+        raise OracleError("cannot confirm the Windows exit", exit_code=EXIT_BACKEND)
     return {
         "schema": AMIPRO_UI_SCHEMA,
         "status": "success",
         "profile": INSTALLER_UI_PROFILE,
         "states": states,
         "actions": actions,
+        "program_manager_exit": {
+            "profile": boot_module.UI_PROFILE,
+            "ready": {"path": ready_path.name, **ready_metrics},
+            "confirmation": {
+                "path": confirmation_path.name,
+                **confirmation_metrics,
+            },
+            "actions": [
+                {"action": "alt-f4", "exit_code": exit_key["exit_code"]},
+                {"action": "enter", "exit_code": confirm_key["exit_code"]},
+            ],
+        },
     }
 
 
@@ -697,6 +745,7 @@ def _validate_ui_evidence(job: Path) -> dict[str, object]:
         ) from exc
     states = driver.get("states")
     actions = driver.get("actions")
+    program_manager_exit = driver.get("program_manager_exit")
     if (
         driver.get("schema") != AMIPRO_UI_SCHEMA
         or driver.get("status") != "success"
@@ -705,6 +754,7 @@ def _validate_ui_evidence(job: Path) -> dict[str, object]:
         or not isinstance(actions, list)
         or len(states) != len(INSTALLER_STATES)
         or len(actions) != len(INSTALLER_STATES)
+        or not isinstance(program_manager_exit, dict)
     ):
         raise OracleError("Ami Pro installer UI evidence mismatch", exit_code=EXIT_INTEGRITY)
     for index, expected in enumerate(INSTALLER_STATES, start=1):
@@ -723,6 +773,34 @@ def _validate_ui_evidence(job: Path) -> dict[str, object]:
             "exit_code": 0,
         }:
             raise OracleError("Ami Pro installer state evidence mismatch", exit_code=EXIT_INTEGRITY)
+    ready_path = job / "diagnostics" / "installer-program-manager-ready.png"
+    confirmation_path = job / "diagnostics" / "installer-exit-confirmation.png"
+    try:
+        ready, _ = boot_module._screen_metrics(ready_path)
+        confirmation, _ = boot_module._screen_metrics(confirmation_path)
+    except OracleError as exc:
+        raise OracleError(
+            "Ami Pro post-install Windows-exit evidence is invalid",
+            exit_code=EXIT_INTEGRITY,
+        ) from exc
+    expected_exit = {
+        "profile": boot_module.UI_PROFILE,
+        "ready": {"path": ready_path.name, **ready},
+        "confirmation": {"path": confirmation_path.name, **confirmation},
+        "actions": [
+            {"action": "alt-f4", "exit_code": 0},
+            {"action": "enter", "exit_code": 0},
+        ],
+    }
+    if (
+        not boot_module._is_program_manager_ready(ready)
+        or not boot_module._is_exit_confirmation(confirmation, str(ready["sha256"]))
+        or program_manager_exit != expected_exit
+    ):
+        raise OracleError(
+            "Ami Pro post-install Windows-exit evidence mismatch",
+            exit_code=EXIT_INTEGRITY,
+        )
     return driver
 
 

@@ -163,8 +163,30 @@ def _synthetic_ui_profile(
         "stable_samples": 2,
         "poll_seconds": 0.25,
         "states": list(states),
+        "post_install_exit_profile": install_module.boot_module.UI_PROFILE,
     }
     return states, profile, payload
+
+
+def _program_manager_screen(*, blue_pixels: int, variant: int) -> bytes:
+    count = install_module.SCREEN_WIDTH * install_module.SCREEN_HEIGHT
+    colors = [
+        (index * 11 % 256, index * 17 % 256, index * 23 % 256)
+        for index in range(1, 14)
+    ]
+    pixels = bytearray()
+    pixels.extend(b"\xff\xff\xff" * 180_000)
+    pixels.extend(b"\xc3\xc7\xcb" * 180_000)
+    pixels.extend(b"\x00\x00\xaa" * blue_pixels)
+    for color in colors:
+        pixels.extend(bytes(color))
+    consumed = 360_000 + blue_pixels + len(colors)
+    pixels.extend(bytes((variant, 0, 0)) * (count - consumed))
+    return encode_rgb_png(
+        install_module.SCREEN_WIDTH,
+        install_module.SCREEN_HEIGHT,
+        bytes(pixels),
+    )
 
 
 def test_install_config_batch_and_key_are_pinned() -> None:
@@ -266,6 +288,23 @@ def test_install_checkpoint_promotes_reuses_and_rejects_tampered_evidence(
             "states": [observed],
             "actions": [
                 {"state": "synthetic-dialog", "keys": ["Return"], "exit_code": 0}
+            ],
+        }
+        ready_path = diagnostics / "installer-program-manager-ready.png"
+        confirmation_path = diagnostics / "installer-exit-confirmation.png"
+        ready_path.write_bytes(_program_manager_screen(blue_pixels=20_000, variant=1))
+        confirmation_path.write_bytes(
+            _program_manager_screen(blue_pixels=8_000, variant=2)
+        )
+        ready, _ = install_module.boot_module._screen_metrics(ready_path)
+        confirmation, _ = install_module.boot_module._screen_metrics(confirmation_path)
+        driver["program_manager_exit"] = {
+            "profile": install_module.boot_module.UI_PROFILE,
+            "ready": {"path": ready_path.name, **ready},
+            "confirmation": {"path": confirmation_path.name, **confirmation},
+            "actions": [
+                {"action": "alt-f4", "exit_code": 0},
+                {"action": "enter", "exit_code": 0},
             ],
         }
         install_module.atomic_write_json(job / "ui-driver.json", driver)
