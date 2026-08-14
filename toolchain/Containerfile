@@ -1,0 +1,143 @@
+# syntax=docker/dockerfile:1.7
+ARG DEBIAN_IMAGE=docker.io/library/debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+FROM ${DEBIAN_IMAGE} AS build
+
+ARG DEBIAN_SNAPSHOT=20260713T000000Z
+ARG DOSBOX_X_REPOSITORY=https://github.com/joncampbell123/dosbox-x.git
+ARG DOSBOX_X_TAG=dosbox-x-v2026.08.02
+ARG DOSBOX_X_COMMIT=784240ad6d9cf3ae3f02fab819e2ed5cf5117dd4
+ARG DOSBOX_X_TREE=9058fd4983b50d038e3136fcedccd41ef70a4624
+ARG DOSBOX_X_CONFIGURE_FLAGS="--enable-sdl2 --disable-alsa-midi --disable-avcodec --disable-gamelink --disable-libfluidsynth --disable-libslirp --disable-mt32 --disable-opengl --disable-sdlnet"
+ARG FORBIDDEN_NETWORK_MACROS="C_PCAP C_SLIRP C_SDL_NET C_SDL2_NET C_MODEM C_IPX"
+ARG ORACLE_SOURCE_DATE_EPOCH=1783900800
+
+RUN sed -i \
+      -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources
+RUN apt-get -o Acquire::Check-Valid-Until=false update
+RUN DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      autoconf \
+      automake \
+      build-essential \
+      ca-certificates \
+      git \
+      libfreetype6-dev \
+      libncurses-dev \
+      libpng-dev \
+      libsdl2-dev \
+      libtool \
+      libxkbfile-dev \
+      libxrandr-dev \
+      nasm \
+      pkg-config \
+      zlib1g-dev
+RUN git init /tmp/dosbox-x-source
+RUN git -C /tmp/dosbox-x-source remote add origin "${DOSBOX_X_REPOSITORY}"
+RUN git -C /tmp/dosbox-x-source fetch --depth=1 origin \
+      "refs/tags/${DOSBOX_X_TAG}:refs/tags/${DOSBOX_X_TAG}"
+RUN git -C /tmp/dosbox-x-source checkout --detach "${DOSBOX_X_TAG}"
+RUN git -C /tmp/dosbox-x-source rev-parse HEAD | grep -Fx "${DOSBOX_X_COMMIT}"
+RUN git -C /tmp/dosbox-x-source rev-parse 'HEAD^{tree}' | grep -Fx "${DOSBOX_X_TREE}"
+
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV SOURCE_DATE_EPOCH=${ORACLE_SOURCE_DATE_EPOCH}
+ENV TZ=UTC
+
+WORKDIR /tmp/dosbox-x-source
+RUN ./autogen.sh
+RUN ./configure --prefix=/opt/dosbox-x ${DOSBOX_X_CONFIGURE_FLAGS}
+RUN for macro in ${FORBIDDEN_NETWORK_MACROS}; do \
+      if grep -Eq "^#define[[:space:]]+${macro}([[:space:]]|$)" config.h; then \
+        echo "unexpected network feature in config.h: ${macro}" >&2; \
+        exit 1; \
+      fi; \
+    done
+RUN make --jobs=1
+RUN make install
+RUN if ldd /opt/dosbox-x/bin/dosbox-x | grep -Eiq '(pcap|slirp|SDL[^ ]*net)'; then \
+      echo "unexpected network library linked into DOSBox-X" >&2; \
+      exit 1; \
+    fi
+RUN mkdir -p /opt/dosbox-x/share/amipro-oracle
+RUN cp config.h /opt/dosbox-x/share/amipro-oracle/dosbox-x-config.h
+RUN ./config.status --config \
+      > /opt/dosbox-x/share/amipro-oracle/dosbox-x-configure-arguments.txt
+RUN ldd /opt/dosbox-x/bin/dosbox-x \
+      > /opt/dosbox-x/share/amipro-oracle/dosbox-x-ldd.txt
+
+FROM ${DEBIAN_IMAGE} AS runtime
+
+ARG DEBIAN_SNAPSHOT=20260713T000000Z
+ARG GHOSTSCRIPT_VERSION=10.0.0~dfsg-11+deb12u8
+ARG IMAGEMAGICK_VERSION=8:6.9.11.60+dfsg-1.6+deb12u11
+ARG SDL2_VERSION=2.26.5+dfsg-1
+ARG POPPLER_VERSION=22.12.0-2+deb12u2
+ARG XAUTH_VERSION=1:1.1.2-1
+ARG XDOTOOL_VERSION=1:3.20160805.1-5
+ARG XVFB_VERSION=2:21.1.7-3+deb12u12
+ARG ENTRYPOINT_SHA256
+ARG ORACLE_LOCK_SHA256
+
+RUN sed -i \
+      -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources
+RUN apt-get -o Acquire::Check-Valid-Until=false update
+RUN DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ghostscript="${GHOSTSCRIPT_VERSION}" \
+      imagemagick-6.q16="${IMAGEMAGICK_VERSION}" \
+      libsdl2-2.0-0="${SDL2_VERSION}" \
+      poppler-utils="${POPPLER_VERSION}" \
+      xauth="${XAUTH_VERSION}" \
+      xdotool="${XDOTOOL_VERSION}" \
+      xvfb="${XVFB_VERSION}"
+RUN apt-get clean
+RUN rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/dosbox-x /opt/dosbox-x
+COPY --chmod=0555 oracle-entrypoint /usr/local/bin/amipro-oracle-entrypoint
+COPY toolchain.lock.json /opt/amipro-oracle/toolchain.lock.json
+RUN mkdir -p /opt/amipro-oracle
+RUN test -n "${ENTRYPOINT_SHA256}" \
+      && echo "${ENTRYPOINT_SHA256}  /usr/local/bin/amipro-oracle-entrypoint" \
+        | sha256sum --check --strict
+RUN test -n "${ORACLE_LOCK_SHA256}" \
+      && echo "${ORACLE_LOCK_SHA256}  /opt/amipro-oracle/toolchain.lock.json" \
+        | sha256sum --check --strict
+RUN if ldd /opt/dosbox-x/bin/dosbox-x | grep -Fq 'not found'; then \
+      echo "DOSBox-X has unresolved runtime libraries" >&2; \
+      exit 1; \
+    fi
+RUN if ldd /opt/dosbox-x/bin/dosbox-x | grep -Eiq '(pcap|slirp|SDL[^ ]*net)'; then \
+      echo "unexpected network library in the runtime image" >&2; \
+      exit 1; \
+    fi
+RUN SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+      /opt/dosbox-x/bin/dosbox-x --version > /tmp/dosbox-version.txt 2>&1 \
+      && grep -F '2026.08.02' /tmp/dosbox-version.txt
+RUN gs --version | grep -Fx '10.00.0'
+RUN pdfinfo -v > /tmp/pdfinfo-version.txt 2>&1 \
+      && grep -F '22.12.0' /tmp/pdfinfo-version.txt
+RUN pdftotext -v > /tmp/pdftotext-version.txt 2>&1 \
+      && grep -F '22.12.0' /tmp/pdftotext-version.txt
+RUN pdftoppm -v > /tmp/pdftoppm-version.txt 2>&1 \
+      && grep -F '22.12.0' /tmp/pdftoppm-version.txt
+RUN dpkg-query --show --showformat='${Package}\t${Version}\n' \
+      | LC_ALL=C sort > /opt/amipro-oracle/dpkg-versions.txt
+
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV PATH=/opt/dosbox-x/bin:/usr/bin:/bin
+ENV SDL_AUDIODRIVER=dummy
+ENV TZ=UTC
+
+LABEL org.opencontainers.image.title="Ami Pro rendering oracle toolchain"
+LABEL org.opencontainers.image.version="2026.08.02-1"
+LABEL org.opencontainers.image.source="https://github.com/joncampbell123/dosbox-x"
+LABEL org.opencontainers.image.licenses="NOASSERTION"
+LABEL org.amipro-oracle.toolchain-lock-sha256="${ORACLE_LOCK_SHA256}"
+
+ENTRYPOINT ["/usr/local/bin/amipro-oracle-entrypoint"]

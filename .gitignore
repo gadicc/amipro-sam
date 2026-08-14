@@ -9,3 +9,5 @@ dist/
 *.egg-info/
 output/
 tmp/
+.amipro-oracle/
+toolchain/.build/

@@ -1,0 +1,104 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+state_root=$(realpath -m -- "${AMIPRO_ORACLE_HOME:-"$repo_root/.amipro-oracle"}")
+lock_file="$repo_root/toolchain/toolchain.lock.json"
+
+lock_value() {
+    python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    value = json.load(handle)
+for key in sys.argv[2].split("/"):
+    value = value[key]
+print(" ".join(str(item) for item in value) if isinstance(value, list) else value)
+' "$lock_file" "$1"
+}
+
+image_name="localhost/amipro-oracle-toolchain:$(lock_value dosbox_x/version)-1"
+source_date_epoch=$(lock_value dosbox_x/source_date_epoch)
+platform=$(lock_value debian/platform)
+debian_image="$(lock_value debian/image)@$(lock_value debian/manifest_digest)"
+lock_sha256=$(sha256sum "$lock_file" | awk '{print $1}')
+entrypoint_sha256=$(lock_value dosbox_x/entrypoint_sha256)
+containerfile_sha256=$(lock_value containerfile_sha256)
+
+if [ "$(sha256sum "$repo_root/toolchain/oracle-entrypoint" | awk '{print $1}')" != \
+    "$entrypoint_sha256" ]; then
+    echo "build-oracle-toolchain: entrypoint does not match the lock" >&2
+    exit 4
+fi
+if [ "$(sha256sum "$repo_root/toolchain/Containerfile" | awk '{print $1}')" != \
+    "$containerfile_sha256" ]; then
+    echo "build-oracle-toolchain: Containerfile does not match the lock" >&2
+    exit 4
+fi
+
+case "$state_root" in
+    /|/tmp|/tmp/*|"$repo_root"|"${HOME:-/nonexistent}")
+        echo "build-oracle-toolchain: refusing unsafe state root: $state_root" >&2
+        exit 2
+        ;;
+esac
+
+if ! command -v podman >/dev/null 2>&1; then
+    echo "build-oracle-toolchain: rootless Podman is required" >&2
+    exit 3
+fi
+
+if [ "$(podman info --format '{{.Host.Security.Rootless}}')" != "true" ]; then
+    echo "build-oracle-toolchain: Podman must run rootless" >&2
+    exit 3
+fi
+
+podman build \
+    --file "$repo_root/toolchain/Containerfile" \
+    --platform "$platform" \
+    --timestamp "$source_date_epoch" \
+    --rewrite-timestamp \
+    --build-arg "DEBIAN_IMAGE=$debian_image" \
+    --build-arg "DEBIAN_SNAPSHOT=$(lock_value debian/snapshot)" \
+    --build-arg "DOSBOX_X_REPOSITORY=$(lock_value dosbox_x/repository)" \
+    --build-arg "DOSBOX_X_TAG=$(lock_value dosbox_x/tag)" \
+    --build-arg "DOSBOX_X_COMMIT=$(lock_value dosbox_x/commit)" \
+    --build-arg "DOSBOX_X_TREE=$(lock_value dosbox_x/tree)" \
+    --build-arg "DOSBOX_X_CONFIGURE_FLAGS=$(lock_value dosbox_x/configure)" \
+    --build-arg "FORBIDDEN_NETWORK_MACROS=$(lock_value dosbox_x/forbidden_network_macros)" \
+    --build-arg "ORACLE_SOURCE_DATE_EPOCH=$source_date_epoch" \
+    --build-arg "GHOSTSCRIPT_VERSION=$(lock_value runtime_packages/ghostscript)" \
+    --build-arg "IMAGEMAGICK_VERSION=$(lock_value runtime_packages/imagemagick-6.q16)" \
+    --build-arg "SDL2_VERSION=$(lock_value runtime_packages/libsdl2-2.0-0)" \
+    --build-arg "POPPLER_VERSION=$(lock_value runtime_packages/poppler-utils)" \
+    --build-arg "XAUTH_VERSION=$(lock_value runtime_packages/xauth)" \
+    --build-arg "XDOTOOL_VERSION=$(lock_value runtime_packages/xdotool)" \
+    --build-arg "XVFB_VERSION=$(lock_value runtime_packages/xvfb)" \
+    --build-arg "ENTRYPOINT_SHA256=$entrypoint_sha256" \
+    --build-arg "ORACLE_LOCK_SHA256=$lock_sha256" \
+    --tag "$image_name" \
+    "$repo_root/toolchain"
+
+image_id=$(podman image inspect --format '{{.Id}}' "$image_name")
+image_digest=$(podman image inspect --format '{{.Digest}}' "$image_name")
+image_lock_sha256=$(podman image inspect \
+    --format '{{index .Config.Labels "org.amipro-oracle.toolchain-lock-sha256"}}' \
+    "$image_name")
+
+if [ -z "$image_digest" ] || [ "$image_lock_sha256" != "$lock_sha256" ]; then
+    echo "build-oracle-toolchain: image digest/lock verification failed" >&2
+    exit 4
+fi
+
+mkdir -p "$state_root"
+temporary=$(mktemp "$state_root/.toolchain-image.json.XXXXXX")
+trap 'rm -f "$temporary"' EXIT HUP INT TERM
+printf '{\n  "schema": "amipro-oracle-image-v1",\n  "provider": "podman",\n  "platform": "%s",\n  "image": "%s",\n  "image_id": "%s",\n  "image_digest": "%s",\n  "lock_sha256": "%s",\n  "source_date_epoch": %s\n}\n' \
+    "$platform" "$image_name" "$image_id" "$image_digest" "$lock_sha256" \
+    "$source_date_epoch" \
+    > "$temporary"
+mv "$temporary" "$state_root/toolchain-image.json"
+trap - EXIT HUP INT TERM
+
+echo "toolchain image ready: $image_digest"

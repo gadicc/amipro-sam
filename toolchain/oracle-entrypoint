@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+display=${DISPLAY:-:99}
+diagnostics=${AMIPRO_ORACLE_DIAGNOSTICS:-/oracle/job/diagnostics}
+mkdir -p "$diagnostics" "${HOME:-/oracle/job/home}"
+
+Xvfb "$display" \
+    -screen 0 1024x768x24 \
+    -dpi 96 \
+    -nolisten tcp \
+    -noreset \
+    > "$diagnostics/xvfb.log" 2>&1 &
+xvfb_pid=$!
+dosbox_pid=
+
+cleanup() {
+    trap - EXIT HUP INT TERM
+    if [ -n "$dosbox_pid" ]; then
+        kill "$dosbox_pid" 2>/dev/null || true
+        wait "$dosbox_pid" 2>/dev/null || true
+    fi
+    kill "$xvfb_pid" 2>/dev/null || true
+    wait "$xvfb_pid" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
+
+attempt=0
+until DISPLAY="$display" xdotool getmouselocation >/dev/null 2>&1; do
+    if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+        echo "amipro-oracle: Xvfb exited before readiness" >&2
+        exit 70
+    fi
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 100 ]; then
+        echo "amipro-oracle: Xvfb readiness deadline exceeded" >&2
+        exit 70
+    fi
+    sleep 0.05
+done
+
+DISPLAY="$display" /opt/dosbox-x/bin/dosbox-x "$@" &
+dosbox_pid=$!
+set +e
+wait "$dosbox_pid"
+status=$?
+set -e
+dosbox_pid=
+exit "$status"

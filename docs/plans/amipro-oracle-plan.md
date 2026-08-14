@@ -1,6 +1,7 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phase 0 investigation and adversarial review, 2026-08-14.
+Status: Phase 0 committed; safe Phase 1 scaffolding implemented and real bootstrap blocked on
+Windows 3.1 media, 2026-08-14.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
 Windows 3.1 media. It does not claim that a usable guest exists yet. Windows 3.1 installation
@@ -58,10 +59,10 @@ The minimal useful evidence set is 2,164,132 bytes:
 | `amipro-manual-launch.png` | 287 | `042e51922e72e14f93c1397a143e228d79f0e241db808c1cb7fe6bd569ad67ac` |
 
 The useful installer screenshot visibly contains a proprietary UI, so it remains local and
-ignored. A minimal evidence set will be copied to the ignored cache before relying on `/tmp`; raw
-logs are not publishable without path redaction. The large Wine prefixes contain absolute host
-symlinks and, in the manual prefix, the proprietary payload. They remain untracked and are not
-inputs to the DOSBox-X design.
+ignored. The minimal evidence set was hash-verified into the ignored content-addressed cache before
+relying on `/tmp`; raw logs are not publishable without path redaction. The large Wine prefixes
+contain absolute host symlinks and, in the manual prefix, the proprietary payload. They remain
+untracked and are not inputs to the DOSBox-X design.
 
 The repeated, independent Win16 loader, installer-runtime, and application crashes are sufficient
 evidence not to restart the Wine approach. New evidence would need to identify and validate a
@@ -113,8 +114,8 @@ The primary runtime is a rootless OCI image built from source. The initial lock 
 
 - DOSBox-X `2026.08.02`, release commit
   `784240ad6d9cf3ae3f02fab819e2ed5cf5117dd4`, built with SDL2 and printer/screenshot support;
-- independently hashed official tag archive SHA-256
-  `3438f3199dc301d7fdd1ab8ce44877c1755158e699b8deab21a7ad2c43cc0331`;
+- source tree `9058fd4983b50d038e3136fcedccd41ef70a4624`; the release is mutable and unsigned,
+  so both commit and tree are verified during the build;
 - official Debian `bookworm-20260713-slim` multi-platform manifest digest
   `sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818`;
 - an immutable Debian snapshot for build and runtime packages, with the complete installed
@@ -124,9 +125,23 @@ The primary runtime is a rootless OCI image built from source. The initial lock 
   `2.26.5+dfsg-1` from that snapshot.
 
 The final OCI image must be recorded and invoked by its built image digest, not a mutable tag.
-The source archive checksum is an independent project lock, not a publisher signature. The build
-must fail on a checksum mismatch. Native tools are a diagnostic fallback only and must exactly
-match the lock before they are allowed to produce oracle results.
+GitHub's generated source archive produced two different compressed byte streams during Phase 1;
+those observed hashes remain in the lock as evidence but are not reproducible acquisition inputs.
+The build must fail unless the fetched full commit and tree both match. This is content pinning,
+not publisher authentication. Native tools are a diagnostic fallback only and must exactly match
+the lock before they are allowed to produce oracle results.
+
+The build fixes its source epoch and must fail if the exact generated configuration or dynamic
+linkage enables pcap, SLIRP, SDL_net, modem, or IPX support. The runtime independently uses a
+networkless OCI namespace. Redistributing an image remains a separate source/notices and license
+review gate: the Debian Ghostscript build includes AGPL-covered code, and the selected DOSBox-X
+README contains an unusual jurisdiction-specific age-verification notice. This plan records those
+facts without interpreting them as legal clearance or prohibition.
+
+The tracked lock is the build input rather than post-hoc metadata: the builder derives every
+fidelity-relevant argument from it, verifies the hashed recipe/entrypoint, embeds and labels the
+lock hash, and records only an image whose label matches. The build context is limited to the
+open-source toolchain directory; ignored proprietary state is not transmitted to a builder.
 
 The official DOSBox-X Windows 3.1 guide documents installation and use on a mounted host folder.
 That is sufficient for the initial runtime and avoids adding separately licensed DOS media.
@@ -181,6 +196,13 @@ privileges, a fixed locale/time zone, and only explicit bind mounts. The guest c
 IPX, NE2000, modem/serial networking, host clipboard integration, shell escape helpers, and any
 automatic host opener.
 
+Bootstrap and document execution use different mount profiles. Bootstrap may expose only verified
+media directories as read-only binds plus its disposable job tree. Once any untrusted SAM runs,
+the invocation exposes only the disposable writable `/oracle/job`; original media and the pristine
+cache are absent. Container cleanup requires a new host-side CID file outside the guest-writable
+tree and a matching per-job label before stop/kill/remove, preventing name-collision cleanup from
+targeting another container.
+
 The base runtime is stored below:
 
 ```text
@@ -215,10 +237,13 @@ cycles, locale, and display geometry. It includes a per-job `captures` path and:
 
 ```ini
 [parallel]
-parallel1=file file:/oracle/capture/output.ps timeout:2000
+parallel1=file timeout:2000
 ```
 
-No `openps`, `openpcl`, or `openwith` hook is permitted. `-conf`, `-fastlaunch`, `-exit`, and a
+An empty per-job `captures` directory is required. Explicit `file:` and `append:` targets are
+forbidden because an inactivity-triggered reopen can overwrite or merge capture data. Exactly one
+fresh capture is success; multiple captures are preserved and fail as a split print. No `openps`,
+`openpcl`, or `openwith` hook is permitted. `-conf`, `-fastlaunch`, `-exit`, and a
 hard `-time-limit` are evaluated per phase. `-silent` is unsuitable for phases requiring X11
 state observation and is used only if empirical testing proves its AUTOEXEC semantics fit a
 bounded non-GUI step.
@@ -245,8 +270,10 @@ job directory.
 ## Printer and comparison contract
 
 The primary oracle requires a lawfully supplied Windows 3.1 PostScript driver and fixed printer
-description. Bootstrap first inventories the user's Windows media for a compatible driver. It
-must not download or embed a driver/PPD. Driver file hashes, selected printer model, page size,
+description. Stock Windows 3.1 uses `PSCRIPT.DRV` with built-in models and/or binary `*.WPD`
+descriptions rather than assuming a modern PPD workflow. Bootstrap first inventories the user's
+Windows media for a compatible driver and definition. It must not download or embed either.
+Driver file hashes, any WPD/OEM setup files, selected printer model, page size,
 resolution, printable area, font substitution settings, and all installed files enter the runtime
 key. DOSBox-X Epson emulation is explicitly labeled a smoke-test backend and never produces
 baseline oracle measurements.

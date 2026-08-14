@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+VERSION = "0.1.0"
+
+EXIT_OK = 0
+EXIT_DIFFERENT = 1
+EXIT_USAGE = 2
+EXIT_MISSING = 3
+EXIT_INTEGRITY = 4
+EXIT_TIMEOUT = 5
+EXIT_BACKEND = 6
+
+MEDIA_SCHEMA = "amipro-oracle-media-v1"
+RUNTIME_SCHEMA = "amipro-oracle-runtime-v1"
+JOB_SCHEMA = "amipro-oracle-job-v1"
+ANALYSIS_SCHEMA = "amipro-oracle-analysis-v1"
+COMPARE_SCHEMA = "amipro-oracle-comparison-v1"
+
+EXPECTED_AMIPRO_EXE_SHA256 = (
+    "555506d1558d61579d5c6fee8bf5fa9d960aa05a20a5d171240ac2e0ea73cbbd"
+)
+EXPECTED_AMIPRO_FLOPPY_SHA256 = {
+    "disk1.img": "429ddde8fe1940143da71bc636508a7d680b40157bd38903af757325fcbb4987",
+    "disk2.img": "302bae4676ae4938647adb2d3b95d7b0d0f3b98ee6ccdf4e87a751d8046b53a7",
+    "disk3.img": "193bd039be9146a4c49f6a9f830216e75db11be40551310d61deb2e7f7a63428",
+    "disk4.img": "70b1c51933bc60477f363c79de4cfadd424d097635e37d6767e5357ac22a1149",
+    "disk5.img": "389dea0ae7d586bb45ed0307e19a29316c91d453f7359cfe3e2d4b792cb9dd04",
+    "disk6.img": "bdd26f19b0074edeaa62324a74d2bae3b6d408be4bbb7a927f5890fad6453b55",
+    "disk7.img": "f6916ef49952aa477f192cd91efea0aa105439476e9d6b817fc631edc4aadf22",
+    "disk8.img": "e0419eec0a2ce2158cde82ab24d94419bd655f52df7db6f458eb3932626ab18e",
+}
+EXPECTED_AMIPRO_PAYLOAD_MEDIA_DIGEST = (
+    "4ecfc335cf3a20d55a0f973fb1661e846fe83e3d1338616c9ea014cdd7474b25"
+)
+
+MAX_MEDIA_FILES = 100_000
+MAX_MEDIA_FILE_BYTES = 8 * 1024 * 1024 * 1024
+MAX_MEDIA_TREE_BYTES = 32 * 1024 * 1024 * 1024
+HASH_CHUNK_BYTES = 1024 * 1024

@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export AMIPRO_ORACLE_REPO_ROOT="$repo_root"
+
+if [ -n "${PYTHONPATH:-}" ]; then
+    export PYTHONPATH="$repo_root/src:$PYTHONPATH"
+else
+    export PYTHONPATH="$repo_root/src"
+fi
+
+exec python3 -m amipro_oracle "$@"

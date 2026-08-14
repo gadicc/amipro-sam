@@ -1,0 +1,91 @@
+{
+  "schema": "amipro-oracle-toolchain-v1",
+  "containerfile_sha256": "f07bb395b984dca10d9dbc54f35e20318f6f8a8873d63b2f769199ae34f55531",
+  "debian": {
+    "image": "docker.io/library/debian:bookworm-20260713-slim",
+    "manifest_digest": "sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818",
+    "snapshot": "20260713T000000Z",
+    "platform": "linux/amd64"
+  },
+  "dosbox_x": {
+    "version": "2026.08.02",
+    "tag": "dosbox-x-v2026.08.02",
+    "commit": "784240ad6d9cf3ae3f02fab819e2ed5cf5117dd4",
+    "tree": "9058fd4983b50d038e3136fcedccd41ef70a4624",
+    "repository": "https://github.com/joncampbell123/dosbox-x.git",
+    "signed": false,
+    "release_immutable": false,
+    "source_date_epoch": 1783900800,
+    "entrypoint_sha256": "9eb89cdfab977c7a8e9e425f17202978dae7bcd71922c9ba1249c6ed3a5754e4",
+    "configure": [
+      "--enable-sdl2",
+      "--disable-alsa-midi",
+      "--disable-avcodec",
+      "--disable-gamelink",
+      "--disable-libfluidsynth",
+      "--disable-libslirp",
+      "--disable-mt32",
+      "--disable-opengl",
+      "--disable-sdlnet"
+    ],
+    "forbidden_network_macros": [
+      "C_PCAP",
+      "C_SLIRP",
+      "C_SDL_NET",
+      "C_SDL2_NET",
+      "C_MODEM",
+      "C_IPX"
+    ],
+    "observed_generated_archives": [
+      {
+        "sha256": "3438f3199dc301d7fdd1ab8ce44877c1755158e699b8deab21a7ad2c43cc0331",
+        "bytes": 133086440
+      },
+      {
+        "sha256": "3e2ae3cb0031d487f7e7d67c9106268f5a85cdf6c081c853c30dc2bbc51ab14c",
+        "bytes": 133096749
+      }
+    ]
+  },
+  "runtime_packages": {
+    "ghostscript": "10.0.0~dfsg-11+deb12u8",
+    "imagemagick-6.q16": "8:6.9.11.60+dfsg-1.6+deb12u11",
+    "libsdl2-2.0-0": "2.26.5+dfsg-1",
+    "poppler-utils": "22.12.0-2+deb12u2",
+    "xauth": "1:1.1.2-1",
+    "xdotool": "1:3.20160805.1-5",
+    "xvfb": "2:21.1.7-3+deb12u12"
+  },
+  "native_probes": [
+    {
+      "executable": "dosbox-x",
+      "arguments": ["--version"],
+      "expected_output": "2026.08.02",
+      "expected_sha256": null
+    },
+    {
+      "executable": "gs",
+      "arguments": ["--version"],
+      "expected_output": "10.00.0",
+      "expected_sha256": null
+    },
+    {
+      "executable": "pdfinfo",
+      "arguments": ["-v"],
+      "expected_output": "22.12.0",
+      "expected_sha256": null
+    },
+    {
+      "executable": "pdftotext",
+      "arguments": ["-v"],
+      "expected_output": "22.12.0",
+      "expected_sha256": null
+    },
+    {
+      "executable": "pdftoppm",
+      "arguments": ["-v"],
+      "expected_output": "22.12.0",
+      "expected_sha256": null
+    }
+  ]
+}
