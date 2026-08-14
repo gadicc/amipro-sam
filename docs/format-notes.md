@@ -318,8 +318,8 @@ second field as a width, but its first field does not consistently behave as a
 height, so it is not used to derive geometry.
 
 Unknown direct `[lay]` or `[frm]` subrecords, extra layout name/flag fields,
-frame-layout fields, and other fixed-prefix tails remain raw and receive visible
-semantic-loss markers. Exact marker-looking lines inside a terminated text
+frame-layout fields, and other fixed-prefix tails remain raw and receive
+semantic-loss diagnostics. Exact marker-looking lines inside a terminated text
 stream remain text rather than being reclassified as structure.
 
 `Frame` objects wrap their readable child blocks. Anchored body commands
@@ -332,6 +332,13 @@ and anchored status is represented when the evidenced bits permit it. The
 encoding of a true page-background layer is unknown: an unanchored or opaque
 frame is never labelled a background merely by inference.
 
+Presentation renderers keep known frame metadata out of ordinary document
+prose and render the children directly in source order. The CLI option
+`--show-structure-labels` restores the placement/content label for audits.
+Unsupported feature bits remain semantic diagnostics and typed JSON fields;
+unknown placement/content types and invalid structures remain visibly marked
+regardless of that option.
+
 Page layouts contain frame-shaped `[hrght]`, `[frght]`, `[hlft]`, and `[flft]`
 branches for right/odd and left/even headers and footers. Public examples and
 the inspected corpora place `[lyfrm]`, `[frmlay]`, and `[txt]` either below the
@@ -343,18 +350,39 @@ nonempty right-header streams and 19 nonempty right-footer streams across the
 installation and private samples; no left-page branches were observed.
 Left-page handling is therefore documented-format-backed and synthetic-tested.
 
+Empty header/footer streams now emit no body label; malformed geometry remains
+available in diagnostics and JSON rather than becoming invented body content.
+Non-promoted known streams retain their readable children without labels;
+`--show-structure-labels` restores those labels without changing native page
+furniture selection.
+
 `[pg]` contents and the target-layout portion of layout-change page-break
 commands are version-dependent and not publicly mapped at byte level. `[pg]`
 is retained as `OpaquePageHints`; it never supplies a trusted page count,
 allocation size, or inferred layout transition. A confirmed `<:p...>` command
 still requests a visible page break before the following paragraph.
 
-Tables use `[tbl]`, optional row/column definition records, then `[data]`
-records whose first two integers are zero-based row and column coordinates. The
-current table reader recovers rectangular cell text but does not yet reproduce
-every border, merge, formula, or page coordinate. Duplicate cell coordinates
-retain both readable values in source order with a visible marker and semantic
-diagnostic; cell text uses the same bounded inline parser as body text.
+Tables use `[tbl]`, optional `[h]` row and `[w]` column definitions, then
+`[data]` cell records. The private corpus consistently uses exact 9-, 7-, 5-,
+and 12-integer record shapes respectively. The documented prefixes identify
+declared dimensions, default and per-row/per-column width/gutter values, flags,
+zero-based cell coordinates, connected-cell coordinates, shading, borders,
+content flags, and protection. Two table-definition tail integers and three
+cell tail integers observed in the corpus remain typed as reserved values; a
+stable shape is not treated as proof of their meaning.
+
+Exact, bounded records materialize declared dimensions, header-row bit 16,
+cell alignment bits 8/16/24/32, and column width-plus-gutter proportions.
+Renderers normalize those proportions to the actual output container. A
+connected-cell anchor is applied only when its complete bounded rectangle and
+all covered member records agree; otherwise ordinary cells and a semantic
+diagnostic are retained. Borders, shading, protection, formulas, page-break
+flags, and reserved values remain preserved without invented rendering
+semantics. This semantic limitation is reported in diagnostics/JSON rather
+than as an `Unsupported table fields` paragraph. Malformed or noncanonical
+record shapes keep the visible atomic fallback. Duplicate coordinates retain
+both readable values in source order with a visible marker and diagnostic;
+cell text uses the same bounded inline parser as body text.
 
 `[fopts]` has four bounded integers: option flags, starting number, separator
 length, and indentation. Known bits request collection at the page end,

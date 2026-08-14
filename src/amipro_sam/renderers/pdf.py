@@ -83,6 +83,8 @@ from ..model import (
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 from .paragraph_geometry import resolve_paragraph_region
+from .structure_labels import show_container_label
+from .table_geometry import table_column_widths
 
 __all__ = ["render"]
 
@@ -151,7 +153,12 @@ class _InvariantCanvas(Canvas):
         super().showPage()
 
 
-def render(document: Document, **_options: object) -> bytes:
+def render(
+    document: Document,
+    *,
+    show_structure_labels: bool = False,
+    **_options: object,
+) -> bytes:
     """Return *document* as PDF bytes.
 
     The renderer deliberately emits placeholders for source Image objects and
@@ -162,7 +169,11 @@ def render(document: Document, **_options: object) -> bytes:
 
     try:
         ensure_pdf_fonts()
-        return _render_bytes(document, conservative=False)
+        return _render_bytes(
+            document,
+            conservative=False,
+            show_structure_labels=show_structure_labels,
+        )
     except UnicodePdfError as error:
         raise RenderError("Could not initialize bundled Unicode PDF fonts") from error
     except (LayoutError, IndexError) as primary_error:
@@ -173,7 +184,11 @@ def render(document: Document, **_options: object) -> bytes:
         # second pass preserves every block's readable text and page breaks
         # without allowing one pathological construct to abort conversion.
         try:
-            return _render_bytes(document, conservative=True)
+            return _render_bytes(
+                document,
+                conservative=True,
+                show_structure_labels=show_structure_labels,
+            )
         except (LayoutError, IndexError) as fallback_error:
             if not _is_reportlab_layout_failure(fallback_error):
                 raise
@@ -182,7 +197,12 @@ def render(document: Document, **_options: object) -> bytes:
             ) from fallback_error
 
 
-def _render_bytes(document: Document, *, conservative: bool) -> bytes:
+def _render_bytes(
+    document: Document,
+    *,
+    conservative: bool,
+    show_structure_labels: bool,
+) -> bytes:
     output = BytesIO()
     text_budget = PdfTextBudget()
     page = _page_spec(document)
@@ -203,11 +223,18 @@ def _render_bytes(document: Document, *, conservative: bool) -> bytes:
     )
     story_builder = _fallback_story if conservative else _primary_story
     try:
-        story = story_builder(document, text_budget=text_budget)
+        story = story_builder(
+            document,
+            text_budget=text_budget,
+            show_structure_labels=show_structure_labels,
+        )
     except TypeError as error:
         # Preserve the narrow monkeypatch seam used by callers/tests without
         # letting it fragment the production renderer-owned budget.
-        if "text_budget" not in str(error):
+        if not any(
+            keyword in str(error)
+            for keyword in ("text_budget", "show_structure_labels")
+        ):
             raise
         story = story_builder(document)
     if not story:
@@ -236,6 +263,7 @@ def _primary_story(
     document: Document,
     promoted_furniture: set[int] | None = None,
     text_budget: PdfTextBudget | None = None,
+    show_structure_labels: bool = False,
 ) -> list[object]:
     story: list[object] = []
     text_budget = PdfTextBudget() if text_budget is None else text_budget
@@ -256,6 +284,7 @@ def _primary_story(
         container_width_twips=_page_spec(document).body_width_twips,
         active=set(),
         promoted_furniture=promoted_furniture,
+        show_structure_labels=show_structure_labels,
     )
     return story
 
@@ -271,6 +300,7 @@ def _append_primary_blocks(
     depth: int = 0,
     active: set[int] | None = None,
     promoted_furniture: set[int] | None = None,
+    show_structure_labels: bool = False,
 ) -> None:
     if depth >= _MAX_RENDER_DEPTH:
         story.append(
@@ -322,7 +352,8 @@ def _append_primary_blocks(
             story.extend(_sdw_flowables(block, document, text_budget))
             list_counters.clear()
         elif isinstance(block, Frame):
-            story.append(_placeholder_flowable(_frame_label(block), text_budget))
+            if show_container_label(block, requested=show_structure_labels):
+                story.append(_placeholder_flowable(_frame_label(block), text_budget))
             list_counters.clear()
             _append_nested_primary(
                 document,
@@ -337,6 +368,7 @@ def _append_primary_blocks(
                 # Source frames are reflowed into the page story instead of a
                 # real frame, so their original width is not a safe container.
                 None,
+                show_structure_labels,
             )
         elif isinstance(block, UnsupportedObject):
             kind = _safe_label_field(
@@ -365,11 +397,15 @@ def _append_primary_blocks(
                 active,
                 promoted_furniture,
                 container_width_twips,
+                show_structure_labels,
             )
         elif isinstance(block, Header | Footer):
             if id(block) in promoted_furniture:
                 continue
-            story.append(_placeholder_flowable(_container_label(block), text_budget))
+            if show_container_label(block, requested=show_structure_labels):
+                story.append(
+                    _placeholder_flowable(_container_label(block), text_budget)
+                )
             list_counters.clear()
             _append_nested_primary(
                 document,
@@ -382,6 +418,7 @@ def _append_primary_blocks(
                 active,
                 promoted_furniture,
                 container_width_twips,
+                show_structure_labels,
             )
         elif block is _INVALID_BLOCK_CONTAINER:
             story.append(
@@ -412,6 +449,7 @@ def _fallback_story(
     document: Document,
     promoted_furniture: set[int] | None = None,
     text_budget: PdfTextBudget | None = None,
+    show_structure_labels: bool = False,
 ) -> list[object]:
     story: list[object] = []
     text_budget = PdfTextBudget() if text_budget is None else text_budget
@@ -431,6 +469,7 @@ def _fallback_story(
         text_budget,
         active=set(),
         promoted_furniture=promoted_furniture,
+        show_structure_labels=show_structure_labels,
     )
     return story
 
@@ -445,6 +484,7 @@ def _append_fallback_blocks(
     depth: int = 0,
     active: set[int] | None = None,
     promoted_furniture: set[int] | None = None,
+    show_structure_labels: bool = False,
 ) -> None:
     if depth >= _MAX_RENDER_DEPTH:
         story.append(
@@ -505,11 +545,14 @@ def _append_fallback_blocks(
             story.extend(_sdw_flowables(block, document, text_budget))
             list_counters.clear()
         elif isinstance(block, Frame):
-            story.append(
-                _fallback_paragraph(
-                    _frame_label(block), placeholder=True, text_budget=text_budget
+            if show_container_label(block, requested=show_structure_labels):
+                story.append(
+                    _fallback_paragraph(
+                        _frame_label(block),
+                        placeholder=True,
+                        text_budget=text_budget,
+                    )
                 )
-            )
             list_counters.clear()
             _append_nested_fallback(
                 document,
@@ -521,6 +564,7 @@ def _append_fallback_blocks(
                 depth,
                 active,
                 promoted_furniture,
+                show_structure_labels,
             )
         elif isinstance(block, UnsupportedObject):
             kind = _safe_label_field(
@@ -556,17 +600,19 @@ def _append_fallback_blocks(
                 depth,
                 active,
                 promoted_furniture,
+                show_structure_labels,
             )
         elif isinstance(block, Header | Footer):
             if id(block) in promoted_furniture:
                 continue
-            story.append(
-                _fallback_paragraph(
-                    _container_label(block),
-                    placeholder=True,
-                    text_budget=text_budget,
+            if show_container_label(block, requested=show_structure_labels):
+                story.append(
+                    _fallback_paragraph(
+                        _container_label(block),
+                        placeholder=True,
+                        text_budget=text_budget,
+                    )
                 )
-            )
             list_counters.clear()
             _append_nested_fallback(
                 document,
@@ -578,6 +624,7 @@ def _append_fallback_blocks(
                 depth,
                 active,
                 promoted_furniture,
+                show_structure_labels,
             )
         elif block is _INVALID_BLOCK_CONTAINER:
             story.append(
@@ -671,6 +718,7 @@ def _append_nested_primary(
     active: set[int],
     promoted_furniture: set[int],
     container_width_twips: int | None,
+    show_structure_labels: bool,
 ) -> None:
     identity = id(owner)
     if identity in active:
@@ -691,6 +739,7 @@ def _append_nested_primary(
         depth=depth + 1,
         active=active,
         promoted_furniture=promoted_furniture,
+        show_structure_labels=show_structure_labels,
     )
 
 
@@ -704,6 +753,7 @@ def _append_nested_fallback(
     depth: int,
     active: set[int],
     promoted_furniture: set[int],
+    show_structure_labels: bool,
 ) -> None:
     identity = id(owner)
     if identity in active:
@@ -725,6 +775,7 @@ def _append_nested_fallback(
         depth=depth + 1,
         active=active,
         promoted_furniture=promoted_furniture,
+        show_structure_labels=show_structure_labels,
     )
 
 
@@ -1039,6 +1090,7 @@ def _paragraph_flowable(
     force_bold: bool = False,
     text_budget: PdfTextBudget | None = None,
     container_width_twips: int | None = None,
+    fallback_alignment: str | None = None,
 ) -> object:
     text_budget = PdfTextBudget() if text_budget is None else text_budget
     style_definition = _resolved_style(document, paragraph.style_name)
@@ -1053,7 +1105,8 @@ def _paragraph_flowable(
     )
     alignment = _choice(
         paragraph.alignment
-        or (style_definition.alignment if style_definition else None),
+        or (style_definition.alignment if style_definition else None)
+        or fallback_alignment,
         {"left", "right", "center", "justify"},
         "left",
     )
@@ -1390,9 +1443,19 @@ def _fallback_table_flowable(
             already_prepared=True,
         )
     available_width = max(12.0, page.body_width - 12.0)
+    source_widths = table_column_widths(
+        table,
+        column_count,
+        max(column_count, round(available_width * 20.0)),
+    )
+    column_widths = (
+        [width / 20.0 for width in source_widths]
+        if source_widths
+        else [available_width / column_count] * column_count
+    )
     rendered = ReportLabTable(
         data,
-        colWidths=[available_width / column_count] * column_count,
+        colWidths=column_widths,
         repeatRows=repeat_rows,
         splitByRow=1,
         splitInRow=1,
@@ -1401,6 +1464,8 @@ def _fallback_table_flowable(
     commands: list[tuple[object, ...]] = [
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#777777")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
     ]
     if repeat_rows:
         commands.append(
@@ -1444,19 +1509,29 @@ def _table_flowable(
     if not grid or not grid[0]:
         return _placeholder_flowable("[Empty table]", text_budget)
 
-    frame_width = _page_spec(document).body_width - 12.0
-    column_width = max(12.0, frame_width) / len(grid[0])
+    frame_width = max(12.0, _page_spec(document).body_width - 12.0)
+    source_widths = table_column_widths(
+        table,
+        len(grid[0]),
+        max(len(grid[0]), round(frame_width * 20.0)),
+    )
+    column_widths = (
+        [width / 20.0 for width in source_widths]
+        if source_widths
+        else [frame_width / len(grid[0])] * len(grid[0])
+    )
     data: list[list[object]] = [["" for _ in row] for row in grid]
     commands: list[tuple[object, ...]] = [
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#777777")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
     seen_cells: set[int] = set()
     for row_index, column_index, cell, column_span, row_span in anchors:
+        cell_width = sum(column_widths[column_index : column_index + column_span])
         contents: list[object] = []
         repeated_cell = id(cell) in seen_cells
         if repeated_cell:
@@ -1499,8 +1574,9 @@ def _table_flowable(
                     text_budget=text_budget,
                     container_width_twips=max(
                         1,
-                        round((column_width * column_span - 10.0) * 20.0),
+                        round((cell_width - 4.0) * 20.0),
                     ),
+                    fallback_alignment=cell.alignment,
                 )
             )
         if not contents:
@@ -1509,10 +1585,24 @@ def _table_flowable(
                     document,
                     Paragraph(),
                     text_budget=text_budget,
-                    container_width_twips=max(1, round((column_width - 10.0) * 20.0)),
+                    container_width_twips=max(1, round((cell_width - 4.0) * 20.0)),
+                    fallback_alignment=cell.alignment,
                 )
             )
         data[row_index][column_index] = contents
+        alignment = getattr(cell, "alignment", None)
+        if alignment in {"left", "right", "center", "justify"}:
+            commands.append(
+                (
+                    "ALIGN",
+                    (column_index, row_index),
+                    (
+                        column_index + column_span - 1,
+                        row_index + row_span - 1,
+                    ),
+                    alignment.upper(),
+                )
+            )
         if column_span > 1 or row_span > 1:
             commands.append(
                 (
@@ -1538,7 +1628,7 @@ def _table_flowable(
         repeat_rows += 1
     rendered = ReportLabTable(
         data,
-        colWidths=[column_width] * len(grid[0]),
+        colWidths=column_widths,
         repeatRows=repeat_rows,
         splitByRow=1,
         splitInRow=1,

@@ -38,6 +38,8 @@ from ..model import (
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 from .paragraph_geometry import resolve_paragraph_region
+from .structure_labels import show_container_label
+from .table_geometry import table_column_count, table_column_widths
 
 __all__ = ["render"]
 
@@ -126,6 +128,7 @@ def render(
     document: Document,
     *,
     include_warnings: bool = True,
+    show_structure_labels: bool = False,
     **_options: object,
 ) -> bytes:
     """Return a complete UTF-8 HTML document.
@@ -144,6 +147,7 @@ def render(
         container_width_twips=_page_body_width_twips(document),
         promoted_furniture=promoted_furniture,
         text_budget=text_budget,
+        show_structure_labels=show_structure_labels,
     )
     furniture = _layout_furniture(
         document, promoted_furniture, text_budget=text_budget
@@ -182,6 +186,7 @@ def _render_blocks(
     promoted_furniture: set[int] | None = None,
     text_budget: _TextOutputBudget | None = None,
     container_width_twips: int | None = None,
+    show_structure_labels: bool = False,
 ) -> str:
     if depth >= _MAX_RENDER_DEPTH:
         return '<div class="placeholder">[Nested content omitted at safe depth limit]</div>\n'
@@ -258,7 +263,14 @@ def _render_blocks(
         elif isinstance(block, PageBreak):
             result.append(_page_break())
         elif isinstance(block, Table):
-            result.append(_table(document, block, text_budget))
+            result.append(
+                _table(
+                    document,
+                    block,
+                    text_budget,
+                    container_width_twips=container_width_twips,
+                )
+            )
         elif isinstance(block, Image):
             result.append(_image(block))
         elif isinstance(block, WmfGraphic):
@@ -275,6 +287,7 @@ def _render_blocks(
                     seen_blocks=seen_blocks,
                     promoted_furniture=promoted_furniture,
                     text_budget=text_budget,
+                    show_structure_labels=show_structure_labels,
                 )
             )
         elif isinstance(block, UnsupportedObject):
@@ -297,6 +310,7 @@ def _render_blocks(
                 promoted_furniture,
                 text_budget,
                 container_width_twips,
+                show_structure_labels,
             )
             result.append(
                 '<aside class="annotation" role="note">\n'
@@ -322,6 +336,7 @@ def _render_blocks(
                 promoted_furniture,
                 text_budget,
                 container_width_twips,
+                show_structure_labels,
             )
             result.append(
                 '<aside class="footnote" role="doc-footnote">\n'
@@ -346,12 +361,16 @@ def _render_blocks(
                 promoted_furniture,
                 text_budget,
                 container_width_twips,
+                show_structure_labels,
             )
-            result.append(
-                f'<{tag} class="{css_class}" data-placement="{_attribute(placement)}">\n'
-                f'<p class="container-label">{_text(label)}</p>\n'
-                f"{nested}</{tag}>\n"
-            )
+            if show_container_label(block, requested=show_structure_labels):
+                result.append(
+                    f'<{tag} class="{css_class}" data-placement="{_attribute(placement)}">\n'
+                    f'<p class="container-label">{_text(label)}</p>\n'
+                    f"{nested}</{tag}>\n"
+                )
+            else:
+                result.append(nested)
         else:
             kind = type(block).__name__
             result.append(
@@ -381,6 +400,7 @@ def _frame(
     seen_blocks: set[int],
     promoted_furniture: set[int],
     text_budget: _TextOutputBudget,
+    show_structure_labels: bool,
 ) -> str:
     kind = _choice(frame.content_kind, {"text", "table", "image", "drawing"}, "unknown")
     placement = _choice(
@@ -407,7 +427,10 @@ def _frame(
         # Frames are reflowed as ordinary HTML sections.  Their source width
         # is therefore not a real containing block for region arithmetic.
         None,
+        show_structure_labels,
     )
+    if not show_container_label(frame, requested=show_structure_labels):
+        return nested
     return (
         f'<section class="document-frame" data-placement="{_attribute(placement)}"'
         f' data-content-kind="{_attribute(kind)}"{style}>\n'
@@ -426,6 +449,7 @@ def _nested_html(
     promoted_furniture: set[int],
     text_budget: _TextOutputBudget,
     container_width_twips: int | None,
+    show_structure_labels: bool,
 ) -> str:
     identity = id(owner)
     if identity in active:
@@ -440,6 +464,7 @@ def _nested_html(
         promoted_furniture=promoted_furniture,
         text_budget=text_budget,
         container_width_twips=container_width_twips,
+        show_structure_labels=show_structure_labels,
     )
 
 
@@ -744,6 +769,8 @@ def _table(
     document: Document,
     table: Table,
     text_budget: _TextOutputBudget,
+    *,
+    container_width_twips: int | None,
 ) -> str:
     rows = table.rows
     if not isinstance(rows, list | tuple):
@@ -769,6 +796,18 @@ def _table(
             '</div>\n'
         )
     result = ["<table>\n"]
+    column_count = table_column_count(table)
+    width_container = container_width_twips or _page_body_width_twips(document)
+    if column_count and width_container is not None:
+        widths = table_column_widths(table, column_count, width_container)
+        if widths:
+            total = sum(widths)
+            result.append("<colgroup>")
+            result.extend(
+                f'<col style="width:{width / total * 100:.8g}%">'
+                for width in widths
+            )
+            result.append("</colgroup>\n")
     header_rows = 0
     for row in safe_rows:
         if not row.is_header:
@@ -835,6 +874,9 @@ def _table_row(
             attributes += f' colspan="{column_span}"'
         if row_span > 1:
             attributes += f' rowspan="{row_span}"'
+        alignment = getattr(cell, "alignment", None)
+        if alignment in {"left", "right", "center", "justify"}:
+            attributes += f' style="text-align:{alignment}"'
         blocks = getattr(cell, "blocks", [])
         safe_blocks = _safe_blocks(blocks)[:4_096]
         paragraphs: list[Paragraph] = []

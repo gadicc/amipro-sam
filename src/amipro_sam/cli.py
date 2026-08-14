@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="omit the diagnostic appendix from HTML output",
     )
+    convert.add_argument(
+        "--show-structure-labels",
+        action="store_true",
+        help="show frame, header, and footer structure labels in converted content",
+    )
     convert.set_defaults(handler=_command_convert)
 
     inspect = subparsers.add_parser("inspect", help="inventory SAM structures without converting")
@@ -130,10 +135,15 @@ def _command_convert(args: argparse.Namespace) -> int:
             document = parse_file(source, encoding=args.encoding, strict=args.strict)
             if output_format == "html":
                 payload = renderer(
-                    document, include_warnings=not bool(args.no_warning_summary)
+                    document,
+                    include_warnings=not bool(args.no_warning_summary),
+                    show_structure_labels=bool(args.show_structure_labels),
                 )
             else:
-                payload = renderer(document)
+                payload = renderer(
+                    document,
+                    show_structure_labels=bool(args.show_structure_labels),
+                )
             destination = destinations[source]
             if destination is None:
                 sys.stdout.buffer.write(payload)

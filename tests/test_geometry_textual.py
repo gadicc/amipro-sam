@@ -25,8 +25,10 @@ def test_frame_textual_reflow_keeps_marker_content_and_anchor_order() -> None:
         blocks=[_paragraph("before"), frame, _paragraph("after")],
     )
 
-    rendered_markdown = markdown.render(document).decode()
-    rendered_text = text.render(document).decode()
+    rendered_markdown = markdown.render(
+        document, show_structure_labels=True
+    ).decode()
+    rendered_text = text.render(document, show_structure_labels=True).decode()
     structured = json.loads(json_renderer.render(document))
 
     marker = "[Frame: anchored; body; text; geometry reflowed]"

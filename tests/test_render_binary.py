@@ -182,8 +182,8 @@ def test_paged_renderers_reflow_typed_notes_headers_and_footers() -> None:
         ],
     )
 
-    pdf_output = pdf.render(document)
-    odt_output = odt.render(document)
+    pdf_output = pdf.render(document, show_structure_labels=True)
+    odt_output = odt.render(document, show_structure_labels=True)
 
     assert pdf_output.startswith(b"%PDF-")
     with ZipFile(BytesIO(odt_output)) as archive:
@@ -229,7 +229,9 @@ def test_docx_reflows_typed_note_and_page_content() -> None:
         ],
     )
 
-    with ZipFile(BytesIO(docx.render(document))) as archive:
+    with ZipFile(
+        BytesIO(docx.render(document, show_structure_labels=True))
+    ) as archive:
         content = archive.read("word/document.xml")
         extracted = "".join(ET.fromstring(content).itertext())
 

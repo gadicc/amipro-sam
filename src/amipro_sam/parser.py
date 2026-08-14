@@ -36,6 +36,8 @@ from .model import (
     StyleDefinition,
     Table,
     TableCell,
+    TableColumnDefinition,
+    TableDefinition,
     TableRow,
     TextRun,
     TwipRect,
@@ -2431,8 +2433,12 @@ def _parse_table(
     )
     if table_marker is None or data_marker is None:
         return None
+    table_definition: TableDefinition | None = None
+    row_definitions: dict[int, tuple[int, int, int, tuple[int, ...]]] = {}
+    column_definitions: dict[int, TableColumnDefinition] = {}
     cells: dict[tuple[int, int], TableCell] = {}
     current: tuple[int, int] | None = None
+    current_format: tuple[int, ...] | None = None
     current_source: SourceSpan | None = None
     current_header = ""
     buffer: list[str] = []
@@ -2443,6 +2449,7 @@ def _parse_table(
     opaque_field_entries = 0
     opaque_field_chars = 0
     opaque_field_truncated = False
+    partial_formatting = False
 
     def retain_opaque_fields(label: str, raw_fields: str) -> None:
         nonlocal opaque_field_entries, opaque_field_chars, opaque_field_truncated
@@ -2472,16 +2479,154 @@ def _parse_table(
         opaque_field_fragments.append(fragment)
         opaque_field_chars += separator_chars + len(fragment)
 
-    definition_fields = [
-        line
-        for line in lines[table_marker + 1 : data_marker]
-        if line.strip() and _SUBSECTION.match(line) is None
-    ]
-    for definition_field in definition_fields:
-        retain_opaque_fields("[tbl]", definition_field)
+    def exact_nonnegative_integers(raw: str, count: int) -> tuple[int, ...] | None:
+        fields = raw.strip().split()
+        if len(fields) != count:
+            return None
+        parsed = tuple(_bounded_inline_int(value) for value in fields)
+        if any(value is None or value < 0 for value in parsed):
+            return None
+        return tuple(int(value) for value in parsed if value is not None)
+
+    subsection = "tbl"
+    for line in lines[table_marker + 1 : data_marker]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        marker = _SUBSECTION.match(line)
+        if marker is not None:
+            name = marker.group(1).lower()
+            if name in {"h", "w"}:
+                subsection = name
+            elif name == "e":
+                subsection = ""
+            else:
+                subsection = "unknown"
+                retain_opaque_fields("[table subsection]", stripped)
+            continue
+        if subsection == "tbl" and table_definition is None:
+            values = exact_nonnegative_integers(stripped, 9)
+            valid = (
+                values is not None
+                and 1 <= values[0] <= 4_000
+                and 1 <= values[1] <= 256
+                and values[0] * values[1] <= limits.max_table_cells
+                and all(value <= 32_767 for value in values[2:6])
+            )
+            if valid and values is not None:
+                table_definition = TableDefinition(
+                    declared_rows=values[0],
+                    declared_columns=values[1],
+                    default_row_height_twips=values[2],
+                    default_row_gutter_twips=values[3],
+                    default_column_width_twips=values[4],
+                    default_column_gutter_twips=values[5],
+                    flags=values[6],
+                    reserved_fields=values[7:],
+                )
+                partial_formatting = bool(
+                    values[2]
+                    or values[3]
+                    or values[6]
+                    or any(values[7:])
+                )
+            else:
+                retain_opaque_fields("[tbl]", stripped)
+            continue
+        if subsection == "h":
+            values = exact_nonnegative_integers(stripped, 7)
+            valid = (
+                values is not None
+                and values[0] not in row_definitions
+                and values[0] < (table_definition.declared_rows if table_definition else 4_000)
+                and values[1] <= 32_767
+                and values[2] <= 32_767
+            )
+            if valid and values is not None:
+                row_definitions[values[0]] = (
+                    values[1],
+                    values[2],
+                    values[3],
+                    values[4:],
+                )
+                partial_formatting = partial_formatting or bool(
+                    values[1]
+                    or values[2]
+                    or values[3] & ~0x10
+                    or any(values[4:])
+                )
+            else:
+                retain_opaque_fields("[h]", stripped)
+            continue
+        if subsection == "w":
+            values = exact_nonnegative_integers(stripped, 5)
+            valid = (
+                values is not None
+                and values[0] not in column_definitions
+                and values[0]
+                < (table_definition.declared_columns if table_definition else 256)
+                and values[1] <= 32_767
+                and values[2] <= 32_767
+            )
+            if valid and values is not None:
+                column_definitions[values[0]] = TableColumnDefinition(
+                    index=values[0],
+                    width_twips=values[1],
+                    gutter_twips=values[2],
+                    flags=values[3],
+                    reserved_fields=values[4:],
+                )
+                partial_formatting = partial_formatting or bool(
+                    values[3] or any(values[4:])
+                )
+            else:
+                retain_opaque_fields("[w]", stripped)
+            continue
+        retain_opaque_fields("[tbl]", stripped)
+
+    if table_definition is None and not any(
+        fragment.startswith("[tbl]") for fragment in opaque_field_fragments
+    ):
+        retain_opaque_fields("[tbl]", "[missing table definition]")
+
+    def formatted_cell(blocks: list[Paragraph]) -> TableCell:
+        nonlocal partial_formatting
+        values = current_format
+        if values is None:
+            return TableCell(blocks=blocks)
+        flags = values[2]
+        alignment_flags = flags & (8 | 16 | 32)
+        alignment = {
+            8: "left",
+            16: "right",
+            24: "center",
+            32: "justify",
+        }.get(alignment_flags)
+        partial_formatting = partial_formatting or bool(
+            flags & ~(8 | 16 | 32 | 128 | 256)
+            or alignment_flags not in {0, 8, 16, 24, 32}
+            or values[5]
+            or values[6]
+            or values[7]
+            or values[8]
+            or any(values[9:])
+            or ((values[3] != 0 or values[4] != 0) and not flags & 0x80)
+        )
+        return TableCell(
+            blocks=blocks,
+            alignment=alignment,
+            format_flags=flags,
+            joined_row_count=values[3],
+            joined_column_count=values[4],
+            shading_index=values[5],
+            border_word=values[6],
+            content_flags=values[7],
+            protected=bool(values[8]),
+            reserved_fields=values[9:],
+        )
 
     def flush() -> None:
-        nonlocal buffer
+        nonlocal buffer, current_format
         if current is not None:
             source = current_source or section.source
             paragraphs = _parse_plain_text_paragraphs(
@@ -2532,8 +2677,9 @@ def _parse_table(
                     )
                 )
             else:
-                cells[current] = TableCell(blocks=recovered)
+                cells[current] = formatted_cell(recovered)
         buffer = []
+        current_format = None
 
     for line_index, line in enumerate(lines[data_marker + 1 :], start=data_marker + 1):
         stripped = line.strip()
@@ -2551,10 +2697,23 @@ def _parse_table(
                 _bounded_decimal(match.group(1), field="table row"),
                 _bounded_decimal(match.group(2), field="table column"),
             )
-            retain_opaque_fields(
-                f"[data cell {current[0]} {current[1]}]",
-                stripped[match.end() :],
+            values = exact_nonnegative_integers(stripped, 12)
+            within_declared_grid = table_definition is None or (
+                current[0] < table_definition.declared_rows
+                and current[1] < table_definition.declared_columns
             )
+            if (
+                values is not None
+                and values[:2] == current
+                and within_declared_grid
+            ):
+                current_format = values
+            else:
+                current_format = None
+                retain_opaque_fields(
+                    f"[data cell {current[0]} {current[1]}]",
+                    stripped[match.end() :],
+                )
             current_source = section.raw_spans[line_index]
             current_header = line
             cell_closed = False
@@ -2607,6 +2766,18 @@ def _parse_table(
                 lossiness=Lossiness.SEMANTIC,
             )
         )
+    elif table_definition is not None and partial_formatting:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "table-formatting-partial",
+                "typed table geometry and independently supported formatting were "
+                "applied; reserved, border, shading, protection, or other fields "
+                "remain preserved without full rendering semantics",
+                section.source,
+                lossiness=Lossiness.SEMANTIC,
+            )
+        )
     if formula_metadata:
         for raw, source in formula_metadata:
             document.unknown_records.append(
@@ -2634,20 +2805,108 @@ def _parse_table(
         return None
     max_row = max(row for row, _ in cells)
     max_col = max(column for _, column in cells)
-    if (max_row + 1) * (max_col + 1) > limits.max_table_cells:
+    row_count = max(
+        max_row + 1,
+        table_definition.declared_rows if table_definition is not None else 0,
+    )
+    column_count = max(
+        max_col + 1,
+        table_definition.declared_columns if table_definition is not None else 0,
+    )
+    if row_count * column_count > limits.max_table_cells:
         raise ResourceLimitError("sparse table dimensions exceed configured cell limit")
+
+    covered: set[tuple[int, int]] = set()
+    unresolved_merges = False
+    for (row_index, column_index), cell in sorted(cells.items()):
+        flags = cell.format_flags if type(cell.format_flags) is int else 0
+        if not flags & 0x100:
+            continue
+        row_span = max(1, cell.joined_row_count or 0)
+        column_span = max(1, cell.joined_column_count or 0)
+        rectangle = {
+            (target_row, target_column)
+            for target_row in range(row_index, row_index + row_span)
+            for target_column in range(column_index, column_index + column_span)
+            if (target_row, target_column) != (row_index, column_index)
+        }
+        valid = (
+            row_index + row_span <= row_count
+            and column_index + column_span <= column_count
+            and not rectangle.intersection(covered)
+        )
+        if valid:
+            for target_row, target_column in rectangle:
+                member = cells.get((target_row, target_column))
+                member_flags = (
+                    member.format_flags
+                    if member is not None and type(member.format_flags) is int
+                    else 0
+                )
+                if (
+                    member is None
+                    or not member_flags & 0x80
+                    or member_flags & 0x100
+                    or member.joined_row_count != target_row - row_index
+                    or member.joined_column_count != target_column - column_index
+                    or bool(member.text)
+                ):
+                    valid = False
+                    break
+        if valid:
+            cell.row_span = row_span
+            cell.column_span = column_span
+            covered.update(rectangle)
+        else:
+            unresolved_merges = True
+    unresolved_merges = unresolved_merges or any(
+        type(cell.format_flags) is int
+        and cell.format_flags & 0x80
+        and not cell.format_flags & 0x100
+        and coordinate not in covered
+        for coordinate, cell in cells.items()
+    )
+    if unresolved_merges:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "table-merge-unresolved",
+                "one or more connected-cell records did not form a complete, "
+                "bounded rectangle and were retained as ordinary cells",
+                section.source,
+                lossiness=Lossiness.SEMANTIC,
+            )
+        )
+
     rows: list[TableRow] = []
-    for row_index in range(max_row + 1):
+    for row_index in range(row_count):
+        row_definition = row_definitions.get(row_index)
         rows.append(
             TableRow(
                 cells=[
                     cells.get((row_index, column), TableCell())
-                    for column in range(max_col + 1)
+                    for column in range(column_count)
+                    if (row_index, column) not in covered
                 ],
-                is_header=row_index == 0,
+                is_header=(
+                    bool(row_definition[2] & 0x10)
+                    if row_definition is not None
+                    else row_index == 0 and table_definition is None
+                ),
+                height_twips=row_definition[0] if row_definition is not None else None,
+                gutter_twips=row_definition[1] if row_definition is not None else None,
+                flags=row_definition[2] if row_definition is not None else None,
+                reserved_fields=(
+                    row_definition[3] if row_definition is not None else ()
+                ),
             )
         )
-    return Table(rows=rows, source=section.source)
+    return Table(
+        rows=rows,
+        source=section.source,
+        definition=table_definition,
+        columns=[column_definitions[index] for index in sorted(column_definitions)],
+    )
 
 
 def _parse_frame_text(

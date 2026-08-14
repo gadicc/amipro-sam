@@ -331,6 +331,15 @@ class TableCell:
     blocks: list[Paragraph] = field(default_factory=list)
     column_span: int = 1
     row_span: int = 1
+    alignment: Literal["left", "right", "center", "justify"] | None = None
+    format_flags: int | None = None
+    joined_row_count: int | None = None
+    joined_column_count: int | None = None
+    shading_index: int | None = None
+    border_word: int | None = None
+    content_flags: int | None = None
+    protected: bool | None = None
+    reserved_fields: tuple[int, ...] = ()
 
     @property
     def text(self) -> str:
@@ -412,12 +421,39 @@ def _table_cell_text(
 class TableRow:
     cells: list[TableCell] = field(default_factory=list)
     is_header: bool = False
+    height_twips: int | None = None
+    gutter_twips: int | None = None
+    flags: int | None = None
+    reserved_fields: tuple[int, ...] = ()
+
+
+@dataclass(slots=True)
+class TableDefinition:
+    declared_rows: int
+    declared_columns: int
+    default_row_height_twips: int
+    default_row_gutter_twips: int
+    default_column_width_twips: int
+    default_column_gutter_twips: int
+    flags: int
+    reserved_fields: tuple[int, ...] = ()
+
+
+@dataclass(slots=True)
+class TableColumnDefinition:
+    index: int
+    width_twips: int
+    gutter_twips: int
+    flags: int
+    reserved_fields: tuple[int, ...] = ()
 
 
 @dataclass(slots=True)
 class Table:
     rows: list[TableRow] = field(default_factory=list)
     source: SourceSpan | None = None
+    definition: TableDefinition | None = None
+    columns: list[TableColumnDefinition] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -863,7 +899,11 @@ def _blocks_text(
                 elif isinstance(block, UnsupportedObject):
                     parts.append(f"[Unsupported {block.kind}: {block.description}]")
                 elif isinstance(block, Frame):
-                    parts.append(nested(block.blocks))
+                    content = nested(block.blocks)
+                    if _frame_structure_is_known(block):
+                        parts.append(content)
+                    else:
+                        parts.append("[Frame: structure unknown]\n" + content)
                 elif isinstance(block, Annotation):
                     parts.append("[Annotation]\n" + nested(block.blocks))
                 elif isinstance(block, Footnote):
@@ -874,10 +914,17 @@ def _blocks_text(
                     )
                     parts.append(f"[{label}]\n" + nested(block.blocks))
                 elif isinstance(block, Header | Footer):
-                    label = type(block).__name__
-                    parts.append(
-                        f"[{label}: {block.placement} pages]\n" + nested(block.blocks)
-                    )
+                    content = nested(block.blocks)
+                    if (
+                        isinstance(block.blocks, list | tuple)
+                        and not block.blocks
+                    ) or _furniture_structure_is_known(block):
+                        parts.append(content)
+                    else:
+                        label = type(block).__name__
+                        parts.append(
+                            f"[{label}: {block.placement} pages]\n" + content
+                        )
                 else:
                     parts.append("[Unrecognized block omitted]")
             finally:
@@ -887,6 +934,64 @@ def _blocks_text(
         return "\n".join(parts)
     finally:
         active_containers.remove(identity)
+
+
+def _frame_structure_is_known(frame: Frame) -> bool:
+    if not isinstance(frame.content_kind, str) or frame.content_kind not in {
+        "text",
+        "table",
+        "image",
+        "drawing",
+    }:
+        return False
+    if not isinstance(frame.placement, str) or frame.placement not in {
+        "anchored",
+        "fixed-page",
+        "repeating",
+    }:
+        return False
+    if not isinstance(frame.region, str) or frame.region not in {
+        "body",
+        "header",
+        "footer",
+    }:
+        return False
+    if type(frame.unknown_flag_bits) is not int:
+        return False
+    if frame.bounds is not None and (
+        not isinstance(frame.bounds, TwipRect)
+        or frame.bounds.valid is not True
+        or not frame.bounds.is_usable
+    ):
+        return False
+    if frame.bounds is None and frame.source is not None:
+        return False
+    return isinstance(frame.blocks, list | tuple)
+
+
+def _furniture_structure_is_known(furniture: Header | Footer) -> bool:
+    if not isinstance(furniture.placement, str) or furniture.placement not in {
+        "all",
+        "odd",
+        "even",
+        "odd-even",
+    }:
+        return False
+    if not isinstance(furniture.origin, str) or furniture.origin not in {
+        "body",
+        "layout",
+    }:
+        return False
+    if furniture.terminated is not True:
+        return False
+    if (
+        type(furniture.unknown_flag_bits) is not int
+        or furniture.unknown_flag_bits != 0
+    ):
+        return False
+    if not isinstance(furniture.blocks, list | tuple):
+        return False
+    return furniture.frame is None or _frame_structure_is_known(furniture.frame)
 
 
 _MAX_JSON_RECURSION = 64

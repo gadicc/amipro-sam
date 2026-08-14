@@ -130,8 +130,8 @@ def _itertext(root: ET.Element) -> str:
 def test_odt_uses_validated_geometry_native_page_content_and_reflowed_frames() -> None:
     document = _layout_document()
 
-    first = odt.render(document)
-    second = odt.render(document)
+    first = odt.render(document, show_structure_labels=True)
+    second = odt.render(document, show_structure_labels=True)
 
     assert first == second
     with ZipFile(BytesIO(first)) as archive:
@@ -214,7 +214,7 @@ def test_odt_rejects_hostile_geometry_and_reflows_nonparagraph_page_content() ->
         ],
     )
 
-    payload = odt.render(document)
+    payload = odt.render(document, show_structure_labels=True)
     styles = _zip_xml(payload, "styles.xml")
     content = _zip_xml(payload, "content.xml")
     properties = styles.find(".//style:page-layout-properties", ODF)
@@ -254,8 +254,8 @@ def test_odt_bounds_self_referential_frame_content() -> None:
     frame.blocks.append(frame)
     document = Document("cycle.sam", "windows-1252", blocks=[frame])
 
-    first = odt.render(document)
-    second = odt.render(document)
+    first = odt.render(document, show_structure_labels=True)
+    second = odt.render(document, show_structure_labels=True)
 
     assert first == second
     text = _itertext(_zip_xml(first, "content.xml"))
@@ -311,8 +311,8 @@ def test_odt_hostile_text_run_fields_do_not_stop_following_content(
 def test_docx_uses_validated_geometry_native_page_content_and_reflowed_frames() -> None:
     document = _layout_document()
 
-    first = docx.render(document)
-    second = docx.render(document)
+    first = docx.render(document, show_structure_labels=True)
+    second = docx.render(document, show_structure_labels=True)
 
     assert first == second
     with ZipFile(BytesIO(first)) as archive:
@@ -404,8 +404,8 @@ def test_docx_rejects_hostile_geometry_and_reflows_nonparagraph_page_content() -
         ],
     )
 
-    first = docx.render(document)
-    second = docx.render(document)
+    first = docx.render(document, show_structure_labels=True)
+    second = docx.render(document, show_structure_labels=True)
     assert first == second
     main = _zip_xml(first, "word/document.xml")
     sect = main.find(f".//{{{WORD}}}sectPr")
@@ -431,8 +431,8 @@ def test_docx_bounds_self_referential_frame_content() -> None:
     frame.blocks.append(frame)
     document = Document("cycle.sam", "windows-1252", blocks=[frame])
 
-    first = docx.render(document)
-    second = docx.render(document)
+    first = docx.render(document, show_structure_labels=True)
+    second = docx.render(document, show_structure_labels=True)
 
     assert first == second
     text = _itertext(_zip_xml(first, "word/document.xml"))

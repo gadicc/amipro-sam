@@ -497,7 +497,9 @@ def test_recursive_manual_frame_ir_has_visible_text_and_json_markers() -> None:
     frame.blocks.append(frame)
     document = Document(source_name="invented.sam", encoding="cp1252", blocks=[frame])
 
-    assert document.text == "[Recursive content omitted]"
+    assert document.text == (
+        "[Frame: structure unknown]\n[Recursive content omitted]"
+    )
     encoded = document.to_dict()
     recursive = encoded["blocks"][0]["blocks"][0]
     assert recursive == {"encoding": "recursive-reference", "type": "Frame"}

@@ -39,6 +39,8 @@ from ..model import (
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 from .paragraph_geometry import resolve_paragraph_region
+from .structure_labels import show_container_label
+from .table_geometry import table_column_widths
 
 __all__ = ["render"]
 
@@ -355,14 +357,25 @@ def _twips(value: int | float) -> str:
     return f"{value / 20:g}pt"
 
 
-def render(document: Document, **_options: object) -> bytes:
+def render(
+    document: Document,
+    *,
+    show_structure_labels: bool = False,
+    **_options: object,
+) -> bytes:
     """Return *document* as a valid ODT package."""
 
     try:
         geometry = _page_geometry(document)
         native = _native_page_content(document, geometry)
         text_budget = _TextOutputBudget()
-        builder = _ContentBuilder(document, geometry, native, text_budget)
+        builder = _ContentBuilder(
+            document,
+            geometry,
+            native,
+            text_budget,
+            show_structure_labels=show_structure_labels,
+        )
         content = builder.build()
         members = [
             ("content.xml", content),
@@ -394,11 +407,14 @@ class _ContentBuilder:
         geometry: _PageGeometry,
         native: _NativePageContent,
         text_budget: _TextOutputBudget,
+        *,
+        show_structure_labels: bool,
     ) -> None:
         self.document = document
         self.geometry = geometry
         self.native_ids = native.ids
         self.text_budget = text_budget
+        self.show_structure_labels = show_structure_labels
         self.automatic_styles = ET.Element(_q("office", "automatic-styles"))
         self.body_text = ET.Element(_q("office", "text"))
         self._paragraph_style_counter = 0
@@ -522,7 +538,10 @@ class _ContentBuilder:
                 elif isinstance(block, SdwDrawing):
                     self._add_sdw(block)
                 elif isinstance(block, Frame):
-                    self._add_placeholder(_frame_label(block))
+                    if show_container_label(
+                        block, requested=self.show_structure_labels
+                    ):
+                        self._add_placeholder(_frame_label(block))
                     self._add_blocks(
                         getattr(block, "blocks", None),
                         depth=depth + 1,
@@ -541,7 +560,10 @@ class _ContentBuilder:
                         f"[Unsupported {kind}: {description}]"
                     )
                 elif isinstance(block, Annotation | Footnote | Header | Footer):
-                    self._add_placeholder(_container_label(block))
+                    if not isinstance(block, Header | Footer) or show_container_label(
+                        block, requested=self.show_structure_labels
+                    ):
+                        self._add_placeholder(_container_label(block))
                     self._add_blocks(
                         getattr(block, "blocks", None),
                         depth=depth + 1,
@@ -655,6 +677,7 @@ class _ContentBuilder:
         *,
         list_item: bool = False,
         container_width_twips: int | None,
+        fallback_alignment: str | None = None,
     ) -> None:
         style_definition = _resolved_style(self.document, paragraph.style_name)
         style_name = self._paragraph_style(
@@ -662,6 +685,7 @@ class _ContentBuilder:
             style_definition,
             list_item=list_item,
             container_width_twips=container_width_twips,
+            fallback_alignment=fallback_alignment,
         )
         node = ET.SubElement(parent, _q("text", "p"), {_q("text", "style-name"): style_name})
         base = style_definition.character if style_definition else CharacterStyle()
@@ -754,16 +778,31 @@ class _ContentBuilder:
                 _q("table", "style-name"): self._table_style(table_name),
             },
         )
-        ET.SubElement(
-            node,
-            _q("table", "table-column"),
-            {
-                _q("table", "style-name"): self._table_column_style(
-                    table_name, len(grid[0])
-                ),
-                _q("table", "number-columns-repeated"): str(len(grid[0])),
-            },
+        column_widths = table_column_widths(
+            table,
+            len(grid[0]),
+            self.geometry.body_width_twips,
         )
+        if not column_widths:
+            base, remainder = divmod(
+                self.geometry.body_width_twips, len(grid[0])
+            )
+            column_widths = [
+                base + (1 if index < remainder else 0)
+                for index in range(len(grid[0]))
+            ]
+        for column_index, column_width in enumerate(column_widths):
+            ET.SubElement(
+                node,
+                _q("table", "table-column"),
+                {
+                    _q("table", "style-name"): self._table_column_style(
+                        table_name,
+                        column_index,
+                        column_width,
+                    )
+                },
+            )
         anchor_map = {
             (row, column): (cell, col_span, row_span)
             for row, column, cell, col_span, row_span in anchors
@@ -849,18 +888,19 @@ class _ContentBuilder:
                     ET.SubElement(cell_node, _q("text", "p"))
                 cell_width_twips = max(
                     1,
-                    round(
-                        self.geometry.body_width_twips
-                        * column_span
-                        / len(grid[0])
+                    sum(
+                        column_widths[
+                            column_index : column_index + column_span
+                        ]
                     )
-                    - 160,
+                    - 80,
                 )
                 for paragraph in valid_paragraphs if not repeated_cell else []:
                     self._add_paragraph(
                         cell_node,
                         paragraph,
                         container_width_twips=cell_width_twips,
+                        fallback_alignment=cell.alignment,
                     )
 
     def _paragraph_style(
@@ -870,6 +910,7 @@ class _ContentBuilder:
         *,
         list_item: bool,
         container_width_twips: int | None,
+        fallback_alignment: str | None = None,
     ) -> str:
         self._paragraph_style_counter += 1
         name = f"P{self._paragraph_style_counter}"
@@ -881,7 +922,7 @@ class _ContentBuilder:
         properties: dict[str, str] = {}
         alignment = paragraph.alignment or (
             style_definition.alignment if style_definition else None
-        )
+        ) or fallback_alignment
         if isinstance(alignment, str) and alignment in {
             "left",
             "right",
@@ -1047,8 +1088,13 @@ class _ContentBuilder:
         )
         return name
 
-    def _table_column_style(self, table_name: str, columns: int) -> str:
-        name = f"{table_name}Column"
+    def _table_column_style(
+        self,
+        table_name: str,
+        column_index: int,
+        width_twips: int,
+    ) -> str:
+        name = f"{table_name}Column{column_index + 1}"
         node = ET.SubElement(
             self.automatic_styles,
             _q("style", "style"),
@@ -1059,7 +1105,7 @@ class _ContentBuilder:
             _q("style", "table-column-properties"),
             {
                 _q("style", "column-width"): _twips(
-                    self.geometry.body_width_twips / columns
+                    width_twips
                 )
             },
         )
@@ -1107,7 +1153,7 @@ class _ContentBuilder:
             )
             properties = {
                 _q("fo", "border"): "0.5pt solid #777777",
-                _q("fo", "padding"): "4pt",
+                _q("fo", "padding"): "2pt",
                 _q("style", "vertical-align"): "middle",
             }
             if header:

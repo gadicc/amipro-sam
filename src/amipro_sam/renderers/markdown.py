@@ -27,6 +27,7 @@ from ..model import (
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size
+from .structure_labels import show_container_label
 
 __all__ = ["render"]
 
@@ -41,7 +42,12 @@ _MAX_TABLE_ROWS = 390
 _MAX_PARAGRAPH_RUNS = 4_096
 _MAX_PARAGRAPH_TEXT = 1_000_000
 
-def render(document: Document, **_options: object) -> bytes:
+def render(
+    document: Document,
+    *,
+    show_structure_labels: bool = False,
+    **_options: object,
+) -> bytes:
     """Return CommonMark-like Markdown without source-controlled raw HTML."""
 
     rendered = _render_blocks(
@@ -50,6 +56,7 @@ def render(document: Document, **_options: object) -> bytes:
         seen=set(),
         seen_blocks=set(),
         text_budget=_TextOutputBudget(),
+        show_structure_labels=show_structure_labels,
     )
     if not rendered:
         return b""
@@ -64,6 +71,7 @@ def _render_blocks(
     seen: set[int] | None = None,
     seen_blocks: set[int] | None = None,
     text_budget: _TextOutputBudget | None = None,
+    show_structure_labels: bool = False,
 ) -> str:
     if depth >= _MAX_RENDER_DEPTH:
         return _escape_text("[Nested content omitted at safe depth limit]")
@@ -142,18 +150,19 @@ def _render_blocks(
             )
             counters.clear()
         elif isinstance(block, Frame):
+            content = _render_blocks(
+                document,
+                block.blocks,
+                depth=depth + 1,
+                seen=seen,
+                seen_blocks=seen_blocks,
+                text_budget=text_budget,
+                show_structure_labels=show_structure_labels,
+            )
             chunks.append(
-                _marked_container(
-                    _frame_marker(block),
-                    _render_blocks(
-                        document,
-                        block.blocks,
-                        depth=depth + 1,
-                        seen=seen,
-                        seen_blocks=seen_blocks,
-                        text_budget=text_budget,
-                    ),
-                )
+                _marked_container(_frame_marker(block), content)
+                if show_container_label(block, requested=show_structure_labels)
+                else content
             )
             counters.clear()
         elif isinstance(block, Annotation):
@@ -167,6 +176,7 @@ def _render_blocks(
                         seen=seen,
                         seen_blocks=seen_blocks,
                         text_budget=text_budget,
+                        show_structure_labels=show_structure_labels,
                     ),
                 )
             )
@@ -191,6 +201,7 @@ def _render_blocks(
                         seen=seen,
                         seen_blocks=seen_blocks,
                         text_budget=text_budget,
+                        show_structure_labels=show_structure_labels,
                     ),
                 )
             )
@@ -198,18 +209,19 @@ def _render_blocks(
         elif isinstance(block, Header | Footer):
             kind = "Header" if isinstance(block, Header) else "Footer"
             marker = f"[{kind}: {_placement_label(block.placement)}]"
+            content = _render_blocks(
+                document,
+                block.blocks,
+                depth=depth + 1,
+                seen=seen,
+                seen_blocks=seen_blocks,
+                text_budget=text_budget,
+                show_structure_labels=show_structure_labels,
+            )
             chunks.append(
-                _marked_container(
-                    marker,
-                    _render_blocks(
-                        document,
-                        block.blocks,
-                        depth=depth + 1,
-                        seen=seen,
-                        seen_blocks=seen_blocks,
-                        text_budget=text_budget,
-                    ),
-                )
+                _marked_container(marker, content)
+                if show_container_label(block, requested=show_structure_labels)
+                else content
             )
             counters.clear()
         else:

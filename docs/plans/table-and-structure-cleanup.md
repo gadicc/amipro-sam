@@ -2,6 +2,8 @@
 
 Date: 2026-08-14
 
+Status: implemented and verified on the synthetic suite and private corpus.
+
 ## Goal
 
 Remove renderer-authored frame/header/footer labels from ordinary converted
@@ -63,9 +65,9 @@ source value must remain available in JSON/diagnostics.
    rendered; raw frame data and typed JSON remain complete.
 7. Make structural frame/header/footer labels opt-in through renderer option
    `show_structure_labels` and CLI flag `--show-structure-labels`. By default,
-   known containers render their nested content without labels; empty known
-   furniture renders nothing. Unknown/invalid structures remain visibly
-   labelled regardless of the option.
+   known containers render their nested content without labels; empty
+   furniture renders nothing. Nonempty unknown/invalid structures remain
+   visibly labelled regardless of the option.
 8. Keep annotation, footnote, missing-asset, malformed-content, recursion,
    safety-limit, and genuine `UnsupportedObject` markers unchanged.
 
@@ -84,9 +86,12 @@ source value must remain available in JSON/diagnostics.
 - Renderer table widths must be normalized against an explicit body/cell
   container and retain minimum usable widths. Hostile manual IR continues to
   fall back visibly rather than raising or allocating an oversized grid.
-- `show_structure_labels=False` suppresses only validated structure metadata.
-  It never suppresses unknown placement/content types, invalid containers, or
-  preservation-loss objects. JSON always retains the structure.
+- `show_structure_labels=False` suppresses only validated placement/content
+  metadata. Unsupported feature bits remain diagnostics and typed JSON data;
+  they do not force a generic placement label into body content. Nonempty
+  unknown placement/content types, invalid containers, and preservation-loss
+  objects remain visible. Empty furniture remains in diagnostics/JSON without
+  inventing body content. JSON always retains the structure.
 - Existing native page-furniture promotion remains authoritative. Label
   suppression must not duplicate header/footer content in the body or erase a
   non-promoted container's readable text.
@@ -107,4 +112,3 @@ source value must remain available in JSON/diagnostics.
 - Convert and visually inspect at least `mydocs/6e.sam` plus one merged-table
   document with Poppler. Check for missing cells, shifted columns, clipping,
   overlaps, unwanted labels, and pagination regressions.
-

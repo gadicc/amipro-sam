@@ -112,7 +112,9 @@ def test_html_keeps_odd_even_layout_furniture_visible_without_overlap() -> None:
         origin="layout",
         layout_index=7,
     )
-    payload = html.render(_document(odd, even, _p("body"))).decode("utf-8")
+    payload = html.render(
+        _document(odd, even, _p("body")), show_structure_labels=True
+    ).decode("utf-8")
 
     assert payload.count("odd-header") == 1
     assert payload.count("even-header") == 1
@@ -131,7 +133,7 @@ def test_html_keeps_all_page_furniture_inline_and_ignores_even_nonalternating_cs
     even = _geometry(side="even", top=720, right=720, bottom=720, left=1_440)
     document = _document(header, _p("body"), even=even)
     document.page_layouts[0].non_alternating = True
-    payload = html.render(document).decode("utf-8")
+    payload = html.render(document, show_structure_labels=True).decode("utf-8")
 
     assert payload.count("all-header") == 1
     assert '<header class="document-header" data-placement="all">' in payload
@@ -199,7 +201,13 @@ def test_pdf_unsafe_layout_furniture_falls_back_inline_without_loss(case: str) -
         document.page_layouts[0].odd = _geometry(top=0)
 
     promoted = pdf._promoted_furniture(document, pdf._page_spec(document))
-    story_text = _story_text(pdf._primary_story(document, promoted))
+    story_text = _story_text(
+        pdf._primary_story(
+            document,
+            promoted,
+            show_structure_labels=True,
+        )
+    )
 
     assert id(header) not in promoted
     assert "Header: all pages" in story_text
@@ -258,7 +266,9 @@ def test_html_does_not_apply_pathologically_narrow_frame_width() -> None:
         bounds=TwipRect(0, 0, 1, 1_440, valid=True),
     )
 
-    payload = html.render(_document(frame)).decode("utf-8")
+    payload = html.render(
+        _document(frame), show_structure_labels=True
+    ).decode("utf-8")
 
     assert 'class="document-frame"' in payload
     assert 'style="width:' not in payload

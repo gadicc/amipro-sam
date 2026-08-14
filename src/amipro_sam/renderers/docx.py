@@ -41,6 +41,8 @@ from ..model import Document as AmiProDocument
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
 from .paragraph_geometry import resolve_paragraph_region
+from .structure_labels import show_container_label
+from .table_geometry import table_column_widths
 
 __all__ = ["render"]
 
@@ -323,7 +325,12 @@ def _frame_label(frame: Frame) -> str:
     )
 
 
-def render(document: AmiProDocument, **_options: object) -> bytes:
+def render(
+    document: AmiProDocument,
+    *,
+    show_structure_labels: bool = False,
+    **_options: object,
+) -> bytes:
     """Return *document* as DOCX bytes.
 
     ``python-docx`` is an optional dependency so importing this module remains
@@ -380,6 +387,7 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
             active_container_ids=set(),
             seen_block_ids=set(),
             text_budget=text_budget,
+            show_structure_labels=show_structure_labels,
         )
 
         buffer = BytesIO()
@@ -403,6 +411,7 @@ def _add_blocks(
     active_container_ids: set[int],
     seen_block_ids: set[int],
     text_budget: _TextOutputBudget,
+    show_structure_labels: bool,
 ) -> None:
     if depth > _MAX_BLOCK_DEPTH:
         _add_placeholder(target, "[Nested content omitted: safe depth limit reached]")
@@ -457,7 +466,8 @@ def _add_blocks(
             elif isinstance(block, SdwDrawing):
                 _add_sdw(target, block, geometry)
             elif isinstance(block, Frame):
-                _add_placeholder(target, _frame_label(block))
+                if show_container_label(block, requested=show_structure_labels):
+                    _add_placeholder(target, _frame_label(block))
                 _add_blocks(
                     target,
                     document,
@@ -471,6 +481,7 @@ def _add_blocks(
                     active_container_ids=active_container_ids,
                     seen_block_ids=seen_block_ids,
                     text_budget=text_budget,
+                    show_structure_labels=show_structure_labels,
                 )
             elif isinstance(block, UnsupportedObject):
                 kind = _safe_label_field(
@@ -481,7 +492,10 @@ def _add_blocks(
                 )
                 _add_placeholder(target, f"[Unsupported {kind}: {description}]")
             elif isinstance(block, Annotation | Footnote | Header | Footer):
-                _add_placeholder(target, _container_label(block))
+                if not isinstance(block, Header | Footer) or show_container_label(
+                    block, requested=show_structure_labels
+                ):
+                    _add_placeholder(target, _container_label(block))
                 _add_blocks(
                     target,
                     document,
@@ -493,6 +507,7 @@ def _add_blocks(
                     active_container_ids=active_container_ids,
                     seen_block_ids=seen_block_ids,
                     text_budget=text_budget,
+                    show_structure_labels=show_structure_labels,
                 )
             elif block is _INVALID_BLOCK_CONTAINER:
                 _add_placeholder(target, "[Invalid block container omitted]")
@@ -867,7 +882,12 @@ def _add_table(
     table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
-    widths = _configure_table_geometry(table, column_count, body_width_twips)
+    widths = _configure_table_geometry(
+        table,
+        source,
+        column_count,
+        body_width_twips,
+    )
 
     merged_cells: dict[tuple[int, int], Any] = {}
     for row_index, column_index, _cell, column_span, row_span in anchors:
@@ -928,9 +948,23 @@ def _add_table(
                 text_budget,
                 container_width_twips=max(
                     1,
-                    sum(widths[column_index : column_index + column_span]) - 230,
+                    sum(widths[column_index : column_index + column_span]) - 80,
                 ),
             )
+            if paragraph.alignment is None and source_cell.alignment in {
+                "left",
+                "right",
+                "center",
+                "justify",
+            }:
+                from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+                paragraph.alignment = {
+                    "left": WD_ALIGN_PARAGRAPH.LEFT,
+                    "right": WD_ALIGN_PARAGRAPH.RIGHT,
+                    "center": WD_ALIGN_PARAGRAPH.CENTER,
+                    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+                }[source_cell.alignment]
         if rows[row_index].is_header:
             _shade_cell(target, "F2F4F7")
             for paragraph in target.paragraphs:
@@ -948,6 +982,7 @@ def _add_table(
 
 def _configure_table_geometry(
     table: Any,
+    source: Table,
     column_count: int,
     body_width_twips: int,
 ) -> list[int]:
@@ -956,8 +991,13 @@ def _configure_table_geometry(
     from docx.shared import Twips
 
     total_width = max(_MIN_BODY_TWIPS, body_width_twips)
-    base, remainder = divmod(total_width, column_count)
-    widths = [base + (1 if index < remainder else 0) for index in range(column_count)]
+    widths = table_column_widths(source, column_count, total_width)
+    if not widths:
+        base, remainder = divmod(total_width, column_count)
+        widths = [
+            base + (1 if index < remainder else 0)
+            for index in range(column_count)
+        ]
     table_properties = table._tbl.tblPr
     _set_or_add_measure(table_properties, "w:tblW", total_width, "dxa")
     _set_or_add_measure(table_properties, "w:tblInd", 0, "dxa")
@@ -971,7 +1011,7 @@ def _configure_table_geometry(
     if cell_margins is None:
         cell_margins = OxmlElement("w:tblCellMar")
         table_properties.append(cell_margins)
-    for side, width in (("top", 80), ("start", 120), ("bottom", 80), ("end", 120)):
+    for side, width in (("top", 40), ("start", 40), ("bottom", 40), ("end", 40)):
         _set_or_add_measure(cell_margins, f"w:{side}", width, "dxa")
 
     grid = table._tbl.tblGrid

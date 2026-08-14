@@ -24,7 +24,9 @@ experimental DOCX output.
 - Deterministic PDF text from fixed in-package preservation fonts, with bounded
   BMP Unicode fallback for Latin, Greek, Cyrillic, Hebrew, Arabic, Han, kana,
   and Hangul. Unsupported scalars remain visible as replacement characters.
-- Text recovery from the main document, text frames, and table cells.
+- Text recovery from the main document, text frames, and table cells. Canonical
+  table dimensions, row/column geometry, header rows, cell alignment, and
+  validated horizontal merges are typed and reflowed proportionally.
 - Typed annotations, footnotes, and body/layout header/footer streams with raw
   placement records retained in the intermediate representation.
 - Bounds-checked extraction of embedded BMP data, direct inert PNG previews for
@@ -127,14 +129,21 @@ output-name collisions are rejected before any file is written.
 Paths with spaces and non-ASCII characters are ordinary supported filesystem
 paths; quote them in a shell as usual.
 
+Known frames and non-promoted headers/footers render their readable contents
+without converter-authored structure labels. Empty page furniture emits
+nothing. Use `--show-structure-labels` when auditing source placement; unknown,
+invalid, and genuinely unsupported objects remain visible either way.
+
 ## Diagnostics and strict mode
 
 HTML includes a diagnostic appendix by default. Use `--no-warning-summary` to omit
 it from the presentation; diagnostics remain available through `inspect` and
 `dump`.
 
-By default the converter favors recovery: unsupported constructs become visible
-placeholders and surrounding text remains available. Diagnostics classify
+By default the converter favors recovery: unsupported content and malformed
+structures become visible placeholders and surrounding text remains available.
+Metadata-only limitations stay in diagnostics and JSON rather than being mixed
+into document prose. Diagnostics classify
 severity and preservation loss independently. Loss can be `semantic` (content
 is retained but meaning, behavior, or placement is approximated) or `content`
 (source material cannot be represented); `none` is an ordinary informational or
