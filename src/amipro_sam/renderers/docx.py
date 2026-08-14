@@ -40,6 +40,7 @@ from ..model import (
 from ..model import Document as AmiProDocument
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
+from .paragraph_geometry import resolve_paragraph_region
 
 __all__ = ["render"]
 
@@ -107,7 +108,7 @@ class _NativePageContent:
 
 def _page_geometry(document: object) -> _PageGeometry:
     layouts = getattr(document, "page_layouts", None)
-    if not isinstance(layouts, (list, tuple)):
+    if not isinstance(layouts, list | tuple):
         return _PageGeometry()
     for layout in layouts:
         if getattr(layout, "valid", None) is not True:
@@ -220,7 +221,7 @@ def _native_furniture_fits(
     ):
         return False
     child_blocks = getattr(block, "blocks", None)
-    if not isinstance(child_blocks, (list, tuple)) or not 1 <= len(child_blocks) <= 4:
+    if not isinstance(child_blocks, list | tuple) or not 1 <= len(child_blocks) <= 4:
         return False
     if not all(_native_paragraph_is_safe(item) for item in child_blocks):
         return False
@@ -249,7 +250,7 @@ def _native_furniture_fits(
 
 def _bounded_native_paragraph_text(paragraph: Paragraph) -> str | None:
     runs = getattr(paragraph, "runs", None)
-    if not isinstance(runs, (list, tuple)) or len(runs) > 1_024:
+    if not isinstance(runs, list | tuple) or len(runs) > 1_024:
         return None
     parts: list[str] = []
     length = 0
@@ -273,12 +274,12 @@ def _native_paragraph_is_safe(value: object) -> bool:
         isinstance(value, Paragraph)
         and (page_break is False or page_break is None)
         and (list_kind is None or (isinstance(list_kind, str) and list_kind == ""))
-        and isinstance(getattr(value, "runs", None), (list, tuple))
+        and isinstance(getattr(value, "runs", None), list | tuple)
     )
 
 
 def _safe_blocks(value: object) -> list[object]:
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         return [_INVALID_BLOCK_CONTAINER]
     result: list[object] = list(value[:_MAX_BLOCKS_PER_LIST])
     if len(value) > _MAX_BLOCKS_PER_LIST:
@@ -375,6 +376,7 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
             document.blocks,
             geometry,
             native.ids,
+            container_width_twips=geometry.body_width_twips,
             active_container_ids=set(),
             seen_block_ids=set(),
             text_budget=text_budget,
@@ -396,6 +398,7 @@ def _add_blocks(
     geometry: _PageGeometry,
     native_ids: frozenset[int],
     *,
+    container_width_twips: int | None,
     depth: int = 0,
     active_container_ids: set[int],
     seen_block_ids: set[int],
@@ -404,7 +407,7 @@ def _add_blocks(
     if depth > _MAX_BLOCK_DEPTH:
         _add_placeholder(target, "[Nested content omitted: safe depth limit reached]")
         return
-    if isinstance(blocks, (list, tuple)):
+    if isinstance(blocks, list | tuple):
         container_id = id(blocks)
         if container_id in active_container_ids:
             _add_placeholder(
@@ -430,7 +433,13 @@ def _add_blocks(
             seen_block_ids.add(block_identity)
             if isinstance(block, Paragraph):
                 paragraph = target.add_paragraph()
-                _populate_paragraph(paragraph, block, document, text_budget)
+                _populate_paragraph(
+                    paragraph,
+                    block,
+                    document,
+                    text_budget,
+                    container_width_twips=container_width_twips,
+                )
             elif isinstance(block, PageBreak):
                 target.add_page_break()
             elif isinstance(block, Table):
@@ -455,6 +464,9 @@ def _add_blocks(
                     getattr(block, "blocks", None),
                     geometry,
                     native_ids,
+                    # Frames are reflowed into the surrounding Word story, so
+                    # their source bounds do not describe an output container.
+                    container_width_twips=None,
                     depth=depth + 1,
                     active_container_ids=active_container_ids,
                     seen_block_ids=seen_block_ids,
@@ -476,6 +488,7 @@ def _add_blocks(
                     getattr(block, "blocks", None),
                     geometry,
                     native_ids,
+                    container_width_twips=container_width_twips,
                     depth=depth + 1,
                     active_container_ids=active_container_ids,
                     seen_block_ids=seen_block_ids,
@@ -642,6 +655,8 @@ def _populate_paragraph(
     source: Paragraph,
     document: AmiProDocument,
     text_budget: _TextOutputBudget,
+    *,
+    container_width_twips: int | None,
 ) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches, Pt
@@ -690,12 +705,24 @@ def _populate_paragraph(
         source.line_spacing,
         style_definition.line_spacing if style_definition else None,
     )
-    if left is not None:
-        formatting.left_indent = Inches(_number(left, 0.0, -20.0, 20.0))
-    if right is not None:
-        formatting.right_indent = Inches(_number(right, 0.0, -20.0, 20.0))
-    if first is not None:
-        formatting.first_line_indent = Inches(_number(first, 0.0, -20.0, 20.0))
+    region = resolve_paragraph_region(source, container_width_twips)
+    region_left = region.left_twips / 1440.0 if region is not None else 0.0
+    region_right = region.right_twips / 1440.0 if region is not None else 0.0
+    region_first = (
+        region.first_line_twips / 1440.0 if region is not None else 0.0
+    )
+    if left is not None or region_left:
+        formatting.left_indent = Inches(
+            _number((left or 0.0) + region_left, 0.0, -20.0, 20.0)
+        )
+    if right is not None or region_right:
+        formatting.right_indent = Inches(
+            _number((right or 0.0) + region_right, 0.0, -20.0, 20.0)
+        )
+    if first is not None or region_first:
+        formatting.first_line_indent = Inches(
+            _number((first or 0.0) + region_first, 0.0, -20.0, 20.0)
+        )
     if before is not None:
         formatting.space_before = Pt(_number(before, 0.0, 0.0, 720.0))
     if after is not None:
@@ -853,7 +880,7 @@ def _add_table(
         merged_cells[(row_index, column_index)] = target
 
     seen_cells: set[int] = set()
-    for row_index, column_index, source_cell, _column_span, _row_span in anchors:
+    for row_index, column_index, source_cell, column_span, _row_span in anchors:
         target = merged_cells[(row_index, column_index)]
         target.text = ""
         target.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -899,6 +926,10 @@ def _add_table(
                 source_paragraph,
                 ir_document,
                 text_budget,
+                container_width_twips=max(
+                    1,
+                    sum(widths[column_index : column_index + column_span]) - 230,
+                ),
             )
         if rows[row_index].is_header:
             _shade_cell(target, "F2F4F7")

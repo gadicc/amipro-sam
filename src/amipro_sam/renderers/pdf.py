@@ -82,6 +82,7 @@ from ..model import (
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
+from .paragraph_geometry import resolve_paragraph_region
 
 __all__ = ["render"]
 
@@ -125,6 +126,10 @@ class _PageSpec:
     @property
     def body_height(self) -> float:
         return self.height - self.top - self.bottom
+
+    @property
+    def body_width_twips(self) -> int:
+        return max(0, round(self.body_width * 20.0))
 
 class _InvariantCanvas(Canvas):
     """Canvas with stable timestamps, identifiers, and innocuous metadata."""
@@ -248,6 +253,7 @@ def _primary_story(
         story,
         list_counters,
         text_budget,
+        container_width_twips=_page_spec(document).body_width_twips,
         active=set(),
         promoted_furniture=promoted_furniture,
     )
@@ -261,6 +267,7 @@ def _append_primary_blocks(
     list_counters: dict[int, int],
     text_budget: PdfTextBudget,
     *,
+    container_width_twips: int | None,
     depth: int = 0,
     active: set[int] | None = None,
     promoted_furniture: set[int] | None = None,
@@ -292,7 +299,11 @@ def _append_primary_blocks(
             marker = _list_marker(block, list_counters)
             story.append(
                 _paragraph_flowable(
-                    document, block, marker=marker, text_budget=text_budget
+                    document,
+                    block,
+                    marker=marker,
+                    text_budget=text_budget,
+                    container_width_twips=container_width_twips,
                 )
             )
         elif isinstance(block, PageBreak):
@@ -323,6 +334,9 @@ def _append_primary_blocks(
                 depth,
                 active,
                 promoted_furniture,
+                # Source frames are reflowed into the page story instead of a
+                # real frame, so their original width is not a safe container.
+                None,
             )
         elif isinstance(block, UnsupportedObject):
             kind = _safe_label_field(
@@ -350,6 +364,7 @@ def _append_primary_blocks(
                 depth,
                 active,
                 promoted_furniture,
+                container_width_twips,
             )
         elif isinstance(block, Header | Footer):
             if id(block) in promoted_furniture:
@@ -366,6 +381,7 @@ def _append_primary_blocks(
                 depth,
                 active,
                 promoted_furniture,
+                container_width_twips,
             )
         elif block is _INVALID_BLOCK_CONTAINER:
             story.append(
@@ -654,6 +670,7 @@ def _append_nested_primary(
     depth: int,
     active: set[int],
     promoted_furniture: set[int],
+    container_width_twips: int | None,
 ) -> None:
     identity = id(owner)
     if identity in active:
@@ -670,6 +687,7 @@ def _append_nested_primary(
         story,
         list_counters,
         text_budget,
+        container_width_twips=container_width_twips,
         depth=depth + 1,
         active=active,
         promoted_furniture=promoted_furniture,
@@ -1020,6 +1038,7 @@ def _paragraph_flowable(
     marker: str | None = None,
     force_bold: bool = False,
     text_budget: PdfTextBudget | None = None,
+    container_width_twips: int | None = None,
 ) -> object:
     text_budget = PdfTextBudget() if text_budget is None else text_budget
     style_definition = _resolved_style(document, paragraph.style_name)
@@ -1064,17 +1083,26 @@ def _paragraph_flowable(
     )
 
     list_left = 18.0 * (_safe_level(paragraph.list_level) + 1)
-    resolved_left = _safe_inches(left_indent)
+    region = resolve_paragraph_region(paragraph, container_width_twips)
+    region_left = region.left_twips / 20.0 if region is not None else 0.0
+    region_right = region.right_twips / 20.0 if region is not None else 0.0
+    region_first = region.first_line_twips / 20.0 if region is not None else 0.0
+    resolved_left = region_left + _safe_inches(left_indent)
     if marker is not None and left_indent is None:
-        resolved_left = list_left
-    resolved_right = _safe_inches(right_indent)
-    resolved_first = _safe_inches(first_indent)
+        resolved_left += list_left
+    resolved_right = region_right + _safe_inches(right_indent)
+    resolved_first = region_first + _safe_inches(first_indent)
     if marker is not None and first_indent is None:
-        resolved_first = -12.0
+        resolved_first -= 12.0
     resolved_left, resolved_right, resolved_first = _safe_paragraph_geometry(
         resolved_left,
         resolved_right,
         resolved_first,
+        container_width=(
+            container_width_twips / 20.0
+            if type(container_width_twips) is int and container_width_twips > 0
+            else None
+        ),
     )
 
     reportlab_style = ParagraphStyle(
@@ -1416,6 +1444,8 @@ def _table_flowable(
     if not grid or not grid[0]:
         return _placeholder_flowable("[Empty table]", text_budget)
 
+    frame_width = _page_spec(document).body_width - 12.0
+    column_width = max(12.0, frame_width) / len(grid[0])
     data: list[list[object]] = [["" for _ in row] for row in grid]
     commands: list[tuple[object, ...]] = [
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#777777")),
@@ -1467,12 +1497,19 @@ def _table_flowable(
                     marker=marker,
                     force_bold=safe_rows[row_index].is_header,
                     text_budget=text_budget,
+                    container_width_twips=max(
+                        1,
+                        round((column_width * column_span - 10.0) * 20.0),
+                    ),
                 )
             )
         if not contents:
             contents.append(
                 _paragraph_flowable(
-                    document, Paragraph(), text_budget=text_budget
+                    document,
+                    Paragraph(),
+                    text_budget=text_budget,
+                    container_width_twips=max(1, round((column_width - 10.0) * 20.0)),
                 )
             )
         data[row_index][column_index] = contents
@@ -1494,8 +1531,6 @@ def _table_flowable(
                 ]
             )
 
-    frame_width = _page_spec(document).body_width - 12.0
-    column_width = max(12.0, frame_width) / len(grid[0])
     repeat_rows = 0
     for row in safe_rows:
         if not row.is_header or repeat_rows >= 8:
@@ -1877,18 +1912,31 @@ def _safe_inches(value: float | None) -> float:
     return _safe_number(value, default=0.0, minimum=-20.0, maximum=20.0) * inch
 
 
-def _safe_paragraph_geometry(left: float, right: float, first: float) -> tuple[float, float, float]:
+def _safe_paragraph_geometry(
+    left: float,
+    right: float,
+    first: float,
+    *,
+    container_width: float | None = None,
+) -> tuple[float, float, float]:
     left = max(0.0, left)
     right = max(0.0, right)
-    maximum_combined = _DEFAULT_FRAME_WIDTH - _MIN_TEXT_WIDTH
+    safe_container_width = _safe_number(
+        container_width,
+        default=_DEFAULT_FRAME_WIDTH,
+        minimum=1.0,
+        maximum=_MAX_PAGE_TWIPS / 20.0,
+    )
+    minimum_text_width = min(_MIN_TEXT_WIDTH, safe_container_width)
+    maximum_combined = max(0.0, safe_container_width - minimum_text_width)
     combined = left + right
     if combined > maximum_combined and combined > 0:
         scale = maximum_combined / combined
         left *= scale
         right *= scale
 
-    available = max(_MIN_TEXT_WIDTH, _DEFAULT_FRAME_WIDTH - left - right)
-    maximum_first = max(0.0, available - _MIN_TEXT_WIDTH)
+    available = max(minimum_text_width, safe_container_width - left - right)
+    maximum_first = max(0.0, available - minimum_text_width)
     minimum_first = -min(left, 0.5 * inch)
     first = min(maximum_first, max(minimum_first, first))
     return left, right, first

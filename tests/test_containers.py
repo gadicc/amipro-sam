@@ -189,7 +189,7 @@ def test_nested_raw_retention_is_linear() -> None:
     def raw_size(blocks: list[object]) -> int:
         total = 0
         for block in blocks:
-            if isinstance(block, (Annotation, Footnote, Header, Footer)):
+            if isinstance(block, Annotation | Footnote | Header | Footer):
                 total += len(block.raw)
                 total += raw_size(block.blocks)
         return total

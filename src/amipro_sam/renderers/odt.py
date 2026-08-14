@@ -38,6 +38,7 @@ from ..model import (
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
+from .paragraph_geometry import resolve_paragraph_region
 
 __all__ = ["render"]
 
@@ -117,7 +118,7 @@ class _NativePageContent:
 
 def _page_geometry(document: object) -> _PageGeometry:
     layouts = getattr(document, "page_layouts", None)
-    if not isinstance(layouts, (list, tuple)):
+    if not isinstance(layouts, list | tuple):
         return _PageGeometry()
     for layout in layouts:
         if getattr(layout, "valid", None) is not True:
@@ -233,7 +234,7 @@ def _native_furniture_fits(
     ):
         return False
     child_blocks = getattr(block, "blocks", None)
-    if not isinstance(child_blocks, (list, tuple)) or not 1 <= len(child_blocks) <= 4:
+    if not isinstance(child_blocks, list | tuple) or not 1 <= len(child_blocks) <= 4:
         return False
     if not all(_native_paragraph_is_safe(item) for item in child_blocks):
         return False
@@ -262,7 +263,7 @@ def _native_furniture_fits(
 
 def _bounded_native_paragraph_text(paragraph: Paragraph) -> str | None:
     runs = getattr(paragraph, "runs", None)
-    if not isinstance(runs, (list, tuple)) or len(runs) > 1_024:
+    if not isinstance(runs, list | tuple) or len(runs) > 1_024:
         return None
     parts: list[str] = []
     length = 0
@@ -286,12 +287,12 @@ def _native_paragraph_is_safe(value: object) -> bool:
         isinstance(value, Paragraph)
         and (page_break is False or page_break is None)
         and (list_kind is None or (isinstance(list_kind, str) and list_kind == ""))
-        and isinstance(getattr(value, "runs", None), (list, tuple))
+        and isinstance(getattr(value, "runs", None), list | tuple)
     )
 
 
 def _safe_blocks(value: object) -> list[object]:
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         return [_INVALID_BLOCK_CONTAINER]
     result: list[object] = list(value[:_MAX_BLOCKS_PER_LIST])
     if len(value) > _MAX_BLOCKS_PER_LIST:
@@ -422,14 +423,23 @@ class _ContentBuilder:
         office_body = ET.SubElement(root, _q("office", "body"))
         office_body.append(self.body_text)
 
-        self._add_blocks(self.document.blocks)
+        self._add_blocks(
+            self.document.blocks,
+            container_width_twips=self.geometry.body_width_twips,
+        )
         return _xml_bytes(root)
 
-    def _add_blocks(self, blocks: object, *, depth: int = 0) -> None:
+    def _add_blocks(
+        self,
+        blocks: object,
+        *,
+        depth: int = 0,
+        container_width_twips: int | None,
+    ) -> None:
         if depth > _MAX_BLOCK_DEPTH:
             self._add_placeholder("[Nested content omitted: safe depth limit reached]")
             return
-        if isinstance(blocks, (list, tuple)):
+        if isinstance(blocks, list | tuple):
             container_id = id(blocks)
             if container_id in self._active_container_ids:
                 self._add_placeholder(
@@ -467,7 +477,12 @@ class _ContentBuilder:
                         },
                     )
                     item = ET.SubElement(list_node, _q("text", "list-item"))
-                    self._add_paragraph(item, block, list_item=True)
+                    self._add_paragraph(
+                        item,
+                        block,
+                        list_item=True,
+                        container_width_twips=container_width_twips,
+                    )
                     index += 1
                     while index < len(blocks_to_render):
                         candidate = blocks_to_render[index]
@@ -477,11 +492,20 @@ class _ContentBuilder:
                             break
                         self._seen_block_ids.add(id(candidate))
                         item = ET.SubElement(list_node, _q("text", "list-item"))
-                        self._add_paragraph(item, candidate, list_item=True)
+                        self._add_paragraph(
+                            item,
+                            candidate,
+                            list_item=True,
+                            container_width_twips=container_width_twips,
+                        )
                         index += 1
                     continue
                 if isinstance(block, Paragraph):
-                    self._add_paragraph(self.body_text, block)
+                    self._add_paragraph(
+                        self.body_text,
+                        block,
+                        container_width_twips=container_width_twips,
+                    )
                 elif isinstance(block, PageBreak):
                     paragraph = ET.SubElement(
                         self.body_text,
@@ -499,7 +523,13 @@ class _ContentBuilder:
                     self._add_sdw(block)
                 elif isinstance(block, Frame):
                     self._add_placeholder(_frame_label(block))
-                    self._add_blocks(getattr(block, "blocks", None), depth=depth + 1)
+                    self._add_blocks(
+                        getattr(block, "blocks", None),
+                        depth=depth + 1,
+                        # Frames are reflowed in source order; no output frame
+                        # enforces their source width.
+                        container_width_twips=None,
+                    )
                 elif isinstance(block, UnsupportedObject):
                     kind = _safe_label_field(
                         block.kind, "unknown object kind", maximum=128
@@ -512,7 +542,11 @@ class _ContentBuilder:
                     )
                 elif isinstance(block, Annotation | Footnote | Header | Footer):
                     self._add_placeholder(_container_label(block))
-                    self._add_blocks(getattr(block, "blocks", None), depth=depth + 1)
+                    self._add_blocks(
+                        getattr(block, "blocks", None),
+                        depth=depth + 1,
+                        container_width_twips=container_width_twips,
+                    )
                 elif block is _INVALID_BLOCK_CONTAINER:
                     self._add_placeholder("[Invalid block container omitted]")
                 elif block is _BLOCK_LIMIT_OMISSION:
@@ -620,9 +654,15 @@ class _ContentBuilder:
         paragraph: Paragraph,
         *,
         list_item: bool = False,
+        container_width_twips: int | None,
     ) -> None:
         style_definition = _resolved_style(self.document, paragraph.style_name)
-        style_name = self._paragraph_style(paragraph, style_definition, list_item=list_item)
+        style_name = self._paragraph_style(
+            paragraph,
+            style_definition,
+            list_item=list_item,
+            container_width_twips=container_width_twips,
+        )
         node = ET.SubElement(parent, _q("text", "p"), {_q("text", "style-name"): style_name})
         base = style_definition.character if style_definition else CharacterStyle()
         runs = paragraph.runs
@@ -807,8 +847,21 @@ class _ContentBuilder:
                     )
                 if not valid_paragraphs:
                     ET.SubElement(cell_node, _q("text", "p"))
+                cell_width_twips = max(
+                    1,
+                    round(
+                        self.geometry.body_width_twips
+                        * column_span
+                        / len(grid[0])
+                    )
+                    - 160,
+                )
                 for paragraph in valid_paragraphs if not repeated_cell else []:
-                    self._add_paragraph(cell_node, paragraph)
+                    self._add_paragraph(
+                        cell_node,
+                        paragraph,
+                        container_width_twips=cell_width_twips,
+                    )
 
     def _paragraph_style(
         self,
@@ -816,6 +869,7 @@ class _ContentBuilder:
         style_definition: StyleDefinition | None,
         *,
         list_item: bool,
+        container_width_twips: int | None,
     ) -> str:
         self._paragraph_style_counter += 1
         name = f"P{self._paragraph_style_counter}"
@@ -863,12 +917,22 @@ class _ContentBuilder:
             paragraph.line_spacing,
             style_definition.line_spacing if style_definition else None,
         )
-        if left is not None:
-            properties[_q("fo", "margin-left")] = _inches(left)
-        if right is not None:
-            properties[_q("fo", "margin-right")] = _inches(right)
-        if first is not None:
-            properties[_q("fo", "text-indent")] = _inches(first)
+        region = resolve_paragraph_region(paragraph, container_width_twips)
+        region_left = region.left_twips / 1440.0 if region is not None else 0.0
+        region_right = region.right_twips / 1440.0 if region is not None else 0.0
+        region_first = (
+            region.first_line_twips / 1440.0 if region is not None else 0.0
+        )
+        if left is not None or region_left:
+            properties[_q("fo", "margin-left")] = _inches((left or 0.0) + region_left)
+        if right is not None or region_right:
+            properties[_q("fo", "margin-right")] = _inches(
+                (right or 0.0) + region_right
+            )
+        if first is not None or region_first:
+            properties[_q("fo", "text-indent")] = _inches(
+                (first or 0.0) + region_first
+            )
         if before is not None:
             properties[_q("fo", "margin-top")] = _points(before)
         if after is not None:

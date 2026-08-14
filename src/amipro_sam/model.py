@@ -306,6 +306,15 @@ class Paragraph:
     list_kind: Literal["bullet", "number"] | None = None
     list_level: int = 0
     source: SourceSpan | None = None
+    # Ami Pro's inline paragraph-region command stores a first/start coordinate
+    # and line measure in twips. Keep those values distinct from ordinary
+    # CSS/word-processor indents so renderers can use their actual container.
+    region_x_twips: int | None = None
+    region_width_twips: int | None = None
+    # The corpus uses a bounded four-value :I form whose individual meanings
+    # are not yet corroborated.  Preserve it atomically without applying a
+    # guessed layout.
+    inline_indent_twips: tuple[int, int, int, int] | None = None
 
     @property
     def text(self) -> str:
@@ -537,6 +546,7 @@ class Frame:
     frame_layout_fields: tuple[str, ...] = ()
     raw: str = ""
     source: SourceSpan | None = None
+    name: str | None = None
 
 
 @dataclass(slots=True)
@@ -630,6 +640,8 @@ class StyleDefinition:
     line_spacing: float | None = None
     raw: str | None = None
     source: SourceSpan | None = None
+    shortcut_key: int | None = None
+    following_style: str | None = None
 
 
 @dataclass(slots=True)
@@ -680,6 +692,9 @@ class Document:
     source_directory: Path | None = None
     original_size: int = 0
     newline: str = "\r\n"
+    # Raw typed value from the exact one-field [l1] shape.  Its selector/index
+    # semantics are not corroborated, so renderers deliberately ignore it.
+    l1_value: int | None = None
 
     @property
     def text(self) -> str:

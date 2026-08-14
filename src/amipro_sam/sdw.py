@@ -521,7 +521,7 @@ def _safe_text(value: object, default: str, *, maximum: int) -> str:
         result = value
     elif isinstance(value, bytes):
         result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+    elif isinstance(value, bool | int | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):

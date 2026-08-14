@@ -37,6 +37,7 @@ from ..model import (
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
+from .paragraph_geometry import resolve_paragraph_region
 
 __all__ = ["render"]
 
@@ -140,6 +141,7 @@ def render(
     text_budget = _TextOutputBudget()
     body = _render_blocks(
         document,
+        container_width_twips=_page_body_width_twips(document),
         promoted_furniture=promoted_furniture,
         text_budget=text_budget,
     )
@@ -179,6 +181,7 @@ def _render_blocks(
     seen_blocks: set[int] | None = None,
     promoted_furniture: set[int] | None = None,
     text_budget: _TextOutputBudget | None = None,
+    container_width_twips: int | None = None,
 ) -> str:
     if depth >= _MAX_RENDER_DEPTH:
         return '<div class="placeholder">[Nested content omitted at safe depth limit]</div>\n'
@@ -232,10 +235,26 @@ def _render_blocks(
                     seen_blocks.add(id(candidate))
                     items.append(candidate)
                     index += 1
-                result.append(_list(document, kind, level, items, text_budget))
+                result.append(
+                    _list(
+                        document,
+                        kind,
+                        level,
+                        items,
+                        text_budget,
+                        container_width_twips=container_width_twips,
+                    )
+                )
                 has_content = True
                 continue
-            result.append(_paragraph(document, block, text_budget))
+            result.append(
+                _paragraph(
+                    document,
+                    block,
+                    text_budget,
+                    container_width_twips=container_width_twips,
+                )
+            )
         elif isinstance(block, PageBreak):
             result.append(_page_break())
         elif isinstance(block, Table):
@@ -277,6 +296,7 @@ def _render_blocks(
                 seen_blocks,
                 promoted_furniture,
                 text_budget,
+                container_width_twips,
             )
             result.append(
                 '<aside class="annotation" role="note">\n'
@@ -301,6 +321,7 @@ def _render_blocks(
                 seen_blocks,
                 promoted_furniture,
                 text_budget,
+                container_width_twips,
             )
             result.append(
                 '<aside class="footnote" role="doc-footnote">\n'
@@ -324,6 +345,7 @@ def _render_blocks(
                 seen_blocks,
                 promoted_furniture,
                 text_budget,
+                container_width_twips,
             )
             result.append(
                 f'<{tag} class="{css_class}" data-placement="{_attribute(placement)}">\n'
@@ -382,6 +404,9 @@ def _frame(
         seen_blocks,
         promoted_furniture,
         text_budget,
+        # Frames are reflowed as ordinary HTML sections.  Their source width
+        # is therefore not a real containing block for region arithmetic.
+        None,
     )
     return (
         f'<section class="document-frame" data-placement="{_attribute(placement)}"'
@@ -400,6 +425,7 @@ def _nested_html(
     seen_blocks: set[int],
     promoted_furniture: set[int],
     text_budget: _TextOutputBudget,
+    container_width_twips: int | None,
 ) -> str:
     identity = id(owner)
     if identity in active:
@@ -413,6 +439,7 @@ def _nested_html(
         seen_blocks=seen_blocks,
         promoted_furniture=promoted_furniture,
         text_budget=text_budget,
+        container_width_twips=container_width_twips,
     )
 
 
@@ -451,6 +478,7 @@ def _layout_furniture(
         content = _render_blocks(
             document,
             block.blocks,
+            container_width_twips=_page_body_width_twips(document),
             promoted_furniture=promoted,
             text_budget=text_budget,
         )
@@ -533,10 +561,16 @@ def _paragraph(
     document: Document,
     paragraph: Paragraph,
     text_budget: _TextOutputBudget,
+    *,
+    container_width_twips: int | None,
 ) -> str:
     heading = _heading_level(paragraph.style_name)
     tag = f"h{heading}" if heading else "p"
-    attributes = _paragraph_attributes(document, paragraph)
+    attributes = _paragraph_attributes(
+        document,
+        paragraph,
+        container_width_twips=container_width_twips,
+    )
     content = _paragraph_content(document, paragraph, text_budget)
     return f"<{tag}{attributes}>{content}</{tag}>\n"
 
@@ -547,12 +581,19 @@ def _list(
     level: int,
     items: list[Paragraph],
     text_budget: _TextOutputBudget,
+    *,
+    container_width_twips: int | None,
 ) -> str:
     tag = "ol" if kind == "number" else "ul"
     class_name = f' class="level-{level}"' if level else ""
     parts = [f"<{tag}{class_name}>\n"]
     for item in items:
-        attributes = _paragraph_attributes(document, item, omit_indentation=True)
+        attributes = _paragraph_attributes(
+            document,
+            item,
+            omit_indentation=True,
+            container_width_twips=container_width_twips,
+        )
         parts.append(
             f"<li{attributes}>{_paragraph_content(document, item, text_budget)}</li>\n"
         )
@@ -638,6 +679,7 @@ def _paragraph_attributes(
     paragraph: Paragraph,
     *,
     omit_indentation: bool = False,
+    container_width_twips: int | None = None,
 ) -> str:
     definitions = _style_chain(document, paragraph.style_name)
 
@@ -655,12 +697,32 @@ def _paragraph_attributes(
     if alignment in {"left", "right", "center", "justify"}:
         css.append(f"text-align:{alignment}")
     if not omit_indentation:
-        for attribute, css_name in (
-            ("left_indent_in", "margin-left"),
-            ("right_indent_in", "margin-right"),
-            ("first_line_indent_in", "text-indent"),
+        region = resolve_paragraph_region(paragraph, container_width_twips)
+        for attribute, css_name, region_twips in (
+            (
+                "left_indent_in",
+                "margin-left",
+                region.left_twips if region is not None else 0,
+            ),
+            (
+                "right_indent_in",
+                "margin-right",
+                region.right_twips if region is not None else 0,
+            ),
+            (
+                "first_line_indent_in",
+                "text-indent",
+                region.first_line_twips if region is not None else 0,
+            ),
         ):
-            number = _number(inherited(attribute), minimum=-20.0, maximum=20.0)
+            inherited_value = inherited(attribute)
+            if inherited_value is None and region_twips == 0:
+                continue
+            number = _number(
+                (inherited_value or 0.0) + region_twips / 1440.0,
+                minimum=-20.0,
+                maximum=20.0,
+            )
             if number is not None:
                 css.append(f"{css_name}:{number:g}in")
     for attribute, css_name in (
@@ -793,7 +855,15 @@ def _table_row(
             else ""
         )
         content += "".join(
-            _paragraph(document, item, text_budget) for item in paragraphs
+            _paragraph(
+                document,
+                item,
+                text_budget,
+                # HTML tables use automatic column sizing, so there is no
+                # explicit cell width against which to resolve a source region.
+                container_width_twips=None,
+            )
+            for item in paragraphs
         )
         result.append(f"<{tag}{attributes}>{content}</{tag}>")
     result.append("</tr>\n")
@@ -1060,7 +1130,7 @@ def _bounded_diagnostic_field(
         result = value
     elif isinstance(value, bytes):
         result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+    elif isinstance(value, bool | int | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):
@@ -1102,6 +1172,11 @@ def _page_css(document: Document) -> str:
 def _page_box(document: Document) -> tuple[float, float, float, float, float, float]:
     _layout, page_box, _odd, _even = _page_layout_boxes(document)
     return page_box or _DEFAULT_PAGE_BOX
+
+
+def _page_body_width_twips(document: Document) -> int:
+    width, _height, _top, right, _bottom, left = _page_box(document)
+    return max(1, round((width - left - right) * 1440.0))
 
 
 def _page_layout_boxes(

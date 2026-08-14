@@ -210,8 +210,13 @@ class _InlineState:
     style_name: str | None = None
     left_indent_in: float | None = None
     first_line_indent_in: float | None = None
+    region_x_twips: int | None = None
+    region_width_twips: int | None = None
+    inline_indent_twips: tuple[int, int, int, int] | None = None
     page_break_before: bool = False
     unknown_tags: list[str] = field(default_factory=list)
+    unapplied_tags: list[str] = field(default_factory=list)
+    open_dynamic_fields: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -577,6 +582,11 @@ def _parse_metadata_and_styles(
     decoded: DecodedSource,
     limits: ParseLimits,
 ) -> None:
+    section_counts: dict[str, int] = {}
+    for section in sections:
+        normalized = section.name.lower()
+        section_counts[normalized] = section_counts.get(normalized, 0) + 1
+
     counts: dict[str, int] = {}
     for section in sections:
         name = section.name.lower()
@@ -643,8 +653,12 @@ def _parse_metadata_and_styles(
                         section.source,
                     )
                 )
-        elif name == "revisions" and any(values):
-            document.metadata[name] = next(value for value in values if value)
+        elif name == "revisions":
+            canonical_no_revisions = section_counts[name] == 1 and values == ["0"]
+            if canonical_no_revisions:
+                document.metadata[name] = "0"
+                continue
+            document.metadata[name] = next((value for value in values if value), "")
             document.blocks.append(
                 UnsupportedObject(
                     "revision state",
@@ -669,6 +683,10 @@ def _parse_metadata_and_styles(
                     section.source,
                 )
             )
+        elif name == "l1":
+            l1_value = _canonical_l1_value(section)
+            if section_counts[name] == 1 and l1_value is not None:
+                document.l1_value = l1_value
         elif name == "fopts":
             _parse_footnote_options(document, section, values)
         elif name == "tag":
@@ -715,6 +733,7 @@ def _record_opaque_fields(
     diagnostic_code: str,
     object_kind: str,
     description: str,
+    body_placeholder: bool = True,
 ) -> None:
     opaque_fields = [field for field in raw_fields if field.strip()]
     if not opaque_fields:
@@ -729,7 +748,8 @@ def _record_opaque_fields(
             reason="fields outside the supported prefix were preserved without interpretation",
         )
     )
-    document.blocks.append(UnsupportedObject(object_kind, description, section.source))
+    if body_placeholder:
+        document.blocks.append(UnsupportedObject(object_kind, description, section.source))
     document.diagnostics.append(
         Diagnostic(
             Severity.WARNING,
@@ -850,6 +870,24 @@ def _bounded_inline_int(value: str) -> int | None:
     return parsed
 
 
+def _bounded_ordinary_name(value: str) -> str | None:
+    decoded = _unescape_literal(value.strip())
+    if not decoded or len(decoded) > 256:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in decoded):
+        return None
+    if decoded == ">" or _MAIN_SECTION.fullmatch(decoded):
+        return None
+    return decoded
+
+
+def _canonical_l1_value(section: SectionRecord) -> int | None:
+    if len(section.raw_lines) != 1:
+        return None
+    parsed = _bounded_inline_int(section.raw_lines[0].strip())
+    return parsed if parsed is not None and parsed >= 0 else None
+
+
 _MAX_PAGE_TWIPS = 22 * 1440
 _MIN_PAGE_TWIPS = 1440
 _MIN_CONTENT_TWIPS = 720
@@ -857,8 +895,9 @@ _MIN_FRAME_COORD = -32768
 _MAX_FRAME_COORD = 32767
 _MAX_TYPED_GEOMETRY_FIELDS = 1024
 _PAGE_LAYOUT_FEATURE_FLAGS = 256 | 512 | 1024 | 2048 | 4096
-_STYLE_CHARACTER_KNOWN_FLAGS = 1 | 2 | 4 | 8 | 32 | 64
-_STYLE_PARAGRAPH_KNOWN_FLAGS = 1 | 2 | 4 | 8
+_STYLE_CHARACTER_KNOWN_FLAGS = 1 | 2 | 4 | 8 | 64 | 128 | 256 | 512 | 0xC000
+_STYLE_ALIGNMENT_KNOWN_FLAGS = 1 | 2 | 4 | 8
+_STYLE_SPACING_KNOWN_FLAGS = 1 | 2 | 4 | 8
 _FRAME_KNOWN_FLAGS = (
     1
     | 2
@@ -1223,15 +1262,8 @@ def _parse_style(
         malformed_subrecords.add("fnt")
     alignment = subsections.get("algn", [])
     if "algn" in subsections and (
-        not alignment
-        or _bounded_inline_int(alignment[0]) is None
-        or (
-            len(alignment) >= 5
-            and (
-                _bounded_inline_int(alignment[3]) is None
-                or _bounded_inline_int(alignment[4]) is None
-            )
-        )
+        len(alignment) < 5
+        or any(_bounded_inline_int(value) is None for value in alignment[:5])
     ):
         malformed_subrecords.add("algn")
     spacing = subsections.get("spc", [])
@@ -1260,7 +1292,20 @@ def _parse_style(
             )
         )
 
-    interpreted_field_counts = {"fnt": 4, "algn": 5, "spc": 5}
+    # KOffice's public importer notes identify the final two common [spc]
+    # values as a structural sentinel and the default text-tightness value.
+    # Only that exact neutral tail is accepted; other values remain semantic
+    # losses because renderers do not implement spacing control/tightness.
+    supported_spacing_count = (
+        7
+        if len(spacing) >= 7 and spacing[5] == "1" and spacing[6] == "100"
+        else 5
+    )
+    interpreted_field_counts = {
+        "fnt": 4,
+        "algn": 5,
+        "spc": supported_spacing_count,
+    }
     opaque_field_tails = {
         subrecord: fields[interpreted_field_counts[subrecord] :]
         for subrecord, fields in subsections.items()
@@ -1295,8 +1340,8 @@ def _parse_style(
 
     supported_flag_fields = {
         "fnt": (font, 3, _STYLE_CHARACTER_KNOWN_FLAGS),
-        "algn": (alignment, 0, _STYLE_PARAGRAPH_KNOWN_FLAGS),
-        "spc": (spacing, 0, _STYLE_PARAGRAPH_KNOWN_FLAGS),
+        "algn": (alignment, 0, _STYLE_ALIGNMENT_KNOWN_FLAGS),
+        "spc": (spacing, 0, _STYLE_SPACING_KNOWN_FLAGS),
     }
     unknown_flag_fields: list[tuple[str, str, int]] = []
     for subrecord, (fields, field_index, known_mask) in supported_flag_fields.items():
@@ -1336,9 +1381,6 @@ def _parse_style(
                 ),
             )
         )
-        document.blocks.append(
-            UnsupportedObject("style flag bits", description, section.source)
-        )
         document.diagnostics.append(
             Diagnostic(
                 Severity.WARNING,
@@ -1363,7 +1405,9 @@ def _parse_style(
             bold=bool(flags & 1),
             italic=bool(flags & 2),
             underline=bool(flags & (4 | 8 | 64)),
-            strike=bool(flags & 32),
+            strike=bool(flags & 128),
+            superscript=bool(flags & 256),
+            subscript=bool(flags & 512),
         )
 
     if alignment:
@@ -1378,10 +1422,38 @@ def _parse_style(
             else "left"
         )
         if len(alignment) >= 5:
-            left = _bounded_inline_int(alignment[3])
-            first = _bounded_inline_int(alignment[4])
-            style.left_indent_in = left / 1440.0 if left is not None else None
-            style.first_line_indent_in = first / 1440.0 if first is not None else None
+            all_indent = _bounded_inline_int(alignment[2])
+            first_position = _bounded_inline_int(alignment[3])
+            rest_position = _bounded_inline_int(alignment[4])
+            if first_position is not None and rest_position is not None:
+                style.left_indent_in = rest_position / 1440.0
+                style.first_line_indent_in = (
+                    first_position - rest_position
+                ) / 1440.0
+            if all_indent not in {None, 0}:
+                raw = "[algn]\n" + "\n".join(alignment[:5])
+                document.unknown_records.append(
+                    UnknownRecord(
+                        section=section.name,
+                        record_type="style-alignment-all-indent",
+                        raw=raw,
+                        source=section.source,
+                        reason=(
+                            "the documented all-indent field was preserved but its "
+                            "both-side layout semantics were not applied"
+                        ),
+                    )
+                )
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "style-alignment-all-indent-unapplied",
+                        f"style {name!r} has unapplied both-side indentation",
+                        section.source,
+                        raw,
+                        lossiness=Lossiness.SEMANTIC,
+                    )
+                )
 
     if len(spacing) >= 5:
         flag = _bounded_inline_int(spacing[0]) or 0
@@ -1395,32 +1467,34 @@ def _parse_style(
         style.space_before_pt = before / 20.0 if before is not None else None
         style.space_after_pt = after / 20.0 if after is not None else None
     if top_level:
-        parent_candidates = [
-            (index, value)
-            for index, (value, _raw) in enumerate(top_level)
-            if value and not value.isdigit()
-        ]
-        consumed_parent_index: int | None = None
-        if parent_candidates:
-            consumed_parent_index, parent_value = parent_candidates[-1]
-            style.parent = _unescape_literal(parent_value)
-        opaque_top_level = [
-            raw
-            for index, (value, raw) in enumerate(top_level)
-            if value and index != consumed_parent_index
-        ]
-        _record_opaque_fields(
-            document,
-            section,
-            opaque_top_level,
-            record_type="style-top-level-fields",
-            diagnostic_code="style-top-level-fields-opaque",
-            object_kind="style fields",
-            description=(
-                f"uninterpreted top-level fields in style {name!r} were preserved; "
-                "raw data remains in JSON"
-            ),
+        shortcut = _bounded_inline_int(top_level[0][0]) if len(top_level) == 4 else None
+        following = (
+            _bounded_ordinary_name(top_level[1][0]) if len(top_level) == 4 else None
         )
+        canonical_envelope = (
+            shortcut is not None
+            and shortcut >= 0
+            and following is not None
+            and top_level[2][0] == "0"
+            and top_level[3][0] == "0"
+        )
+        if canonical_envelope:
+            style.shortcut_key = shortcut
+            style.following_style = following
+        else:
+            _record_opaque_fields(
+                document,
+                section,
+                [raw for _value, raw in top_level],
+                record_type="style-top-level-fields",
+                diagnostic_code="style-top-level-fields-opaque",
+                object_kind="style fields",
+                description=(
+                    f"uninterpreted top-level fields in style {name!r} were preserved; "
+                    "raw data remains in JSON"
+                ),
+                body_placeholder=False,
+            )
     return style
 
 
@@ -1486,13 +1560,14 @@ def _classify_opaque_subrecords(
     known: set[str],
     scope: str,
     budget: _RecordBudget,
+    known_positions: set[int] | None = None,
 ) -> list[Block]:
     """Preserve unsupported nested records with bounded, visible placeholders."""
 
     unsupported = [
         (position, index, name)
         for position, (index, name) in enumerate(direct_subrecords)
-        if name not in known
+        if name not in known and (known_positions is None or index not in known_positions)
     ]
     budget.charge(len(unsupported) * 2, f"unsupported [{scope}] subrecord parsing")
     blocks: list[Block] = []
@@ -1533,6 +1608,35 @@ def _classify_opaque_subrecords(
             )
         )
     return blocks
+
+
+def _parse_frame_name(
+    section: SectionRecord,
+    direct_subrecords: list[tuple[int, str]],
+) -> tuple[str | None, set[int]]:
+    """Type one exact bounded [frmname] record, leaving all other forms opaque."""
+
+    markers = [
+        (position, index)
+        for position, (index, name) in enumerate(direct_subrecords)
+        if name == "frmname"
+    ]
+    if len(markers) != 1:
+        return None, set()
+    position, start = markers[0]
+    end = (
+        direct_subrecords[position + 1][0]
+        if position + 1 < len(direct_subrecords)
+        else len(section.raw_lines)
+    )
+    payload = section.raw_lines[start + 1 : end]
+    if len(payload) != 1:
+        return None, set()
+    line = payload[0]
+    if len(line) - len(line.lstrip()) <= 1:
+        return None, set()
+    name = _bounded_ordinary_name(line)
+    return (name, {start}) if name is not None else (None, set())
 
 
 def _parse_structures(
@@ -1619,17 +1723,22 @@ def _parse_structures(
                     )
                 )
         elif name == "frm":
+            direct_subrecords = _direct_subrecords_outside_content(
+                section,
+                text_marker_indents={1},
+                suppress_table_data=True,
+            )
+            frame_name, typed_name_positions = _parse_frame_name(
+                section, direct_subrecords
+            )
             frame_blocks = _classify_opaque_subrecords(
                 document,
                 section,
-                _direct_subrecords_outside_content(
-                    section,
-                    text_marker_indents={1},
-                    suppress_table_data=True,
-                ),
+                direct_subrecords,
                 known=_KNOWN_FRAME_SUBRECORDS,
                 scope="frame",
                 budget=nested_record_budget,
+                known_positions=typed_name_positions,
             )
             has_table_marker = any(
                 line.strip().lower() == "[tbl]" for line in section.raw_lines
@@ -1729,6 +1838,7 @@ def _parse_structures(
                 section,
                 frame_blocks,
                 content_kind=content_kind,
+                name=frame_name,
             )
             if frame.placement == "anchored":
                 frame.anchor_index = len(result.anchored_frames)
@@ -2138,6 +2248,7 @@ def _build_frame(
     blocks: list[Block],
     *,
     content_kind: str,
+    name: str | None = None,
 ) -> Frame:
     header_fields, header_truncated = _prefix_fields(section.raw_lines)
     layout_fields, layout_truncated = _nested_record_fields(
@@ -2154,6 +2265,7 @@ def _build_frame(
         frame_layout_fields_truncated=layout_truncated,
         raw="\n".join(section.raw_lines),
         source=section.source,
+        name=name,
     )
 
 
@@ -2169,6 +2281,7 @@ def _build_frame_from_fields(
     frame_layout_fields_truncated: bool = False,
     raw: str,
     source: SourceSpan,
+    name: str | None = None,
 ) -> Frame:
     if header_fields_truncated or frame_layout_fields_truncated:
         labels = []
@@ -2297,6 +2410,7 @@ def _build_frame_from_fields(
         frame_layout_fields=frame_layout_fields,
         raw=raw,
         source=source,
+        name=name,
     )
 
 
@@ -3661,6 +3775,9 @@ def _parse_inline_paragraph(
     paragraph.style_name = state.style_name
     paragraph.alignment = state.alignment
     paragraph.line_spacing = state.line_spacing
+    paragraph.region_x_twips = state.region_x_twips
+    paragraph.region_width_twips = state.region_width_twips
+    paragraph.inline_indent_twips = state.inline_indent_twips
     paragraph.left_indent_in = state.left_indent_in
     paragraph.first_line_indent_in = state.first_line_indent_in
     paragraph.page_break_before = state.page_break_before
@@ -3689,6 +3806,32 @@ def _parse_inline_paragraph(
             )
         )
         state.unknown_tags.clear()
+    if state.unapplied_tags:
+        unique = sorted(set(state.unapplied_tags))
+        document.unknown_records.append(
+            UnknownRecord(
+                section="edoc",
+                record_type="typed-inline-command-unapplied",
+                raw=" ".join(f"<{tag}>" for tag in unique),
+                source=source,
+                reason=(
+                    "inline command was parsed atomically, but its layout semantics "
+                    "were not applied"
+                ),
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "inline-command-semantics-unapplied",
+                f"preserved {len(unique)} typed inline command form(s) without "
+                "applying uncorroborated layout semantics",
+                source,
+                " ".join(f"<{tag}>" for tag in unique),
+                lossiness=Lossiness.SEMANTIC,
+            )
+        )
+        state.unapplied_tags.clear()
     if undefined_style_count:
         document.diagnostics.append(
             Diagnostic(
@@ -3782,78 +3925,100 @@ def _apply_inline_tag(
         return None
     if tag.startswith(":f"):
         descriptor = tag[2:]
-        invalid = False
         if not descriptor:
             default = document.styles.get(state.style_name or "Body Text")
             state.style = copy.copy(default.character) if default else CharacterStyle()
-        else:
-            fields = descriptor.split(",")
-            if len(fields) not in {1, 2, 5}:
+            return None
+        fields = descriptor.split(",")
+        compact = len(fields) == 3 and fields[2] == ""
+        if len(fields) not in {1, 2, 5} and not compact:
+            state.unknown_tags.append(tag[:200])
+            return _unsupported_inline_marker(tag)
+        size = _bounded_inline_int(fields[0]) if fields[0] else None
+        if fields[0] and size is None:
+            state.unknown_tags.append(tag[:200])
+            return _unsupported_inline_marker(tag)
+        family: str | None = None
+        if len(fields) > 1 and fields[1]:
+            family = re.sub(r"^\d", "", _unescape_literal(fields[1]))
+            if len(family) > 256:
                 state.unknown_tags.append(tag[:200])
-                invalid = True
-            size = _bounded_inline_int(fields[0]) if fields else None
-            if size is not None:
-                state.style.font_size_pt = size / 20.0
-            elif fields and fields[0]:
+                return _unsupported_inline_marker(tag)
+        channels: list[int] | None = None
+        if len(fields) == 5:
+            parsed_channels = [_bounded_inline_int(item) for item in fields[2:5]]
+            if any(item is None for item in parsed_channels):
                 state.unknown_tags.append(tag[:200])
-                invalid = True
-            if len(fields) > 1 and fields[1]:
-                family = re.sub(r"^\d", "", _unescape_literal(fields[1]))
-                if len(family) <= 256:
-                    state.style.font_family = family
-                else:
-                    state.unknown_tags.append(tag[:200])
-                    invalid = True
-            if len(fields) == 5 and all(
-                _bounded_inline_int(item) is not None for item in fields[2:5]
-            ):
-                channels = [max(0, min(255, int(item))) for item in fields[2:5]]
-                state.style.color = "#{:02x}{:02x}{:02x}".format(*channels)
-            elif len(fields) == 5:
-                state.unknown_tags.append(tag[:200])
-                invalid = True
-        return _unsupported_inline_marker(tag) if invalid else None
-    if match := _PARAGRAPH_LAYOUT.match(tag):
-        first = _bounded_inline_int(match.group("first"))
-        rest = (
-            _bounded_inline_int(match.group("rest")) if match.group("rest") else None
+                return _unsupported_inline_marker(tag)
+            channels = [max(0, min(255, item)) for item in parsed_channels if item is not None]
+        # Omitted font-command groups restore that property from the current
+        # paragraph style.  Mutate only after the complete command has passed
+        # shape and value validation so hostile prefixes cannot partially alter
+        # following text.
+        default = document.styles.get(state.style_name or "Body Text")
+        default_character = default.character if default else CharacterStyle()
+        replacement = copy.copy(state.style)
+        replacement.font_size_pt = (
+            size / 20.0 if size is not None else default_character.font_size_pt
         )
-        if first is not None:
-            state.first_line_indent_in = first / 1440.0
-        else:
+        replacement.font_family = (
+            family if family is not None else default_character.font_family
+        )
+        replacement.color = (
+            "#{:02x}{:02x}{:02x}".format(*channels)
+            if channels is not None
+            else default_character.color
+        )
+        state.style = replacement
+        return None
+    if match := _PARAGRAPH_LAYOUT.match(tag):
+        raw_x = match.group("first")
+        raw_width = match.group("rest")
+        x = _bounded_inline_int(raw_x)
+        width = _bounded_inline_int(raw_width) if raw_width is not None else None
+        if x is None or width is None or x < 0 or width <= 0:
             state.unknown_tags.append(tag[:200])
-            invalid = True
-        invalid = first is None
-        if rest is not None:
-            state.left_indent_in = rest / 1440.0
-        elif match.group("rest"):
-            state.unknown_tags.append(tag[:200])
-            invalid = True
-        return _unsupported_inline_marker(tag) if invalid else None
+            return _unsupported_inline_marker(tag)
+        state.region_x_twips = x
+        state.region_width_twips = width
+        if not any(
+            diagnostic.code == "paragraph-region-reflowed"
+            for diagnostic in document.diagnostics
+        ):
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.INFO,
+                    "paragraph-region-reflowed",
+                    "paragraph region geometry is retained and safely reflowed "
+                    "against renderer container widths",
+                    source,
+                    f"<{tag[:200]}>",
+                    lossiness=Lossiness.SEMANTIC,
+                )
+            )
+        return None
     if tag.startswith(":I"):
         values = tag[2:].split(",")
-        invalid = len(values) != 3 or any(
-            value and _bounded_inline_int(value) is None for value in values
+        parsed = [_bounded_inline_int(value) for value in values]
+        valid = (
+            len(values) == 4
+            and all(value is not None and value >= 0 for value in parsed)
+            and parsed[3] == 0
         )
-        if invalid:
+        if not valid:
             state.unknown_tags.append(tag[:200])
-        if values and _bounded_inline_int(values[0]) is not None:
-            state.left_indent_in = int(values[0]) / 1440.0
-        elif values and values[0]:
-            if tag[:200] not in state.unknown_tags:
-                state.unknown_tags.append(tag[:200])
-            invalid = True
-        if len(values) >= 3 and _bounded_inline_int(values[2]) is not None:
-            state.first_line_indent_in = int(values[2]) / 1440.0
-        elif len(values) >= 3 and values[2]:
-            if tag[:200] not in state.unknown_tags:
-                state.unknown_tags.append(tag[:200])
-            invalid = True
-        return _unsupported_inline_marker(tag) if invalid else None
-    if tag in {":s", ":S-"}:
-        # Spell-check and line-spacing-reset state have no visible representation.
-        state.unknown_tags.append(tag)
-        return _unsupported_inline_marker(tag)
+            return _unsupported_inline_marker(tag)
+        state.inline_indent_twips = tuple(parsed)  # type: ignore[arg-type]
+        state.unapplied_tags.append(tag[:200])
+        return None
+    if tag == ":s":
+        # Spell-check state is intentionally nonprinting.
+        return None
+    if tag == ":S-":
+        # Restore the current paragraph style's default line spacing.
+        default = document.styles.get(state.style_name or "Body Text")
+        state.line_spacing = default.line_spacing if default else None
+        return None
     if tag == ":":
         default = document.styles.get(state.style_name or "Body Text")
         state.style = copy.copy(default.character) if default else CharacterStyle()
@@ -3871,11 +4036,21 @@ def _apply_inline_tag(
     if tag.startswith(":A"):
         state.unknown_tags.append(tag[:200])
         return _unsupported_inline_marker(tag)
-    if tag.startswith(":X~") or tag.startswith(":Z~"):
+    if tag.startswith(":X~"):
+        descriptor = tag[3:]
+        if descriptor and descriptor in state.open_dynamic_fields:
+            state.open_dynamic_fields.remove(descriptor)
+            return None
+        state.unknown_tags.append(tag[:200])
+        return _unsupported_inline_marker(tag)
+    if tag.startswith(":Z~"):
         state.unknown_tags.append(tag[:200])
         return _unsupported_inline_marker(tag)
     if tag.startswith(":X"):
         state.unknown_tags.append(tag[:200])
+        descriptor = tag[2:]
+        if descriptor:
+            state.open_dynamic_fields.append(descriptor)
         field = tag.partition(";")[2].strip()
         fallback = re.search(r'\belse\s+"([^"]*)"', field, re.IGNORECASE)
         if fallback:
@@ -3959,8 +4134,17 @@ def _parse_plain_text_paragraphs(
 
 def _record_unknown_main_sections(document: Document, sections: list[SectionRecord]) -> None:
     known = _KNOWN_HEADER_SECTIONS | _STRUCTURAL_SECTIONS | {"tag", "edoc"}
+    l1_count = sum(section.name.lower() == "l1" for section in sections)
     for section in sections:
         name = section.name.lower()
+        if name == "elay" and not section.raw_lines:
+            continue
+        if (
+            name == "l1"
+            and l1_count == 1
+            and _canonical_l1_value(section) is not None
+        ):
+            continue
         if name not in known:
             document.unknown_records.append(
                 UnknownRecord(

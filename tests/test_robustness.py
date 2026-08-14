@@ -170,7 +170,7 @@ def test_recognized_header_tails_are_raw_visible_and_strictly_lossy(
         parse_bytes(source, strict=True)
 
 
-def test_style_top_level_fields_preserve_one_parent_and_classify_the_rest() -> None:
+def test_noncanonical_style_top_level_fields_stay_opaque_without_parent_guess() -> None:
     source = _sam(
         b"@Child@BODY",
         extra=(
@@ -191,18 +191,19 @@ def test_style_top_level_fields_preserve_one_parent_and_classify_the_rest() -> N
     )
     rendered = text_renderer.render(document).decode("utf-8")
 
-    assert document.styles["Child"].parent == "ParentTwo"
+    assert document.styles["Child"].parent is None
+    assert document.styles["Child"].following_style is None
     assert "777" in record.raw
     assert "ParentOne" in record.raw
-    assert "ParentTwo" not in record.raw
+    assert "ParentTwo" in record.raw
     assert diagnostic.lossiness is Lossiness.SEMANTIC
-    assert "Unsupported style fields" in rendered
+    assert "Unsupported style fields" not in rendered
     assert "BODY" in rendered
     with pytest.raises(PreservationLossError):
         parse_bytes(source, strict=True)
 
 
-def test_style_unknown_flag_bits_are_raw_visible_and_keep_supported_bits() -> None:
+def test_style_unknown_flag_bits_stay_raw_diagnostic_and_keep_supported_bits() -> None:
     source = _sam(
         b"@Child@BODY",
         extra=(
@@ -229,9 +230,10 @@ def test_style_unknown_flag_bits_are_raw_visible_and_keep_supported_bits() -> No
     assert style.character.bold is True
     assert style.alignment == "left"
     assert style.line_spacing == 1.0
-    assert all(marker in record.raw for marker in ("[fnt]", "[algn]", "[spc]"))
+    assert "[fnt]" not in record.raw
+    assert all(marker in record.raw for marker in ("[algn]", "[spc]"))
     assert diagnostic.lossiness is Lossiness.SEMANTIC
-    assert "Unsupported style flag bits" in rendered
+    assert "Unsupported style flag bits" not in rendered
     assert "BODY" in rendered
     with pytest.raises(PreservationLossError):
         parse_bytes(source, strict=True)
