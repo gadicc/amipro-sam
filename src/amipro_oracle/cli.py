@@ -10,6 +10,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from .amipro_install import (
+    OUTER_TIME_LIMIT_SECONDS as AMIPRO_INSTALL_TIME_LIMIT_SECONDS,
+)
+from .amipro_install import install_amipro_checkpoint
 from .compare import compare_analyses
 from .constants import (
     COMPARE_SCHEMA,
@@ -79,6 +83,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="affirm your right to use the cached runtime made from proprietary media",
     )
     boot_probe.set_defaults(handler=_command_boot_probe)
+
+    install_amipro = subparsers.add_parser(
+        "install-amipro",
+        help="install Ami Pro into a disposable clone of a Windows-ready runtime",
+    )
+    _common(install_amipro, backend=False)
+    install_amipro.add_argument("--amipro-media", type=Path)
+    install_amipro.add_argument("--runtime-key")
+    install_amipro.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=AMIPRO_INSTALL_TIME_LIMIT_SECONDS,
+        help=(
+            "outer wall-clock deadline "
+            f"(maximum {AMIPRO_INSTALL_TIME_LIMIT_SECONDS}s)"
+        ),
+    )
+    install_amipro.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the supplied local proprietary media",
+    )
+    install_amipro.set_defaults(handler=_command_install_amipro)
 
     smoke = subparsers.add_parser("smoke", help="run one invented-document lifecycle smoke test")
     _common(smoke, backend=True)
@@ -462,6 +489,45 @@ def _command_boot_probe(args: argparse.Namespace) -> int:
         text=(
             f"Windows runtime ready: {result['runtime_key']}\n"
             "Next: install Ami Pro into a disposable clone of this verified runtime."
+        ),
+    )
+    return EXIT_OK
+
+
+def _command_install_amipro(args: argparse.Namespace) -> int:
+    if not args.confirm_proprietary_media_rights:
+        raise OracleError(
+            "the real Ami Pro install requires --confirm-proprietary-media-rights",
+            exit_code=EXIT_USAGE,
+        )
+    media_path = _configured_media(args.amipro_media, "AMIPRO_MEDIA_DIR")
+    if media_path is None:
+        raise OracleError(
+            "Ami Pro media is required: pass --amipro-media PATH or set AMIPRO_MEDIA_DIR",
+            exit_code=EXIT_MISSING,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+            exit_code=EXIT_MISSING,
+        )
+    media = inventory_media(media_path, kind="amipro")
+    result = install_amipro_checkpoint(
+        home,
+        media_path,
+        media,
+        image,
+        runtime_key=args.runtime_key,
+        timeout_seconds=args.timeout_seconds,
+    )
+    _emit(
+        args,
+        result,
+        text=(
+            f"Ami Pro install candidate ready: {result['checkpoint_key']}\n"
+            "Next: run a separate Ami Pro launch-and-clean-exit probe."
         ),
     )
     return EXIT_OK
