@@ -540,6 +540,35 @@ def test_recorded_image_probe_requires_current_lock_and_matching_image_label(
     assert stale_record["current_lock_sha256"] == lock_sha256
 
 
+def test_native_probe_accepts_the_locked_dosbox_version_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "dosbox-x"
+    executable.write_bytes(b"synthetic executable")
+    monkeypatch.setattr(toolchain_module.shutil, "which", lambda _name: str(executable))
+    monkeypatch.setattr(
+        toolchain_module.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            1,
+            "DOSBox-X version 2026.08.02 SDL2\n",
+            "",
+        ),
+    )
+
+    accepted = toolchain_module._probe(
+        "dosbox-x", ["--version"], "2026.08.02", None, 1
+    )
+    rejected = toolchain_module._probe(
+        "dosbox-x", ["--version"], "2026.08.02", None, 0
+    )
+
+    assert accepted["status"] == "unverified"
+    assert accepted["expected_exit_code"] == 1
+    assert rejected["status"] == "mismatch"
+
+
 def test_oci_invocation_is_rootless_networkless_and_mount_bounded(tmp_path: Path) -> None:
     oracle = tmp_path / "oracle"
     job = oracle / "jobs" / "job"

@@ -31,12 +31,14 @@ def _probe(
     arguments: list[str],
     expected: str,
     expected_sha256: str | None,
+    expected_exit_code: int,
 ) -> dict[str, object]:
     path = shutil.which(executable)
     result: dict[str, object] = {
         "name": executable,
         "path": path,
         "expected": expected,
+        "expected_exit_code": expected_exit_code,
         "status": "missing" if path is None else "unknown",
     }
     if path is None:
@@ -53,7 +55,7 @@ def _probe(
         )
         output = process.stdout.strip()
         actual_sha256 = sha256_file(Path(path))
-        version_matches = process.returncode == 0 and expected in output
+        version_matches = process.returncode == expected_exit_code and expected in output
         hash_matches = expected_sha256 is not None and actual_sha256 == expected_sha256
         result.update(
             {
@@ -85,6 +87,7 @@ def probe_toolchain() -> dict[str, object]:
             str(item["expected_sha256"])
             if item.get("expected_sha256") is not None
             else None,
+            int(item.get("expected_exit_code", 0)),
         )
         for item in lock["native_probes"]
     ]

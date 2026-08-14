@@ -1,6 +1,6 @@
 {
   "schema": "amipro-oracle-toolchain-v1",
-  "containerfile_sha256": "f07bb395b984dca10d9dbc54f35e20318f6f8a8873d63b2f769199ae34f55531",
+  "containerfile_sha256": "cde84973c1c38351b27ab3563e93370dec96bcfee3006a6ed1c137da18ad14ce",
   "debian": {
     "image": "docker.io/library/debian:bookworm-20260713-slim",
     "manifest_digest": "sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818",
@@ -61,30 +61,35 @@
       "executable": "dosbox-x",
       "arguments": ["--version"],
       "expected_output": "2026.08.02",
+      "expected_exit_code": 1,
       "expected_sha256": null
     },
     {
       "executable": "gs",
       "arguments": ["--version"],
       "expected_output": "10.00.0",
+      "expected_exit_code": 0,
       "expected_sha256": null
     },
     {
       "executable": "pdfinfo",
       "arguments": ["-v"],
       "expected_output": "22.12.0",
+      "expected_exit_code": 0,
       "expected_sha256": null
     },
     {
       "executable": "pdftotext",
       "arguments": ["-v"],
       "expected_output": "22.12.0",
+      "expected_exit_code": 0,
       "expected_sha256": null
     },
     {
       "executable": "pdftoppm",
       "arguments": ["-v"],
       "expected_output": "22.12.0",
+      "expected_exit_code": 0,
       "expected_sha256": null
     }
   ]

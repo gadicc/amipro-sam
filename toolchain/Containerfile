@@ -115,9 +115,13 @@ RUN if ldd /opt/dosbox-x/bin/dosbox-x | grep -Eiq '(pcap|slirp|SDL[^ ]*net)'; th
       echo "unexpected network library in the runtime image" >&2; \
       exit 1; \
     fi
-RUN SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-      /opt/dosbox-x/bin/dosbox-x --version > /tmp/dosbox-version.txt 2>&1 \
-      && grep -F '2026.08.02' /tmp/dosbox-version.txt
+RUN set +e; \
+    SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+      /opt/dosbox-x/bin/dosbox-x --version > /tmp/dosbox-version.txt 2>&1; \
+    status=$?; \
+    set -e; \
+    test "$status" -eq 1; \
+    grep -F '2026.08.02' /tmp/dosbox-version.txt
 RUN gs --version | grep -Fx '10.00.0'
 RUN pdfinfo -v > /tmp/pdfinfo-version.txt 2>&1 \
       && grep -F '22.12.0' /tmp/pdfinfo-version.txt
