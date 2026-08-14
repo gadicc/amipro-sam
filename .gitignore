@@ -12,3 +12,4 @@ tmp/
 .amipro-oracle/
 toolchain/.build/
 .amipro-research/
+.env.local
