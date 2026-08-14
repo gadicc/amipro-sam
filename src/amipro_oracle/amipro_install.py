@@ -491,15 +491,34 @@ def _screen_state(
         if before.st_size > 16 * 1024 * 1024:
             raise OSError("screen is oversized")
         payload = path.read_bytes()
-        width, height, pixels = decode_png(path)
         after = path.stat()
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise OSError("screen changed during its atomic read")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".amipro-screen-",
+            suffix=".png",
+            dir=path.parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(payload)
+            width, height, pixels = decode_png(temporary)
+        finally:
+            temporary.unlink(missing_ok=True)
     except (OSError, ValueError) as exc:
         raise OracleError("installer screen evidence is invalid", exit_code=EXIT_BACKEND) from exc
-    if (
-        (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        or (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT)
-    ):
+    if (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
         raise OracleError("installer screen changed while reading", exit_code=EXIT_BACKEND)
     box = state.get("box")
     if (

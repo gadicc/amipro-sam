@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -259,6 +260,29 @@ def test_installer_crop_profile_rejects_changed_pixels(tmp_path: Path) -> None:
     screen.write_bytes(changed)
     with pytest.raises(OracleError):
         install_module._screen_state(screen, states[0])
+
+
+def test_installer_screen_decodes_the_verified_snapshot_when_source_refreshes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    states, _profile, payload, _exit_state = _synthetic_ui_profile(tmp_path)
+    screen = tmp_path / "screen.png"
+    screen.write_bytes(payload)
+    original_decode = install_module.decode_png
+    replacement = _program_manager_screen(blue_pixels=20_000, variant=3)
+
+    def refresh_source(snapshot: Path) -> tuple[int, int, bytes]:
+        assert snapshot != screen
+        screen.write_bytes(replacement)
+        return original_decode(snapshot)
+
+    monkeypatch.setattr(install_module, "decode_png", refresh_source)
+    observed, captured = install_module._screen_state(screen, states[0])
+
+    assert captured == payload
+    assert observed["screen_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert sha256_file(screen) == hashlib.sha256(replacement).hexdigest()
 
 
 def test_install_checkpoint_promotes_reuses_and_rejects_tampered_evidence(
