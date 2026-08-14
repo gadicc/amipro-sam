@@ -5,3 +5,7 @@ Samna, or their successors.
 
 No Ami Pro program files, documentation, fonts, templates, macros, installation
 media, or proprietary sample documents are bundled with this project.
+
+The project bundles openly licensed preservation fonts for deterministic PDF
+rendering. Their licenses, provenance, hashes, and supported Unicode coverage
+are documented in `src/amipro_sam/assets/fonts/NOTICE.md`.

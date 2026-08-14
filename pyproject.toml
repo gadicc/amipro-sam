@@ -17,7 +17,11 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Topic :: Text Processing :: Markup",
 ]
-dependencies = ["reportlab>=4.0,<6"]
+dependencies = [
+  "reportlab==4.4.10",
+  "python-bidi==0.6.11",
+  "uharfbuzz==0.55.0",
+]
 
 [project.optional-dependencies]
 docx = ["python-docx>=1.1,<2"]
@@ -32,6 +36,15 @@ amipro-sam = "amipro_sam.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.package-data]
+amipro_sam = [
+  "assets/fonts/*.ttf",
+  "assets/fonts/*.txt",
+  "assets/fonts/*.md",
+  "assets/fonts/*.yml",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

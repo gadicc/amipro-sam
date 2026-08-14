@@ -13,6 +13,9 @@ discarded or activated.
 | Bold, italic, underline, strike | Supported | Supported | Best effort |
 | Superscript and subscript | Supported | Supported | Plain text markers/flattened |
 | Font family, size, RGB color | Supported | Best effort with substitution | Flattened |
+| BMP Unicode text | Preserved in IR | PDF uses cmap-gated fixed bundled fonts for Latin, Greek, Cyrillic, documented SC-default CJK, Hebrew, and Arabic subsets; ODT/DOCX retain Unicode for consumer font selection; HTML uses browser fallback | Preserved as Unicode |
+| RTL Hebrew/Arabic | Preserved in logical order | PDF uses bounded line-level bidi ordering and shaping for whitespace-separated directional runs, flattens inline style within an RTL paragraph, and records logical `ActualText`; unsupported no-space mixed-direction tokens receive an explicit marker; HTML/ODT/DOCX delegate layout to the consumer | Preserved in logical order |
+| Non-BMP scalars, lone surrogates, noncharacters, and unsupported directional controls in PDF | Preserved by parser/IR where representable | PDF emits a visible U+FFFD for an unsupported scalar/control; no false glyph or `ToUnicode` claim | Preserved or escaped according to the target format |
 | Alignment, spacing, indents | Supported subset | Reflowed | Flattened |
 | Lists inferred from named styles | Best effort | Supported subset | Supported subset |
 | Tables and cell text | Supported subset | Reflowed | Simple tables/TSV |
@@ -40,10 +43,17 @@ discarded or activated.
 | Corrupt embedded offsets | Bounds checked | Placeholder/warning | Placeholder/warning |
 
 All paged outputs are preservation-oriented reflows, not pixel-identical Ami Pro
-facsimiles. Exact line and page breaks depend on available fonts and modern font
-metrics. PDF deliberately uses built-in fonts and may show missing-glyph boxes
-for non-Latin scripts; ODT and DOCX preserve the Unicode text for system font
-selection.
+facsimiles. Exact line and page breaks depend on modern font metrics. PDF uses
+only fixed, openly licensed in-package fonts and never resolves a source font
+name as a path. Its supported subset is BMP-only. The CJK face uses SC-default
+unified-Han forms and does not claim vertical text, ruby, variation-sequence, or
+locale-specific glyph fidelity. RTL paragraphs use the best-coverage single
+DejaVu face whose cmap is checked per character, so per-run font/style changes,
+unmapped Hebrew/Arabic extensions, mixed RTL/CJK shaping, and direction changes
+inside one whitespace-free token are conservatively flattened, replaced, or
+visibly marked rather than rendered with false fidelity. The PDF stores
+line-level logical `ActualText`, but third-party extractor support varies; JSON,
+TXT, ODT, and DOCX remain the authoritative logical-text alternatives.
 
 JSON exposes the typed SDW status, hashes, validated structure, and companion
 metadata. Byte arrays are represented by non-inlined length descriptors; raw

@@ -21,6 +21,9 @@ experimental DOCX output.
   tables, images, unknown records, and source locations.
 - Common character and paragraph formatting: fonts, size/color, bold, italic,
   underline, strikeout, super/subscript, alignment, spacing, and indents.
+- Deterministic PDF text from fixed in-package preservation fonts, with bounded
+  BMP Unicode fallback for Latin, Greek, Cyrillic, Hebrew, Arabic, Han, kana,
+  and Hangul. Unsupported scalars remain visible as replacement characters.
 - Text recovery from the main document, text frames, and table cells.
 - Typed annotations, footnotes, and body/layout header/footer streams with raw
   placement records retained in the intermediate representation.
@@ -153,6 +156,15 @@ pixel-identical reproduction of Ami Pro pagination or printer metrics.
 Raw SDW vector or companion bytes are never sent to a browser, embedded in an
 office package or PDF, or passed to an external converter. Visual outputs receive
 only fresh PNG data generated from the independently validated companion subset.
+
+PDF embeds deterministic subsets of the bundled preservation fonts; it never
+uses a font path supplied by a document or searches the host font collection.
+The supported PDF subset is BMP-only. Bidirectional Hebrew and Arabic are
+shaped and reordered conservatively at paragraph-line level, with original
+bounded, sanitized logical visual-line text recorded as PDF `ActualText`;
+extractor support for `ActualText`
+varies, so JSON, text, ODT, or DOCX remain preferable when exact logical-text
+extraction is the primary goal.
 
 Markdown and text intentionally flatten layout that their formats cannot
 represent. Unsupported data is marked rather than silently omitted.

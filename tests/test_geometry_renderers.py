@@ -430,3 +430,28 @@ def test_pdf_fallback_keeps_repeating_page_furniture(
 
     assert _pdf_page_count(payload) == 2
     assert pages == [1, 2]
+
+
+def test_duplicate_furniture_slots_skip_expensive_fit_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers = [
+        Header(
+            blocks=[_p("س" * 1_024)],
+            placement="all",
+            origin="layout",
+            layout_index=7,
+        )
+        for _ in range(2_000)
+    ]
+    calls = 0
+
+    def track_fit(_block: Header | Footer, _page: object) -> bool:
+        nonlocal calls
+        calls += 1
+        return True
+
+    monkeypatch.setattr(pdf, "_furniture_fits", track_fit)
+
+    assert pdf._promoted_furniture(_document(*headers), pdf._PageSpec(layout_index=7)) == set()
+    assert calls == 0

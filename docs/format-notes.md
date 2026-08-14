@@ -57,6 +57,72 @@ current decoder honors BOMs and explicit code-page descriptions, accepts a user
 override, otherwise defaults conservatively to CP1252, and preserves undecodable
 bytes using Python's reversible `surrogateescape` representation.
 
+## Unicode PDF preservation strategy
+
+Unicode text is not inferred from the surveyed corpus alone. The parser also
+supports declared legacy code pages and BOM-marked Unicode streams, so PDF
+conversion must handle characters that do not occur in the locally inspected
+documents. The implementation follows ReportLab's public
+[Arabic/RTL integration guidance](https://docs.reportlab.com/rl-arabic/) and
+[4.4 release notes](https://docs.reportlab.com/releases/notes/whats-new-44/),
+while treating its shaping support as experimental rather than claiming a
+complete Unicode layout engine.
+
+The PDF renderer is reproducible and host-independent:
+
+- it registers exactly four name-only-renamed DejaVu Sans 2.37 faces and one
+  deterministic BMP subset of Noto Sans CJK SC 2.004, all loaded from package
+  resources in a fixed order;
+- it pins ReportLab 4.4.10, python-bidi 0.6.11, and uharfbuzz 0.55.0;
+- a source font family is only an inert presentation hint; it never becomes a
+  file, URL, or host-font lookup;
+- LTR text is segmented into coalesced fixed-font spans. The current CJK face
+  uses Simplified-Chinese default unified-Han forms and deliberately makes no
+  claim for locale-specific, vertical, ruby, variation-sequence, or non-BMP
+  typography;
+- paragraphs containing strong Hebrew or Arabic characters use a bounded
+  custom line flowable. It applies the public python-bidi algorithm and
+  HarfBuzz shaping through ReportLab's canvas API, then writes each bounded,
+  sanitized logical visual line as PDF `ActualText`. Inline font/style distinctions are flattened
+  to the best-coverage DejaVu face and every scalar is checked against its cmap.
+  Direction changes inside one whitespace-free token are visibly marked because
+  ReportLab 4.4 cannot shape that token without reversing its LTR segment. Mixed
+  RTL/CJK paragraphs and unmapped Hebrew/Arabic extensions are not claimed as
+  supported and missing characters become visible replacements;
+- U+2066 through U+2069 bidi isolates are not supported by python-bidi's public
+  mapped algorithm and become U+FFFD. The older embedding/override controls are
+  bounded and handled structurally. Lone surrogates, noncharacters, C0/C1
+  controls other than tab/newline, and every scalar above U+FFFF also become
+  visible U+FFFD. The BMP restriction avoids ReportLab 4.4's incorrect
+  non-BMP `ToUnicode` mapping rather than emitting an apparently valid but
+  unextractable glyph.
+
+PDF `ActualText` is a standards-level preservation aid, not a promise about
+every extraction library. Poppler uses it in the tested files, while some
+versions of pypdf and pdfplumber expose the visually ordered glyph stream
+instead. JSON, plain text, ODT, and DOCX therefore remain the preferred
+logical-text outputs for downstream analysis of RTL documents.
+
+Work is bounded before shaping and font subsetting. The source-work budgets are
+65,536 code points per paragraph, 1,024 per unbroken token, 4,096 runs per
+paragraph, 4,000,000 source text code points, 8,192 distinct source scalars, 64
+consecutive combining marks, 4,096 bidi controls, and 4,096 fixed-font spans
+per text unit. One bounded omission/replacement marker may be added beyond a
+source budget. Reaching a ceiling emits that marker instead of silently dropping
+the rest or expanding one marker per source
+character. PDF font sizes are clamped to 72 points, output is capped at 128
+pages and 64 MiB, and the encoded-byte cap remains a final backstop rather than
+the first work-control boundary.
+
+The installation set and parseable private regression set are all declared or
+decoded as CP1252. Across them, renderer-facing text contains only the
+U+0081-U+00FF non-ASCII range and no strong RTL, Greek, Cyrillic, CJK,
+combining, or non-BMP characters. Unicode script coverage is therefore based
+on documented font coverage and invented synthetic fixtures; it is not
+misrepresented as corpus evidence. Exact font hashes, licenses, source commits,
+coverage, and the deterministic CJK derivation recipe are in
+`src/amipro_sam/assets/fonts/NOTICE.md`.
+
 ## Styles and measurements
 
 `[tag]` records define named styles. Observed subrecords include `[fnt]`,

@@ -1,10 +1,12 @@
 """Render the intermediate representation as an in-memory PDF.
 
-Only ReportLab's built-in fonts are used.  In particular, font names and image
-references found in a SAM file are never interpreted as paths or opened.
-Validated WMF raster data is converted by the toolkit to a fresh in-memory PNG
-before ReportLab sees it.
+The renderer uses only the fixed, openly licensed fonts shipped in the Python
+package.  Font names and image references found in a SAM file are never
+interpreted as paths or opened.  Validated WMF raster data is converted by the
+toolkit to a fresh in-memory PNG before ReportLab sees it.
 """
+
+# ruff: noqa: I001 -- pdf_unicode must initialize bidi before ReportLab imports.
 
 from __future__ import annotations
 
@@ -14,13 +16,27 @@ from dataclasses import dataclass
 from io import BytesIO
 from xml.sax.saxutils import escape
 
+# This import installs the public python-bidi adapter before ReportLab imports
+# its text engine.  Keep it above every direct reportlab import.
+from ..pdf_unicode import (
+    BidiTextFlowable,
+    PdfTextBudget,
+    UnicodePdfError,
+    contains_rtl,
+    draw_unicode_line,
+    ensure_pdf_fonts,
+    unicode_font_name,
+    unicode_font_spans,
+    unicode_line_width,
+    rtl_font_name,
+    unicode_wrap_lines,
+)
+
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.lib.utils import simpleSplit
-from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     Image as ReportLabImage,
@@ -81,6 +97,9 @@ _MAX_RENDER_DEPTH = 32
 _MAX_RENDER_BLOCKS = 100_000
 _MAX_TABLE_ROWS = 390
 _MAX_PAGE_TWIPS = 22 * 1_440
+_MAX_PDF_OUTPUT_BYTES = 64 * 1024 * 1024
+_MAX_PDF_PAGES = 128
+_MAX_PDF_FONT_SIZE = 72.0
 _MIN_PAGE_TWIPS = 1_440
 _MIN_CONTENT_TWIPS = 720
 
@@ -120,6 +139,11 @@ class _InvariantCanvas(Canvas):
         self.setCreator("amipro-sam-toolkit")
         self.setProducer("amipro-sam-toolkit")
 
+    def showPage(self) -> None:  # noqa: N802 - ReportLab convention
+        if self.getPageNumber() > _MAX_PDF_PAGES:
+            raise RenderError(f"PDF exceeds the safe {_MAX_PDF_PAGES}-page limit")
+        super().showPage()
+
 
 def render(document: Document, **_options: object) -> bytes:
     """Return *document* as PDF bytes.
@@ -131,7 +155,10 @@ def render(document: Document, **_options: object) -> bytes:
     """
 
     try:
+        ensure_pdf_fonts()
         return _render_bytes(document, conservative=False)
+    except UnicodePdfError as error:
+        raise RenderError("Could not initialize bundled Unicode PDF fonts") from error
     except (LayoutError, IndexError) as primary_error:
         if not _is_reportlab_layout_failure(primary_error):
             raise
@@ -151,6 +178,7 @@ def render(document: Document, **_options: object) -> bytes:
 
 def _render_bytes(document: Document, *, conservative: bool) -> bytes:
     output = BytesIO()
+    text_budget = PdfTextBudget()
     page = _page_spec(document)
     template = SimpleDocTemplate(
         output,
@@ -167,23 +195,44 @@ def _render_bytes(document: Document, *, conservative: bool) -> bytes:
         invariant=1,
         pageCompression=1,
     )
-    story = _fallback_story(document) if conservative else _primary_story(document)
+    story_builder = _fallback_story if conservative else _primary_story
+    try:
+        story = story_builder(document, text_budget=text_budget)
+    except TypeError as error:
+        # Preserve the narrow monkeypatch seam used by callers/tests without
+        # letting it fragment the production renderer-owned budget.
+        if "text_budget" not in str(error):
+            raise
+        story = story_builder(document)
     if not story:
-        story.append(_placeholder_flowable(""))
-    page_furniture = _page_furniture_callback(document, page)
+        story.append(_placeholder_flowable("", text_budget))
+    try:
+        page_furniture = _page_furniture_callback(
+            document, page, text_budget=text_budget
+        )
+    except TypeError as error:
+        if "text_budget" not in str(error):
+            raise
+        page_furniture = _page_furniture_callback(document, page)
     template.build(
         story,
         onFirstPage=page_furniture,
         onLaterPages=page_furniture,
         canvasmaker=_InvariantCanvas,
     )
-    return output.getvalue()
+    payload = output.getvalue()
+    if len(payload) > _MAX_PDF_OUTPUT_BYTES:
+        raise RenderError("PDF exceeds the safe 64 MiB output limit")
+    return payload
 
 
 def _primary_story(
-    document: Document, promoted_furniture: set[int] | None = None
+    document: Document,
+    promoted_furniture: set[int] | None = None,
+    text_budget: PdfTextBudget | None = None,
 ) -> list[object]:
     story: list[object] = []
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     list_counters: dict[int, int] = {}
     if promoted_furniture is None:
         promoted_furniture = _promoted_furniture(document, _page_spec(document))
@@ -197,6 +246,7 @@ def _primary_story(
         _trim_edge_page_breaks(visible),
         story,
         list_counters,
+        text_budget,
         active=set(),
         promoted_furniture=promoted_furniture,
     )
@@ -208,13 +258,18 @@ def _append_primary_blocks(
     blocks: list[Block],
     story: list[object],
     list_counters: dict[int, int],
+    text_budget: PdfTextBudget,
     *,
     depth: int = 0,
     active: set[int] | None = None,
     promoted_furniture: set[int] | None = None,
 ) -> None:
     if depth >= _MAX_RENDER_DEPTH:
-        story.append(_placeholder_flowable("[Nested content omitted at safe depth limit]"))
+        story.append(
+            _placeholder_flowable(
+                "[Nested content omitted at safe depth limit]", text_budget
+            )
+        )
         return
     active = set() if active is None else active
     promoted_furniture = set() if promoted_furniture is None else promoted_furniture
@@ -224,24 +279,28 @@ def _append_primary_blocks(
             if block.page_break_before and has_content:
                 story.append(ReportLabPageBreak())
             marker = _list_marker(block, list_counters)
-            story.append(_paragraph_flowable(document, block, marker=marker))
+            story.append(
+                _paragraph_flowable(
+                    document, block, marker=marker, text_budget=text_budget
+                )
+            )
         elif isinstance(block, PageBreak):
             story.append(ReportLabPageBreak())
             list_counters.clear()
         elif isinstance(block, Table):
-            story.append(_table_flowable(document, block))
+            story.append(_table_flowable(document, block, text_budget))
             list_counters.clear()
         elif isinstance(block, Image):
-            story.append(_placeholder_flowable(_image_placeholder(block)))
+            story.append(_placeholder_flowable(_image_placeholder(block), text_budget))
             list_counters.clear()
         elif isinstance(block, WmfGraphic):
-            story.append(_wmf_flowable(block, document))
+            story.append(_wmf_flowable(block, document, text_budget))
             list_counters.clear()
         elif isinstance(block, SdwDrawing):
-            story.extend(_sdw_flowables(block, document))
+            story.extend(_sdw_flowables(block, document, text_budget))
             list_counters.clear()
         elif isinstance(block, Frame):
-            story.append(_placeholder_flowable(_frame_label(block)))
+            story.append(_placeholder_flowable(_frame_label(block), text_budget))
             list_counters.clear()
             _append_nested_primary(
                 document,
@@ -249,6 +308,7 @@ def _append_primary_blocks(
                 block.blocks,
                 story,
                 list_counters,
+                text_budget,
                 depth,
                 active,
                 promoted_furniture,
@@ -256,12 +316,12 @@ def _append_primary_blocks(
         elif isinstance(block, UnsupportedObject):
             story.append(
                 _placeholder_flowable(
-                    f"[Unsupported {block.kind}: {block.description}]"
+                    f"[Unsupported {block.kind}: {block.description}]", text_budget
                 )
             )
             list_counters.clear()
         elif isinstance(block, Annotation | Footnote):
-            story.append(_placeholder_flowable(_container_label(block)))
+            story.append(_placeholder_flowable(_container_label(block), text_budget))
             list_counters.clear()
             _append_nested_primary(
                 document,
@@ -269,6 +329,7 @@ def _append_primary_blocks(
                 block.blocks,
                 story,
                 list_counters,
+                text_budget,
                 depth,
                 active,
                 promoted_furniture,
@@ -276,7 +337,7 @@ def _append_primary_blocks(
         elif isinstance(block, Header | Footer):
             if id(block) in promoted_furniture:
                 continue
-            story.append(_placeholder_flowable(_container_label(block)))
+            story.append(_placeholder_flowable(_container_label(block), text_budget))
             list_counters.clear()
             _append_nested_primary(
                 document,
@@ -284,6 +345,7 @@ def _append_primary_blocks(
                 block.blocks,
                 story,
                 list_counters,
+                text_budget,
                 depth,
                 active,
                 promoted_furniture,
@@ -293,9 +355,12 @@ def _append_primary_blocks(
 
 
 def _fallback_story(
-    document: Document, promoted_furniture: set[int] | None = None
+    document: Document,
+    promoted_furniture: set[int] | None = None,
+    text_budget: PdfTextBudget | None = None,
 ) -> list[object]:
     story: list[object] = []
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     list_counters: dict[int, int] = {}
     if promoted_furniture is None:
         promoted_furniture = _promoted_furniture(document, _page_spec(document))
@@ -309,6 +374,7 @@ def _fallback_story(
         _trim_edge_page_breaks(visible),
         story,
         list_counters,
+        text_budget,
         active=set(),
         promoted_furniture=promoted_furniture,
     )
@@ -320,6 +386,7 @@ def _append_fallback_blocks(
     blocks: list[Block],
     story: list[object],
     list_counters: dict[int, int],
+    text_budget: PdfTextBudget,
     *,
     depth: int = 0,
     active: set[int] | None = None,
@@ -328,7 +395,9 @@ def _append_fallback_blocks(
     if depth >= _MAX_RENDER_DEPTH:
         story.append(
             _fallback_paragraph(
-                "[Nested content omitted at safe depth limit]", placeholder=True
+                "[Nested content omitted at safe depth limit]",
+                placeholder=True,
+                text_budget=text_budget,
             )
         )
         return
@@ -341,24 +410,40 @@ def _append_fallback_blocks(
                 story.append(ReportLabPageBreak())
             marker = _list_marker(block, list_counters)
             prefix = f"{marker} " if marker else ""
-            story.append(_fallback_paragraph(prefix + _safe_paragraph_text(block)))
+            story.append(
+                _fallback_paragraph(
+                    prefix + _prepared_paragraph_text(block, text_budget),
+                    text_budget=text_budget,
+                    already_prepared=True,
+                )
+            )
         elif isinstance(block, PageBreak):
             story.append(ReportLabPageBreak())
             list_counters.clear()
         elif isinstance(block, Table):
             list_counters.clear()
-            story.append(_fallback_table_flowable(block, document))
+            story.append(_fallback_table_flowable(block, document, text_budget))
         elif isinstance(block, Image):
-            story.append(_fallback_paragraph(_image_placeholder(block), placeholder=True))
+            story.append(
+                _fallback_paragraph(
+                    _image_placeholder(block),
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
             list_counters.clear()
         elif isinstance(block, WmfGraphic):
-            story.append(_wmf_flowable(block, document))
+            story.append(_wmf_flowable(block, document, text_budget))
             list_counters.clear()
         elif isinstance(block, SdwDrawing):
-            story.extend(_sdw_flowables(block, document))
+            story.extend(_sdw_flowables(block, document, text_budget))
             list_counters.clear()
         elif isinstance(block, Frame):
-            story.append(_fallback_paragraph(_frame_label(block), placeholder=True))
+            story.append(
+                _fallback_paragraph(
+                    _frame_label(block), placeholder=True, text_budget=text_budget
+                )
+            )
             list_counters.clear()
             _append_nested_fallback(
                 document,
@@ -366,6 +451,7 @@ def _append_fallback_blocks(
                 block.blocks,
                 story,
                 list_counters,
+                text_budget,
                 depth,
                 active,
                 promoted_furniture,
@@ -375,11 +461,18 @@ def _append_fallback_blocks(
                 _fallback_paragraph(
                     f"[Unsupported {block.kind}: {block.description}]",
                     placeholder=True,
+                    text_budget=text_budget,
                 )
             )
             list_counters.clear()
         elif isinstance(block, Annotation | Footnote):
-            story.append(_fallback_paragraph(_container_label(block), placeholder=True))
+            story.append(
+                _fallback_paragraph(
+                    _container_label(block),
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
             list_counters.clear()
             _append_nested_fallback(
                 document,
@@ -387,6 +480,7 @@ def _append_fallback_blocks(
                 block.blocks,
                 story,
                 list_counters,
+                text_budget,
                 depth,
                 active,
                 promoted_furniture,
@@ -394,7 +488,13 @@ def _append_fallback_blocks(
         elif isinstance(block, Header | Footer):
             if id(block) in promoted_furniture:
                 continue
-            story.append(_fallback_paragraph(_container_label(block), placeholder=True))
+            story.append(
+                _fallback_paragraph(
+                    _container_label(block),
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
             list_counters.clear()
             _append_nested_fallback(
                 document,
@@ -402,6 +502,7 @@ def _append_fallback_blocks(
                 block.blocks,
                 story,
                 list_counters,
+                text_budget,
                 depth,
                 active,
                 promoted_furniture,
@@ -458,13 +559,18 @@ def _append_nested_primary(
     blocks: object,
     story: list[object],
     list_counters: dict[int, int],
+    text_budget: PdfTextBudget,
     depth: int,
     active: set[int],
     promoted_furniture: set[int],
 ) -> None:
     identity = id(owner)
     if identity in active:
-        story.append(_placeholder_flowable("[Repeated or recursive content omitted]"))
+        story.append(
+            _placeholder_flowable(
+                "[Repeated or recursive content omitted]", text_budget
+            )
+        )
         return
     active.add(identity)
     _append_primary_blocks(
@@ -472,6 +578,7 @@ def _append_nested_primary(
         _trim_edge_page_breaks(_safe_blocks(blocks)),
         story,
         list_counters,
+        text_budget,
         depth=depth + 1,
         active=active,
         promoted_furniture=promoted_furniture,
@@ -484,6 +591,7 @@ def _append_nested_fallback(
     blocks: object,
     story: list[object],
     list_counters: dict[int, int],
+    text_budget: PdfTextBudget,
     depth: int,
     active: set[int],
     promoted_furniture: set[int],
@@ -492,7 +600,9 @@ def _append_nested_fallback(
     if identity in active:
         story.append(
             _fallback_paragraph(
-                "[Repeated or recursive content omitted]", placeholder=True
+                "[Repeated or recursive content omitted]",
+                placeholder=True,
+                text_budget=text_budget,
             )
         )
         return
@@ -502,6 +612,7 @@ def _append_nested_fallback(
         _trim_edge_page_breaks(_safe_blocks(blocks)),
         story,
         list_counters,
+        text_budget,
         depth=depth + 1,
         active=active,
         promoted_furniture=promoted_furniture,
@@ -587,7 +698,9 @@ def _page_furniture_callback(
     document: Document,
     page: _PageSpec,
     promoted_furniture: set[int] | None = None,
+    text_budget: PdfTextBudget | None = None,
 ):
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     if promoted_furniture is None:
         promoted_furniture = _promoted_furniture(document, page)
     furniture = [
@@ -601,7 +714,7 @@ def _page_furniture_callback(
         for block in furniture:
             if not _furniture_applies(block, page_number, page):
                 continue
-            lines = _furniture_lines(block)
+            lines = _furniture_lines(block, text_budget=text_budget)
             if not lines:
                 continue
             _draw_furniture(canvas, block, lines, page)
@@ -616,7 +729,7 @@ def _promoted_furniture(document: Document, page: _PageSpec) -> set[int]:
         return set()
     result: set[int] = set()
     for kind in (Header, Footer):
-        eligible: list[tuple[Header | Footer, set[str]]] = []
+        candidates: list[tuple[Header | Footer, set[str]]] = []
         slot_counts = {"odd": 0, "even": 0}
         for block in _safe_blocks(document.blocks):
             if not isinstance(block, kind):
@@ -630,11 +743,11 @@ def _promoted_furniture(document: Document, page: _PageSpec) -> set[int]:
                 continue
             for slot in slots:
                 slot_counts[slot] += 1
-            if not _furniture_is_well_formed(block) or not _furniture_fits(block, page):
+            candidates.append((block, slots))
+        for block, slots in candidates:
+            if not all(slot_counts[slot] == 1 for slot in slots):
                 continue
-            eligible.append((block, slots))
-        for block, slots in eligible:
-            if all(slot_counts[slot] == 1 for slot in slots):
+            if _furniture_is_well_formed(block) and _furniture_fits(block, page):
                 result.add(id(block))
     return result
 
@@ -667,14 +780,18 @@ def _furniture_slots(block: Header | Footer, page: _PageSpec) -> set[str]:
 
 
 def _furniture_fits(block: Header | Footer, page: _PageSpec) -> bool:
-    lines = _furniture_lines(block)
+    # Eligibility must not spend the output budget used for actual emission.
+    lines = _furniture_lines(block, text_budget=PdfTextBudget())
     if not lines:
         return False
     wrapped: list[str] = []
     for line in lines:
         max_width = max(36.0, page.body_width)
-        split_lines = simpleSplit(line, "Helvetica", 8.0, max_width)
-        if any(stringWidth(value, "Helvetica", 8.0) > max_width for value in split_lines):
+        split_lines = unicode_wrap_lines(line, "AmiProSans", 8.0, max_width)
+        if any(
+            unicode_line_width(value, "AmiProSans", 8.0) > max_width
+            for value in split_lines
+        ):
             return False
         wrapped.extend(split_lines)
         if len(wrapped) > 64:
@@ -706,7 +823,9 @@ def _furniture_applies(
     return False
 
 
-def _furniture_lines(block: Header | Footer) -> list[str]:
+def _furniture_lines(
+    block: Header | Footer, text_budget: PdfTextBudget | None = None
+) -> list[str]:
     result: list[str] = []
     blocks = block.blocks
     if not isinstance(blocks, list | tuple) or not 1 <= len(blocks) <= 16:
@@ -714,11 +833,9 @@ def _furniture_lines(block: Header | Footer) -> list[str]:
     if not all(isinstance(value, Paragraph) for value in blocks):
         return []
     total_characters = 0
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     for paragraph in blocks:
-        try:
-            value = paragraph.text
-        except (AttributeError, TypeError):
-            return []
+        value = _prepared_paragraph_text(paragraph, text_budget)
         if not isinstance(value, str) or len(value) > 4_096:
             return []
         total_characters += len(value)
@@ -738,13 +855,13 @@ def _draw_furniture(
     lines: list[str],
     page: _PageSpec,
 ) -> None:
-    font_name = "Helvetica"
+    font_name = "AmiProSans"
     font_size = 8.0
     leading = 9.0
     max_width = max(36.0, page.body_width)
     wrapped: list[str] = []
     for line in lines:
-        wrapped.extend(simpleSplit(line, font_name, font_size, max_width))
+        wrapped.extend(unicode_wrap_lines(line, font_name, font_size, max_width))
         if len(wrapped) >= 64:
             break
     wrapped = wrapped[:64]
@@ -756,15 +873,23 @@ def _draw_furniture(
         canvas.setFillColor(colors.black)
         if isinstance(block, Header):
             available = max(leading, min(page.top - 4.0, leading * len(wrapped)))
-            visible = wrapped[-max(1, int(available // leading)) :]
-            y = page.height - 4.0 - leading * len(visible)
+            visible = wrapped[: max(1, int(available // leading))]
+            y = page.height - 4.0 - leading
         else:
             available = max(leading, min(page.bottom - 4.0, leading * len(wrapped)))
             visible = wrapped[: max(1, int(available // leading))]
-            y = 4.0
+            y = 4.0 + leading * (len(visible) - 1)
         for line in visible:
-            canvas.drawString(page.left, y, line)
-            y += leading
+            draw_unicode_line(
+                canvas,
+                line,
+                x=page.left,
+                y=y,
+                font_name=font_name,
+                font_size=font_size,
+                max_width=max_width,
+            )
+            y -= leading
     finally:
         canvas.restoreState()
 
@@ -800,13 +925,25 @@ def _paragraph_flowable(
     *,
     marker: str | None = None,
     force_bold: bool = False,
-) -> ReportLabParagraph:
+    text_budget: PdfTextBudget | None = None,
+) -> object:
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     style_definition = _resolved_style(document, paragraph.style_name)
     base_character = style_definition.character if style_definition else CharacterStyle()
     if force_bold:
         base_character = base_character.merged(bold=True)
-    size = _safe_number(base_character.font_size_pt, default=11.0, minimum=1.0, maximum=200.0)
-    alignment = paragraph.alignment or (style_definition.alignment if style_definition else None)
+    size = _safe_number(
+        base_character.font_size_pt,
+        default=11.0,
+        minimum=1.0,
+        maximum=_MAX_PDF_FONT_SIZE,
+    )
+    alignment = _choice(
+        paragraph.alignment
+        or (style_definition.alignment if style_definition else None),
+        {"left", "right", "center", "justify"},
+        "left",
+    )
     left_indent = _first_not_none(
         paragraph.left_indent_in,
         style_definition.left_indent_in if style_definition else None,
@@ -867,24 +1004,73 @@ def _paragraph_flowable(
         keepWithNext=bool(paragraph.keep_with_next),
         allowWidows=1,
         allowOrphans=0,
+        shaping=False,
     )
     runs = paragraph.runs
+    plain_parts: list[str] = []
     if isinstance(runs, list | tuple):
         parts: list[str] = []
-        for run in runs[:_MAX_RENDER_BLOCKS]:
-            if not isinstance(run, TextRun) or not isinstance(run.style, CharacterStyle):
-                parts.append(escape("[Invalid text run omitted]"))
+        seen_runs: set[int] = set()
+        paragraph_remaining = 65_536
+        for run in runs[:4_096]:
+            if paragraph_remaining <= 0:
+                break
+            if (
+                not isinstance(run, TextRun)
+                or not isinstance(run.style, CharacterStyle)
+                or id(run) in seen_runs
+            ):
+                omitted = text_budget.prepare("[Invalid text run omitted]")
+                plain_parts.append(omitted)
+                parts.append(_run_markup(omitted, base_character, CharacterStyle()))
+                paragraph_remaining -= len(omitted)
                 continue
+            seen_runs.add(id(run))
             value = run.text
-            if isinstance(value, bytes):
-                value = value.decode("utf-8", errors="replace")
-            if not isinstance(value, str):
-                parts.append(escape("[Invalid text run omitted]"))
+            prepared = text_budget.prepare(
+                value,
+                paragraph_limit=paragraph_remaining,
+                unit_boundary=True,
+            )
+            if not prepared and not isinstance(value, str | bytes):
+                prepared = text_budget.prepare("[Invalid text run omitted]")
+            if not prepared:
                 continue
-            parts.append(_run_markup(value, base_character, run.style))
+            paragraph_remaining -= len(prepared)
+            plain_parts.append(prepared)
+            parts.append(_run_markup(prepared, base_character, run.style))
+        if len(runs) > 4_096 or paragraph_remaining <= 0:
+            omitted = text_budget.prepare("[Text runs omitted at safe PDF limit]")
+            plain_parts.append(omitted)
+            parts.append(_run_markup(omitted, base_character, CharacterStyle()))
         markup = "".join(parts)
     else:
-        markup = escape(_clean_text(paragraph.text))
+        try:
+            raw_text = paragraph.text
+        except (AttributeError, TypeError):
+            raw_text = "[Invalid paragraph text omitted]"
+        prepared = text_budget.prepare(raw_text, unit_boundary=True)
+        plain_parts.append(prepared)
+        markup = _run_markup(prepared, base_character, CharacterStyle())
+    plain_text = "".join(plain_parts)
+    if contains_rtl(plain_text):
+        if marker:
+            plain_text = f"{marker} {plain_text}"
+        flowable = BidiTextFlowable(
+            plain_text or "\u00a0",
+            font_name=_font_name(base_character),
+            font_size=size,
+            leading=_safe_leading(size, line_spacing),
+            text_color=_color(base_character.color, colors.black),
+            alignment=alignment,
+            left_indent=resolved_left,
+            right_indent=resolved_right,
+            first_indent=resolved_first,
+            space_before=_safe_number(before, default=0.0, minimum=0.0, maximum=720.0),
+            space_after=_safe_number(after, default=6.0, minimum=0.0, maximum=720.0),
+        )
+        flowable.keepWithNext = bool(paragraph.keep_with_next)
+        return flowable
     if not markup:
         markup = "&#160;"
     return ReportLabParagraph(markup, reportlab_style, bulletText=marker)
@@ -892,20 +1078,25 @@ def _paragraph_flowable(
 
 def _run_markup(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
     effective = _merge_character_style(base, run)
-    safe_text = escape(_clean_text(text)).replace("\n", "<br/>").replace("\t", "&#160;" * 4)
-    if not safe_text:
+    clean = _clean_text(text)
+    if not clean:
         return ""
 
-    font_attributes = [
-        f'name="{_font_name(effective)}"',
-        "size=\""
-        f"{_safe_number(effective.font_size_pt, default=11.0, minimum=1.0, maximum=200.0):g}"
-        "\"",
-    ]
+    size = _safe_number(
+        effective.font_size_pt,
+        default=11.0,
+        minimum=1.0,
+        maximum=_MAX_PDF_FONT_SIZE,
+    )
     color = _hex_color(effective.color)
-    if color:
-        font_attributes.append(f'color="{color}"')
-    result = f"<font {' '.join(font_attributes)}>{safe_text}</font>"
+    result_parts: list[str] = []
+    for font_name, span in unicode_font_spans(clean, _font_name(effective)):
+        font_attributes = [f'name="{font_name}"', f'size="{size:g}"']
+        if color:
+            font_attributes.append(f'color="{color}"')
+        safe_text = escape(span).replace("\n", "<br/>").replace("\t", "&#160;" * 4)
+        result_parts.append(f"<font {' '.join(font_attributes)}>{safe_text}</font>")
+    result = "".join(result_parts)
     if effective.underline:
         result = f"<u>{result}</u>"
     if effective.strike:
@@ -917,10 +1108,25 @@ def _run_markup(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
     return result
 
 
-def _placeholder_flowable(text: str) -> ReportLabParagraph:
+def _placeholder_flowable(
+    text: str, text_budget: PdfTextBudget | None = None
+) -> object:
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
+    prepared = text_budget.prepare(text, unit_boundary=True)
+    if contains_rtl(prepared):
+        rtl_font = rtl_font_name(prepared, "AmiProSans-Oblique")
+        return BidiTextFlowable(
+            prepared or "\u00a0",
+            font_name=rtl_font,
+            font_size=9.0,
+            leading=12.0,
+            text_color=colors.HexColor("#555555"),
+            space_before=4.0,
+            space_after=6.0,
+        )
     style = ParagraphStyle(
         name="AmiProPlaceholder",
-        fontName="Helvetica-Oblique",
+        fontName="AmiProSans-Oblique",
         fontSize=9,
         leading=12,
         textColor=colors.HexColor("#555555"),
@@ -931,14 +1137,38 @@ def _placeholder_flowable(text: str) -> ReportLabParagraph:
         spaceBefore=4,
         spaceAfter=6,
     )
-    safe = escape(_clean_text(text)).replace("\n", "<br/>") or "&#160;"
+    safe = _run_markup(prepared, CharacterStyle(italic=True), CharacterStyle()) or "&#160;"
     return ReportLabParagraph(safe, style)
 
 
-def _fallback_paragraph(text: str, *, placeholder: bool = False) -> ReportLabParagraph:
+def _fallback_paragraph(
+    text: str,
+    *,
+    placeholder: bool = False,
+    text_budget: PdfTextBudget | None = None,
+    already_prepared: bool = False,
+) -> object:
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
+    prepared = (
+        text
+        if already_prepared
+        else text_budget.prepare(text, unit_boundary=True)
+    )
+    font_name = "AmiProSans-Oblique" if placeholder else "AmiProSans"
+    if contains_rtl(prepared):
+        rtl_font = rtl_font_name(prepared, font_name)
+        return BidiTextFlowable(
+            prepared or "\u00a0",
+            font_name=rtl_font,
+            font_size=9.0,
+            leading=11.0,
+            text_color=colors.HexColor("#555555") if placeholder else colors.black,
+            space_before=2.0 if placeholder else 0.0,
+            space_after=4.0,
+        )
     style = ParagraphStyle(
         name="AmiProFallbackPlaceholder" if placeholder else "AmiProFallbackParagraph",
-        fontName="Helvetica-Oblique" if placeholder else "Helvetica",
+        fontName=font_name,
         fontSize=9.0,
         leading=11.0,
         textColor=colors.HexColor("#555555") if placeholder else colors.black,
@@ -948,27 +1178,42 @@ def _fallback_paragraph(text: str, *, placeholder: bool = False) -> ReportLabPar
         allowWidows=1,
         allowOrphans=0,
     )
-    safe = escape(_clean_text(text)).replace("\n", "<br/>").replace("\t", "&#160;" * 4)
+    safe = _run_markup(
+        prepared,
+        CharacterStyle(italic=placeholder),
+        CharacterStyle(),
+    )
     return ReportLabParagraph(safe or "&#160;", style)
 
 
 def _fallback_table_flowable(
-    table: Table, document: Document | None = None
-) -> ReportLabTable | ReportLabParagraph:
+    table: Table,
+    document: Document | None = None,
+    text_budget: PdfTextBudget | None = None,
+) -> object:
     """Build a plain splittable table while retaining repeatable leading rows."""
 
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     rows = table.rows
     if not isinstance(rows, list | tuple):
-        return _fallback_paragraph("[Invalid table rows omitted]", placeholder=True)
+        return _fallback_paragraph(
+            "[Invalid table rows omitted]",
+            placeholder=True,
+            text_budget=text_budget,
+        )
     safe_rows = _safe_table_rows(table)
     if not safe_rows:
-        return _fallback_paragraph("[Empty table]", placeholder=True)
+        return _fallback_paragraph(
+            "[Empty table]", placeholder=True, text_budget=text_budget
+        )
     if any(
         isinstance(row.cells, list | tuple) and len(row.cells) > _MAX_TABLE_COLUMNS
         for row in safe_rows
     ):
         return _fallback_paragraph(
-            "[Table cells omitted at safe 256-column limit]", placeholder=True
+            "[Table cells omitted at safe 256-column limit]",
+            placeholder=True,
+            text_budget=text_budget,
         )
     column_count = min(
         _MAX_TABLE_COLUMNS,
@@ -982,43 +1227,46 @@ def _fallback_table_flowable(
         ),
     )
     if column_count <= 0:
-        return _fallback_paragraph("[Empty table]", placeholder=True)
-    data: list[list[ReportLabParagraph]] = []
+        return _fallback_paragraph(
+            "[Empty table]", placeholder=True, text_budget=text_budget
+        )
+    data: list[list[object]] = []
+    prepared_rows: list[list[str]] = []
     repeat_rows = 0
     still_leading = True
     for row in safe_rows:
         cells = row.cells if isinstance(row.cells, list | tuple) else []
-        rendered_row: list[ReportLabParagraph] = []
+        rendered_row: list[object] = []
+        prepared_row: list[str] = []
         for column in range(column_count):
             text = ""
             if column < len(cells) and isinstance(cells[column], TableCell):
-                try:
-                    candidate = cells[column].text
-                except (AttributeError, TypeError):
-                    candidate = ""
-                if isinstance(candidate, str):
-                    text = candidate[:65_536]
-            rendered_row.append(_fallback_paragraph(text))
+                text = _prepared_table_cell_text(cells[column], text_budget)
+            prepared_row.append(text)
+            rendered_row.append(
+                _fallback_paragraph(
+                    text, text_budget=text_budget, already_prepared=True
+                )
+            )
         data.append(rendered_row)
+        prepared_rows.append(prepared_row)
         if still_leading and row.is_header is True and repeat_rows < 8:
             repeat_rows += 1
         else:
             still_leading = False
     if not data:
-        return _fallback_paragraph("[Empty table]", placeholder=True)
+        return _fallback_paragraph(
+            "[Empty table]", placeholder=True, text_budget=text_budget
+        )
     page = _page_spec(document) if isinstance(document, Document) else _PageSpec()
     if page.body_height < 72.0:
         lines: list[str] = ["[Table reflowed for limited page height]"]
-        for row in safe_rows:
-            cells = row.cells if isinstance(row.cells, list | tuple) else []
-            values: list[str] = []
-            for cell in cells[:_MAX_TABLE_COLUMNS]:
-                if not isinstance(cell, TableCell):
-                    continue
-                candidate = cell.text
-                values.append(candidate[:65_536] if isinstance(candidate, str) else "")
-            lines.append(" | ".join(values))
-        return _fallback_paragraph("\n".join(lines))
+        lines.extend(" | ".join(values) for values in prepared_rows)
+        return _fallback_paragraph(
+            "\n".join(lines),
+            text_budget=text_budget,
+            already_prepared=True,
+        )
     available_width = max(12.0, page.body_width - 12.0)
     rendered = ReportLabTable(
         data,
@@ -1042,20 +1290,26 @@ def _fallback_table_flowable(
     return rendered
 
 
-def _table_flowable(document: Document, table: Table) -> ReportLabTable | ReportLabParagraph:
+def _table_flowable(
+    document: Document,
+    table: Table,
+    text_budget: PdfTextBudget | None = None,
+) -> object:
+    text_budget = PdfTextBudget() if text_budget is None else text_budget
     safe_rows = _safe_table_rows(table)
     if not safe_rows:
         return _placeholder_flowable(
             "[Invalid table rows omitted]"
             if not isinstance(table.rows, list | tuple)
-            else "[Empty table]"
+            else "[Empty table]",
+            text_budget,
         )
     if any(
         isinstance(row.cells, list | tuple) and len(row.cells) > _MAX_TABLE_COLUMNS
         for row in safe_rows
     ):
         return _placeholder_flowable(
-            "[Table cells omitted at safe 256-column limit]"
+            "[Table cells omitted at safe 256-column limit]", text_budget
         )
     try:
         grid, anchors = _layout_table(table)
@@ -1063,9 +1317,10 @@ def _table_flowable(document: Document, table: Table) -> ReportLabTable | Report
         return _fallback_paragraph(
             "[Table grid omitted at safe 256-column limit]",
             placeholder=True,
+            text_budget=text_budget,
         )
     if not grid or not grid[0]:
-        return _placeholder_flowable("[Empty table]")
+        return _placeholder_flowable("[Empty table]", text_budget)
 
     data: list[list[object]] = [["" for _ in row] for row in grid]
     commands: list[tuple[object, ...]] = [
@@ -1078,9 +1333,12 @@ def _table_flowable(document: Document, table: Table) -> ReportLabTable | Report
     ]
     seen_cells: set[int] = set()
     for row_index, column_index, cell, column_span, row_span in anchors:
-        contents: list[ReportLabParagraph] = []
-        if id(cell) in seen_cells:
-            contents.append(_placeholder_flowable("[Repeated table cell omitted]"))
+        contents: list[object] = []
+        repeated_cell = id(cell) in seen_cells
+        if repeated_cell:
+            contents.append(
+                _placeholder_flowable("[Repeated table cell omitted]", text_budget)
+            )
         seen_cells.add(id(cell))
         paragraphs = (
             cell.blocks[:4_096]
@@ -1100,9 +1358,11 @@ def _table_flowable(document: Document, table: Table) -> ReportLabTable | Report
             or (isinstance(cell.blocks, list | tuple) and len(cell.blocks) > 4_096)
         ):
             contents.append(
-                _placeholder_flowable("[Invalid table cell content omitted]")
+                _placeholder_flowable(
+                    "[Invalid table cell content omitted]", text_budget
+                )
             )
-        for paragraph in valid_paragraphs if len(contents) == 0 else []:
+        for paragraph in valid_paragraphs if not repeated_cell else []:
             marker = "\u2022" if paragraph.list_kind == "bullet" else None
             if paragraph.list_kind == "number":
                 marker = "1."
@@ -1112,10 +1372,15 @@ def _table_flowable(document: Document, table: Table) -> ReportLabTable | Report
                     paragraph,
                     marker=marker,
                     force_bold=safe_rows[row_index].is_header,
+                    text_budget=text_budget,
                 )
             )
         if not contents:
-            contents.append(_paragraph_flowable(document, Paragraph()))
+            contents.append(
+                _paragraph_flowable(
+                    document, Paragraph(), text_budget=text_budget
+                )
+            )
         data[row_index][column_index] = contents
         if column_span > 1 or row_span > 1:
             commands.append(
@@ -1131,7 +1396,7 @@ def _table_flowable(document: Document, table: Table) -> ReportLabTable | Report
             commands.extend(
                 [
                     ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#E8EEF5")),
-                    ("FONTNAME", (0, row_index), (-1, row_index), "Helvetica-Bold"),
+                    ("FONTNAME", (0, row_index), (-1, row_index), "AmiProSans-Bold"),
                 ]
             )
 
@@ -1263,18 +1528,21 @@ def _merge_character_style(base: CharacterStyle, run: CharacterStyle) -> Charact
 
 
 def _resolved_style(document: Document, name: str | None) -> StyleDefinition | None:
-    if not name or name not in document.styles:
+    styles = document.styles
+    if not isinstance(name, str) or not name or not isinstance(styles, dict) or name not in styles:
         return None
     chain: list[StyleDefinition] = []
     seen: set[str] = set()
     current_name: str | None = name
     while current_name and current_name not in seen and len(chain) < 64:
-        current = document.styles.get(current_name)
-        if current is None:
+        current = styles.get(current_name)
+        if not isinstance(current, StyleDefinition):
+            break
+        if not isinstance(current.character, CharacterStyle):
             break
         chain.append(current)
         seen.add(current_name)
-        current_name = current.parent
+        current_name = current.parent if isinstance(current.parent, str) else None
 
     resolved = StyleDefinition(name=name)
     for item in reversed(chain):
@@ -1295,28 +1563,11 @@ def _resolved_style(document: Document, name: str | None) -> StyleDefinition | N
 
 
 def _font_name(style: CharacterStyle) -> str:
-    requested = (style.font_family or "").casefold()
-    if any(name in requested for name in ("courier", "mono", "console")):
-        family = "Courier"
-    elif any(name in requested for name in ("times", "serif", "roman")):
-        family = "Times"
-    else:
-        family = "Helvetica"
-    if family == "Times":
-        variants = {
-            (False, False): "Times-Roman",
-            (True, False): "Times-Bold",
-            (False, True): "Times-Italic",
-            (True, True): "Times-BoldItalic",
-        }
-    else:
-        suffix = ""
-        if style.bold:
-            suffix += "-Bold"
-        if style.italic:
-            suffix += "Oblique" if suffix else "-Oblique"
-        variants = {(style.bold, style.italic): family + suffix}
-    return variants[(style.bold, style.italic)]
+    return unicode_font_name(
+        style.font_family,
+        bold=style.bold is True,
+        italic=style.italic is True,
+    )
 
 
 def _image_placeholder(image: Image) -> str:
@@ -1329,7 +1580,9 @@ def _image_placeholder(image: Image) -> str:
 
 
 def _wmf_flowable(
-    graphic: WmfGraphic, document: Document | None = None
+    graphic: WmfGraphic,
+    document: Document | None = None,
+    text_budget: PdfTextBudget | None = None,
 ) -> object:
     page = _page_spec(document) if isinstance(document, Document) else _PageSpec()
     max_width = max(1.0, page.body_width - 12.0) / inch
@@ -1340,14 +1593,16 @@ def _wmf_flowable(
             graphic, max_width_in=max_width, max_height_in=max_height
         )
     except WmfDecodeError:
-        return _placeholder_flowable("[Invalid WMF preview]")
+        return _placeholder_flowable("[Invalid WMF preview]", text_budget)
     image = ReportLabImage(BytesIO(payload), width=width * inch, height=height * inch)
     image.hAlign = "LEFT"
     return image
 
 
 def _sdw_flowables(
-    drawing: SdwDrawing, document: Document | None = None
+    drawing: SdwDrawing,
+    document: Document | None = None,
+    text_budget: PdfTextBudget | None = None,
 ) -> list[object]:
     page = _page_spec(document) if isinstance(document, Document) else _PageSpec()
     max_width = max(1.0, page.body_width - 12.0) / inch
@@ -1358,17 +1613,17 @@ def _sdw_flowables(
             drawing, max_width_in=max_width, max_height_in=max_height
         )
     except SdwDecodeError:
-        return [_placeholder_flowable(_sdw_placeholder(drawing))]
+        return [_placeholder_flowable(_sdw_placeholder(drawing), text_budget)]
     if not isinstance(payload, bytes) or not _valid_sdw_display_size(width, height):
-        return [_placeholder_flowable(_sdw_placeholder(drawing))]
+        return [_placeholder_flowable(_sdw_placeholder(drawing), text_budget)]
     try:
         image = ReportLabImage(
             BytesIO(payload), width=width * inch, height=height * inch
         )
     except Exception:
-        return [_placeholder_flowable(_sdw_placeholder(drawing))]
+        return [_placeholder_flowable(_sdw_placeholder(drawing), text_budget)]
     image.hAlign = "LEFT"
-    return [_placeholder_flowable(sdw_preview_caption(drawing)), image]
+    return [_placeholder_flowable(sdw_preview_caption(drawing), text_budget), image]
 
 
 def _sdw_placeholder(drawing: SdwDrawing) -> str:
@@ -1420,12 +1675,63 @@ def _valid_sdw_display_size(width: object, height: object) -> bool:
     )
 
 
-def _safe_paragraph_text(paragraph: Paragraph) -> str:
-    try:
-        value = paragraph.text
-    except (AttributeError, TypeError):
-        return ""
-    return value if isinstance(value, str) else ""
+def _prepared_paragraph_text(
+    paragraph: Paragraph, text_budget: PdfTextBudget
+) -> str:
+    runs = paragraph.runs
+    if not isinstance(runs, list | tuple):
+        try:
+            value = paragraph.text
+        except (AttributeError, TypeError):
+            value = "[Invalid paragraph text omitted]"
+        return text_budget.prepare(value, unit_boundary=True)
+
+    result: list[str] = []
+    seen_runs: set[int] = set()
+    paragraph_remaining = 65_536
+    for run in runs[:4_096]:
+        if paragraph_remaining <= 0:
+            break
+        if (
+            not isinstance(run, TextRun)
+            or not isinstance(run.style, CharacterStyle)
+            or id(run) in seen_runs
+        ):
+            omitted = text_budget.prepare("[Invalid or repeated text run omitted]")
+            result.append(omitted)
+            paragraph_remaining -= len(omitted)
+            continue
+        seen_runs.add(id(run))
+        value = text_budget.prepare(
+            run.text,
+            paragraph_limit=paragraph_remaining,
+            unit_boundary=True,
+        )
+        if value:
+            result.append(value)
+            paragraph_remaining -= len(value)
+    if len(runs) > 4_096 or paragraph_remaining <= 0:
+        result.append(text_budget.prepare("[Text runs omitted at safe PDF limit]"))
+    return "".join(result)
+
+
+def _prepared_table_cell_text(
+    cell: TableCell, text_budget: PdfTextBudget
+) -> str:
+    blocks = cell.blocks
+    if not isinstance(blocks, list | tuple):
+        return text_budget.prepare("[Invalid table cell content omitted]")
+    result: list[str] = []
+    seen: set[int] = set()
+    for block in blocks[:4_096]:
+        if not isinstance(block, Paragraph) or id(block) in seen:
+            result.append(text_budget.prepare("[Invalid or repeated table cell content omitted]"))
+            continue
+        seen.add(id(block))
+        result.append(_prepared_paragraph_text(block, text_budget))
+    if len(blocks) > 4_096:
+        result.append(text_budget.prepare("[Table cell content omitted at safe PDF limit]"))
+    return "\n".join(value for value in result if value)
 
 
 def _clean_text(value: object) -> str:
@@ -1435,7 +1741,7 @@ def _clean_text(value: object) -> str:
 
 
 def _hex_color(value: str | None) -> str | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     match = _HEX_COLOR.fullmatch(value.strip())
     return f"#{match.group(1).upper()}" if match else None
@@ -1455,7 +1761,7 @@ def _safe_number(
 ) -> float:
     try:
         number = float(value) if value is not None else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if not math.isfinite(number):
         return default

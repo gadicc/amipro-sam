@@ -663,7 +663,7 @@ def test_malformed_vector_status_is_visible_in_pdf_when_pypdf_is_available() -> 
     reader = pypdf.PdfReader(BytesIO(pdf.render(document)))
     extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
 
-    assert "vector status=malformed" in extracted
+    assert "vector status=malformed" in " ".join(extracted.split())
 
 
 @pytest.mark.skipif(
