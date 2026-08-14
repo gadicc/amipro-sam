@@ -1,13 +1,14 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phase 1 complete. Exact Windows and Ami Pro media profiles, the bounded Windows Setup
-driver, the independent Program Manager boot/clean-exit gate, and the exact-dialog Ami Pro
-installer all passed on 2026-08-14. Phase 2 begins with a separate Ami Pro launch/clean-exit gate.
+Status: Phase 1 complete; the Phase 2 Ami Pro launch/known-state/clean-exit gate also passed on
+2026-08-14. Exact Windows and Ami Pro media profiles, Windows Setup, Program Manager, Ami Pro
+installation, and Ami Pro lifecycle checkpoints are now content-addressed. The next gate opens one
+invented SAM without printing.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
-Windows 3.1 media. It now has verified Windows-ready and Ami Pro install-candidate bases, but no
-document-rendering result. Proprietary execution requires the user's explicit right-to-use
-affirmation.
+Windows 3.1 media. It now has verified Windows-ready, Ami Pro install-candidate, and Ami Pro-ready
+bases, but no document-rendering result. Proprietary execution requires the user's explicit
+right-to-use affirmation.
 
 ## Scope and legal boundary
 
@@ -322,6 +323,7 @@ The public surface is:
   --win31-media PATH --amipro-media PATH
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
+./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -418,9 +420,18 @@ INI/directory side effects were validated before publishing install candidate
 `install-amipro-c7c79b26e977-a9gyaes6` is local and ignored, and cache reuse was verified without
 restarting Setup.
 
-The next implementation target is a separate, media-free Ami Pro launch/known-state/clean-exit
-gate over a disposable clone of this install candidate. Only after that gate passes should an
-invented SAM document be introduced for the Phase 2 smoke.
+The separate, media-free Ami Pro lifecycle gate has also passed. It classified and dismissed the
+expected no-printer/screen-formatting warning, proved a blank untitled editor with that dialog
+absent, closed Ami Pro, recognized minimized Program Manager, confirmed Exit Windows, and promoted
+Ami Pro-ready runtime `a1613ad18f592516bef907ec04d608cf64a3bdf63ea2e2f824aa7690a273d9c0`.
+The sealed runtime contains 925 files in 14 directories totaling 28,952,075 bytes. Evidence job
+`launch-amipro-a1613ad18f59-ssfqbjiz` remains local and ignored; cache reuse was verified without
+launching the application again.
+
+The next implementation target is to stage and open one invented SAM in a disposable clone of the
+Ami Pro-ready base, prove the named document reached the editor, and close the document,
+application, Windows, and DOSBox-X within hard deadlines. Printing remains out of scope until the
+separately keyed printer phase.
 
 For a fresh local rebuild, first affirm the right to use the supplied media:
 
@@ -437,6 +448,7 @@ media through the repository. Then run:
 ```console
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
+./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ```
 
 The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed

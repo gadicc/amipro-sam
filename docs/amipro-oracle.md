@@ -6,10 +6,10 @@ conversion never execute Ami Pro or require proprietary media.
 
 The current milestone provides a real, bounded Windows 3.1 Setup driver, an independent
 Program Manager boot/clean-exit gate, and an exact-dialog Ami Pro 3.1 installer. These phases have
-produced content-addressed **Windows-ready** and **Ami Pro install-candidate** bases. A separate
-Ami Pro launch/clean-exit gate and invented-document smoke are still required; no real rendering
-result has been produced, and no current manifest is accepted as a fidelity baseline. See the
-[investigation and adversarial plan](plans/amipro-oracle-plan.md).
+produced content-addressed **Windows-ready**, **Ami Pro install-candidate**, and **Ami Pro-ready**
+bases. The separate launch/clean-exit gate is exercised; an invented-document smoke is still
+required. No real rendering result has been produced, and no current manifest is accepted as a
+fidelity baseline. See the [investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
 
@@ -20,6 +20,7 @@ Run from the repository root:
 ./scripts/amipro-oracle bootstrap --confirm-proprietary-media-rights
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
+./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
@@ -186,6 +187,33 @@ Manager and Exit Windows frames hash to
 `install-amipro-c7c79b26e977-a9gyaes6` remains local and ignored. A second invocation verified and
 reused the cache without executing Setup. This proves the installation checkpoint, not that Ami
 Pro launches, renders, or prints correctly.
+
+Promote the install candidate through the separate, media-free lifecycle gate:
+
+```console
+./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
+```
+
+If more than one install candidate exists, add `--checkpoint-key HASH`. Direct launch through
+`WIN.COM C:\AMIPRO\AMIPRO.EXE` predictably reports that no printer driver is available and uses
+screen formatting; the current profile requires that exact warning, dismisses it, requires the
+blank untitled editor with the warning absent, closes Ami Pro, recognizes minimized Program
+Manager, and confirms Exit Windows. Only the disposable job is mounted, and no source media or
+cache is exposed to the guest.
+
+The exercised gate promoted install candidate
+`c7c79b26e9779a3c2f95b00c8f2301e95523cde960d1e287aacc79aa9dee6745` to Ami Pro-ready runtime
+`a1613ad18f592516bef907ec04d608cf64a3bdf63ea2e2f824aa7690a273d9c0`. The container exited zero
+without timeout after 21.87 seconds. Its sealed tree contains 925 files in 14 directories totaling
+28,952,075 bytes. The accepted printer-warning, blank-editor, minimized-Program-Manager, and
+Exit-Windows frames hash to
+`527b8c7bc7fb0240867ffa2381d4c5b1540019f55b1689ab01c17f79a427db0e`,
+`8444ee8afdccf7e014b4bb0bafc02d70bc2ed1cf83ab9a6f1e56bd3dce29dd0b`,
+`87fec483c0dcb4575be61b1eef6f953337e615a06bf870b892bb1da7640293c3`, and
+`f01b1aa3374d0be4f4b47354c0b1c1712e7d88ce02a577a74711659f19aab902`. Evidence job
+`launch-amipro-a1613ad18f59-ssfqbjiz` remains local and ignored. Cache reuse was verified without
+launching Ami Pro again. This proves the application lifecycle gate under screen formatting, not
+document fidelity or printing behavior.
 
 The supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup
 remains a later phase. Nothing fetches a driver, WPD, PPD, font, Windows, or Ami Pro bytes.
