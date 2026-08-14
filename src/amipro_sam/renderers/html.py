@@ -33,6 +33,7 @@ from ..model import (
     TwipRect,
     UnsupportedObject,
     WmfGraphic,
+    _TextOutputBudget,
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
@@ -67,8 +68,13 @@ _JPEG_SOF_MARKERS = {
 _BMP_HEADER_SIZES = {40, 52, 56, 108, 124}
 _MAX_RENDER_DEPTH = 32
 _MAX_RENDER_BLOCKS = 100_000
+_MAX_DIAGNOSTICS = 256
+_MAX_DIAGNOSTIC_TEXT = 65_536
+_MAX_DIAGNOSTIC_FIELD = 4_096
 _MAX_TABLE_ROWS = 390
 _MAX_TABLE_CELLS = 100_000
+_MAX_PARAGRAPH_RUNS = 4_096
+_MAX_PARAGRAPH_TEXT = 1_000_000
 _MAX_PAGE_TWIPS = 22 * 1_440
 _MIN_PAGE_TWIPS = 1_440
 _MIN_CONTENT_TWIPS = 720
@@ -131,10 +137,17 @@ def render(
     title = _document_title(document)
     language = _language(document)
     promoted_furniture = _promoted_layout_furniture(document)
-    body = _render_blocks(document, promoted_furniture=promoted_furniture)
-    furniture = _layout_furniture(document, promoted_furniture)
+    text_budget = _TextOutputBudget()
+    body = _render_blocks(
+        document,
+        promoted_furniture=promoted_furniture,
+        text_budget=text_budget,
+    )
+    furniture = _layout_furniture(
+        document, promoted_furniture, text_budget=text_budget
+    )
     page_css = _page_css(document)
-    warnings = _warnings(document) if include_warnings and document.diagnostics else ""
+    warnings = _warnings(document) if include_warnings else ""
     result = (
         "<!doctype html>\n"
         f'<html lang="{_attribute(language)}">\n'
@@ -163,20 +176,36 @@ def _render_blocks(
     *,
     depth: int = 0,
     active: set[int] | None = None,
+    seen_blocks: set[int] | None = None,
     promoted_furniture: set[int] | None = None,
+    text_budget: _TextOutputBudget | None = None,
 ) -> str:
     if depth >= _MAX_RENDER_DEPTH:
         return '<div class="placeholder">[Nested content omitted at safe depth limit]</div>\n'
+    source_blocks = document.blocks if blocks is None else blocks
+    if not isinstance(source_blocks, list | tuple):
+        return '<div class="placeholder">[Invalid nested content omitted]</div>\n'
+    block_limit_reached = len(source_blocks) > _MAX_RENDER_BLOCKS
     result: list[str] = []
-    blocks = _safe_blocks(document.blocks if blocks is None else blocks)
+    blocks = list(source_blocks[:_MAX_RENDER_BLOCKS])
+    promoted_furniture = set() if promoted_furniture is None else promoted_furniture
     blocks = [block for block in blocks if id(block) not in promoted_furniture]
     blocks = _trim_edge_page_breaks(blocks)
     active = set() if active is None else active
-    promoted_furniture = set() if promoted_furniture is None else promoted_furniture
+    seen_blocks = set() if seen_blocks is None else seen_blocks
+    text_budget = _TextOutputBudget() if text_budget is None else text_budget
     has_content = False
     index = 0
     while index < len(blocks):
         block = blocks[index]
+        block_identity = id(block)
+        if block_identity in seen_blocks:
+            result.append(
+                '<div class="placeholder">[Repeated block object omitted]</div>\n'
+            )
+            index += 1
+            continue
+        seen_blocks.add(block_identity)
         if isinstance(block, Paragraph):
             if block.page_break_before and has_content:
                 result.append(_page_break())
@@ -187,6 +216,8 @@ def _render_blocks(
                 index += 1
                 while index < len(blocks):
                     candidate = blocks[index]
+                    if id(candidate) in seen_blocks:
+                        break
                     if not isinstance(candidate, Paragraph):
                         break
                     candidate_level = max(
@@ -198,16 +229,17 @@ def _render_blocks(
                         or candidate_level != level
                     ):
                         break
+                    seen_blocks.add(id(candidate))
                     items.append(candidate)
                     index += 1
-                result.append(_list(document, kind, level, items))
+                result.append(_list(document, kind, level, items, text_budget))
                 has_content = True
                 continue
-            result.append(_paragraph(document, block))
+            result.append(_paragraph(document, block, text_budget))
         elif isinstance(block, PageBreak):
             result.append(_page_break())
         elif isinstance(block, Table):
-            result.append(_table(document, block))
+            result.append(_table(document, block, text_budget))
         elif isinstance(block, Image):
             result.append(_image(block))
         elif isinstance(block, WmfGraphic):
@@ -221,11 +253,19 @@ def _render_blocks(
                     block,
                     depth=depth,
                     active=active,
+                    seen_blocks=seen_blocks,
                     promoted_furniture=promoted_furniture,
+                    text_budget=text_budget,
                 )
             )
         elif isinstance(block, UnsupportedObject):
-            label = f"Unsupported {block.kind}: {block.description}"
+            kind = _safe_label_field(
+                block.kind, "unknown object kind", maximum=128
+            )
+            description = _safe_label_field(
+                block.description, "description unavailable", maximum=256
+            )
+            label = f"Unsupported {kind}: {description}"
             result.append(f'<div class="placeholder">[{_text(label)}]</div>\n')
         elif isinstance(block, Annotation):
             nested = _nested_html(
@@ -234,7 +274,9 @@ def _render_blocks(
                 block.blocks,
                 depth,
                 active,
+                seen_blocks,
                 promoted_furniture,
+                text_budget,
             )
             result.append(
                 '<aside class="annotation" role="note">\n'
@@ -242,14 +284,23 @@ def _render_blocks(
                 f"{nested}</aside>\n"
             )
         elif isinstance(block, Footnote):
-            label = f"Footnote {block.number}" if block.number is not None else "Footnote"
+            label = (
+                "Footnote "
+                + _safe_label_field(
+                    block.number, "number unavailable", maximum=64
+                )
+                if block.number is not None
+                else "Footnote"
+            )
             nested = _nested_html(
                 document,
                 block,
                 block.blocks,
                 depth,
                 active,
+                seen_blocks,
                 promoted_furniture,
+                text_budget,
             )
             result.append(
                 '<aside class="footnote" role="doc-footnote">\n'
@@ -270,16 +321,32 @@ def _render_blocks(
                 block.blocks,
                 depth,
                 active,
+                seen_blocks,
                 promoted_furniture,
+                text_budget,
             )
             result.append(
                 f'<{tag} class="{css_class}" data-placement="{_attribute(placement)}">\n'
                 f'<p class="container-label">{_text(label)}</p>\n'
                 f"{nested}</{tag}>\n"
             )
+        else:
+            kind = type(block).__name__
+            result.append(
+                '<div class="placeholder">'
+                f'[Unrecognized block object omitted: {_text(kind)}]'
+                '</div>\n'
+            )
         if not isinstance(block, PageBreak):
             has_content = True
         index += 1
+    if block_limit_reached:
+        omitted = len(source_blocks) - _MAX_RENDER_BLOCKS
+        result.append(
+            '<div class="placeholder">'
+            f'[Block content omitted at safe rendering limit: {omitted} additional block(s)]'
+            '</div>\n'
+        )
     return "".join(result)
 
 
@@ -289,7 +356,9 @@ def _frame(
     *,
     depth: int,
     active: set[int],
+    seen_blocks: set[int],
     promoted_furniture: set[int],
+    text_budget: _TextOutputBudget,
 ) -> str:
     kind = _choice(frame.content_kind, {"text", "table", "image", "drawing"}, "unknown")
     placement = _choice(
@@ -310,7 +379,9 @@ def _frame(
         frame.blocks,
         depth,
         active,
+        seen_blocks,
         promoted_furniture,
+        text_budget,
     )
     return (
         f'<section class="document-frame" data-placement="{_attribute(placement)}"'
@@ -326,7 +397,9 @@ def _nested_html(
     blocks: object,
     depth: int,
     active: set[int],
+    seen_blocks: set[int],
     promoted_furniture: set[int],
+    text_budget: _TextOutputBudget,
 ) -> str:
     identity = id(owner)
     if identity in active:
@@ -337,7 +410,9 @@ def _nested_html(
         blocks,  # type: ignore[arg-type]
         depth=depth + 1,
         active=active,
+        seen_blocks=seen_blocks,
         promoted_furniture=promoted_furniture,
+        text_budget=text_budget,
     )
 
 
@@ -361,16 +436,27 @@ def _choice(value: object, choices: set[str], default: str) -> str:
     return value if isinstance(value, str) and value in choices else default
 
 
-def _layout_furniture(document: Document, promoted: set[int]) -> str:
+def _layout_furniture(
+    document: Document,
+    promoted: set[int],
+    *,
+    text_budget: _TextOutputBudget,
+) -> str:
     parts: list[str] = []
     for block in _safe_blocks(document.blocks):
         if not isinstance(block, Header | Footer) or id(block) not in promoted:
             continue
         tag = "header" if isinstance(block, Header) else "footer"
         placement = _choice(block.placement, {"all", "odd", "even", "odd-even"}, "unknown")
+        content = _render_blocks(
+            document,
+            block.blocks,
+            promoted_furniture=promoted,
+            text_budget=text_budget,
+        )
         parts.append(
             f'<{tag} class="print-{tag}" data-placement="{_attribute(placement)}">\n'
-            f"{_render_blocks(document, block.blocks, promoted_furniture=promoted)}</{tag}>\n"
+            f"{content}</{tag}>\n"
         )
     return "".join(parts)
 
@@ -443,11 +529,15 @@ def _placement_label(value: str) -> str:
     }.get(value, "placement unknown")
 
 
-def _paragraph(document: Document, paragraph: Paragraph) -> str:
+def _paragraph(
+    document: Document,
+    paragraph: Paragraph,
+    text_budget: _TextOutputBudget,
+) -> str:
     heading = _heading_level(paragraph.style_name)
     tag = f"h{heading}" if heading else "p"
     attributes = _paragraph_attributes(document, paragraph)
-    content = _paragraph_content(document, paragraph)
+    content = _paragraph_content(document, paragraph, text_budget)
     return f"<{tag}{attributes}>{content}</{tag}>\n"
 
 
@@ -456,24 +546,33 @@ def _list(
     kind: str,
     level: int,
     items: list[Paragraph],
+    text_budget: _TextOutputBudget,
 ) -> str:
     tag = "ol" if kind == "number" else "ul"
     class_name = f' class="level-{level}"' if level else ""
     parts = [f"<{tag}{class_name}>\n"]
     for item in items:
         attributes = _paragraph_attributes(document, item, omit_indentation=True)
-        parts.append(f"<li{attributes}>{_paragraph_content(document, item)}</li>\n")
+        parts.append(
+            f"<li{attributes}>{_paragraph_content(document, item, text_budget)}</li>\n"
+        )
     parts.append(f"</{tag}>\n")
     return "".join(parts)
 
 
-def _paragraph_content(document: Document, paragraph: Paragraph) -> str:
+def _paragraph_content(
+    document: Document,
+    paragraph: Paragraph,
+    text_budget: _TextOutputBudget,
+) -> str:
     base = _named_character_style(document, paragraph.style_name)
     runs = paragraph.runs
     if not isinstance(runs, list | tuple):
-        return _text(paragraph.text)
+        return _text("[Invalid paragraph runs omitted]")
     parts: list[str] = []
-    for run in runs[:_MAX_RENDER_BLOCKS]:
+    paragraph_remaining = _MAX_PARAGRAPH_TEXT
+    omitted = len(runs) > _MAX_PARAGRAPH_RUNS
+    for run in runs[:_MAX_PARAGRAPH_RUNS]:
         if not isinstance(run, TextRun) or not isinstance(run.style, CharacterStyle):
             parts.append(_text("[Invalid text run omitted]"))
             continue
@@ -483,7 +582,21 @@ def _paragraph_content(document: Document, paragraph: Paragraph) -> str:
         if not isinstance(value, str):
             parts.append(_text("[Invalid text run omitted]"))
             continue
-        parts.append(_run(value, base, run.style))
+        prepared = text_budget.prepare(
+            value,
+            unit_limit=paragraph_remaining,
+            expansion_factor=5,
+        )
+        if prepared.visible:
+            parts.append(_run(prepared.visible, base, run.style))
+        paragraph_remaining -= len(prepared.text)
+        if prepared.encoding in {"bounded-text", "text-budget-limit"}:
+            omitted = True
+        if paragraph_remaining <= 0:
+            omitted = True
+            break
+    if omitted:
+        parts.append(_text("[Paragraph content omitted at safe rendering limit]"))
     return "".join(parts)
 
 
@@ -565,7 +678,11 @@ def _paragraph_attributes(
     return f' style="{";".join(css)}"' if css else ""
 
 
-def _table(document: Document, table: Table) -> str:
+def _table(
+    document: Document,
+    table: Table,
+    text_budget: _TextOutputBudget,
+) -> str:
     rows = table.rows
     if not isinstance(rows, list | tuple):
         return '<div class="placeholder">[Invalid table rows omitted]</div>\n'
@@ -600,13 +717,25 @@ def _table(document: Document, table: Table) -> str:
         result.append("<thead>\n")
         for row in safe_rows[:header_rows]:
             result.append(
-                _table_row(document, row.cells, header=True, seen_cells=seen_cells)
+                _table_row(
+                    document,
+                    row.cells,
+                    header=True,
+                    seen_cells=seen_cells,
+                    text_budget=text_budget,
+                )
             )
         result.append("</thead>\n")
     result.append("<tbody>\n")
     for row in safe_rows[header_rows:]:
         result.append(
-            _table_row(document, row.cells, header=False, seen_cells=seen_cells)
+            _table_row(
+                document,
+                row.cells,
+                header=False,
+                seen_cells=seen_cells,
+                text_budget=text_budget,
+            )
         )
     result.append("</tbody>\n</table>\n")
     if omitted:
@@ -622,6 +751,7 @@ def _table_row(
     *,
     header: bool,
     seen_cells: set[int],
+    text_budget: _TextOutputBudget,
 ) -> str:
     tag = "th" if header else "td"
     result = ["<tr>"]
@@ -662,7 +792,9 @@ def _table_row(
             if invalid_content
             else ""
         )
-        content += "".join(_paragraph(document, item) for item in paragraphs)
+        content += "".join(
+            _paragraph(document, item, text_budget) for item in paragraphs
+        )
         result.append(f"<{tag}{attributes}>{content}</{tag}>")
     result.append("</tr>\n")
     return "".join(result)
@@ -670,12 +802,15 @@ def _table_row(
 
 def _image(image: Image) -> str:
     validated = _validated_image(image.data)
-    alt = image.alt_text or "Embedded image"
+    alt = _safe_label_field(image.alt_text, "Embedded image", maximum=256)
     if validated is None:
         if image.data is not None:
             reason = "embedded data was not a validated PNG, JPEG, GIF, or BMP"
         elif image.reference:
-            reason = f"external reference not loaded: {image.reference}"
+            reference = _safe_label_field(
+                image.reference, "invalid reference omitted", maximum=256
+            )
+            reason = f"external reference not loaded: {reference}"
         else:
             reason = "image data was unavailable"
         return (
@@ -709,7 +844,9 @@ def _wmf_graphic(graphic: WmfGraphic) -> str:
     except WmfDecodeError:
         return '<div class="placeholder">[Invalid WMF preview]</div>\n'
     encoded = base64.b64encode(data).decode("ascii")
-    alt = graphic.alt_text or "Embedded WMF preview"
+    alt = _safe_label_field(
+        graphic.alt_text, "Embedded WMF preview", maximum=256
+    )
     return (
         '<figure class="wmf-preview">'
         f'<img src="data:image/png;base64,{encoded}" alt="{_attribute(alt)}" '
@@ -732,7 +869,7 @@ def _sdw_graphic(drawing: SdwDrawing) -> str:
     ):
         return f'<div class="placeholder">{_text(_sdw_placeholder(drawing))}</div>\n'
     encoded = base64.b64encode(data).decode("ascii")
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
     return (
         '<figure class="sdw-preview">'
         f'<img src="data:image/png;base64,{encoded}" alt="{_attribute(alt)}" '
@@ -743,9 +880,9 @@ def _sdw_graphic(drawing: SdwDrawing) -> str:
 
 
 def _sdw_placeholder(drawing: SdwDrawing) -> str:
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
-    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
-    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_label_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_label_field(drawing.reason, "preview unavailable", maximum=256)
     details = [
         f"Ami Draw object: {alt}",
         "no valid companion preview",
@@ -762,16 +899,23 @@ def _sdw_placeholder(drawing: SdwDrawing) -> str:
     return "[" + "; ".join(details) + "]"
 
 
-def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+def _safe_label_field(value: object, default: str, *, maximum: int) -> str:
     if isinstance(value, str):
-        result = value
+        result = value[: maximum * 4]
     elif isinstance(value, bytes):
-        result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+        result = value[: maximum * 4].decode("utf-8", errors="replace")
+    elif isinstance(value, bool | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):
             return default
+    elif isinstance(value, int):
+        bits = value.bit_length()
+        result = (
+            f"[oversized integer omitted: {bits} bits]"
+            if bits > 1_024
+            else str(value)
+        )
     else:
         return default
     result = " ".join(result.split())[:maximum]
@@ -792,31 +936,139 @@ def _valid_display_size(width: object, height: object) -> bool:
 
 
 def _warnings(document: Document) -> str:
+    diagnostics = getattr(document, "diagnostics", None)
+    if diagnostics is None:
+        return ""
     parts = [
         '<aside class="conversion-warnings" aria-label="Conversion warnings">\n',
         "<h2>Conversion warnings</h2>\n<ul>\n",
     ]
-    for diagnostic in document.diagnostics:
-        location = ""
-        if diagnostic.source is not None:
-            location = (
-                f" at line {diagnostic.source.line}, column "
-                f"{diagnostic.source.column}"
-            )
+    if not isinstance(diagnostics, list | tuple):
+        parts.append(
+            '<li class="placeholder">[Invalid diagnostics container omitted]</li>\n'
+        )
+        parts.append("</ul>\n</aside>\n")
+        return "".join(parts)
+    if not diagnostics:
+        return ""
+
+    used_text = 0
+    omitted = max(0, len(diagnostics) - _MAX_DIAGNOSTICS)
+    text_limited = False
+    field_limited = False
+    for index, diagnostic in enumerate(diagnostics[:_MAX_DIAGNOSTICS]):
+        if not isinstance(diagnostic, Diagnostic):
+            entry = "[Invalid diagnostic item omitted]"
+            if used_text + len(entry) > _MAX_DIAGNOSTIC_TEXT:
+                omitted += len(diagnostics[:_MAX_DIAGNOSTICS]) - index
+                text_limited = True
+                break
+            used_text += len(entry)
+            parts.append(f'<li class="placeholder">{_text(entry)}</li>\n')
+            continue
+
+        severity, severity_limited = _diagnostic_severity(diagnostic)
+        code, code_limited = _bounded_diagnostic_field(
+            diagnostic.code, default="unknown-diagnostic", maximum=256
+        )
+        message, message_limited = _bounded_diagnostic_field(
+            diagnostic.message,
+            default="Diagnostic message unavailable",
+            maximum=_MAX_DIAGNOSTIC_FIELD,
+        )
+        location = _diagnostic_location(diagnostic)
+        loss, loss_limited = _diagnostic_loss(diagnostic)
+        field_limited = field_limited or any(
+            (severity_limited, code_limited, message_limited, loss_limited)
+        )
+        fixed_size = len(severity) + len(code) + len(location) + len(loss)
+        available = _MAX_DIAGNOSTIC_TEXT - used_text - fixed_size
+        if available <= 0:
+            omitted += len(diagnostics[:_MAX_DIAGNOSTICS]) - index
+            text_limited = True
+            break
+        if len(message) > available:
+            message = message[:available]
+            text_limited = True
+        used_text += fixed_size + len(message)
+        loss_html = (
+            f' <span class="diagnostic-loss">loss=<code>{_text(loss)}</code></span>'
+            if loss
+            else ""
+        )
         parts.append(
             "<li>"
-            f"<strong>{_text(_diagnostic_severity(diagnostic))}</strong> "
-            f"<code>{_text(diagnostic.code)}</code>{_text(location)}: "
-            f"{_text(diagnostic.message)}"
+            f"<strong>{_text(severity)}</strong> "
+            f"<code>{_text(code)}</code>{_text(location)}{loss_html}: "
+            f"{_text(message)}"
             "</li>\n"
+        )
+        if text_limited:
+            omitted += len(diagnostics[:_MAX_DIAGNOSTICS]) - index - 1
+            break
+    if omitted or text_limited or field_limited:
+        detail = f": {omitted} additional diagnostic(s)" if omitted else ""
+        parts.append(
+            '<li class="placeholder">'
+            f'[Diagnostic content omitted at safe rendering limit{detail}]'
+            '</li>\n'
         )
     parts.append("</ul>\n</aside>\n")
     return "".join(parts)
 
 
-def _diagnostic_severity(diagnostic: Diagnostic) -> str:
-    value = getattr(diagnostic.severity, "value", diagnostic.severity)
-    return str(value).capitalize()
+def _diagnostic_severity(diagnostic: Diagnostic) -> tuple[str, bool]:
+    severity = getattr(diagnostic, "severity", None)
+    value = getattr(severity, "value", severity)
+    rendered, limited = _bounded_diagnostic_field(
+        value, default="Unknown", maximum=64
+    )
+    return rendered.capitalize(), limited
+
+
+def _diagnostic_loss(diagnostic: Diagnostic) -> tuple[str, bool]:
+    loss = getattr(diagnostic, "lossiness", None)
+    if loss is None:
+        loss = getattr(diagnostic, "loss_category", None)
+    value = getattr(loss, "value", loss)
+    if not isinstance(value, str):
+        return "", False
+    bounded, limited = _bounded_diagnostic_field(value, default="", maximum=64)
+    normalized = " ".join(bounded.strip().split()).casefold()
+    return (normalized if normalized and normalized != "none" else ""), limited
+
+
+def _diagnostic_location(diagnostic: Diagnostic) -> str:
+    source = getattr(diagnostic, "source", None)
+    if source is None:
+        return ""
+    line = getattr(source, "line", None)
+    column = getattr(source, "column", None)
+    if type(line) is not int or type(column) is not int:
+        return ""
+    if not (-1_000_000_000 <= line <= 1_000_000_000):
+        return ""
+    if not (-1_000_000_000 <= column <= 1_000_000_000):
+        return ""
+    return f" at line {line}, column {column}"
+
+
+def _bounded_diagnostic_field(
+    value: object, *, default: str, maximum: int
+) -> tuple[str, bool]:
+    if isinstance(value, str):
+        result = value
+    elif isinstance(value, bytes):
+        result = value.decode("utf-8", errors="replace")
+    elif isinstance(value, (bool, int, float)):
+        try:
+            result = str(value)
+        except (TypeError, ValueError, OverflowError):
+            return default, True
+    else:
+        return default, value is not None
+    limited = len(result) > maximum
+    return (_clean(result[:maximum]) or default), limited
 
 
 def _page_break() -> str:
@@ -906,22 +1158,33 @@ def _validated_page_box(
 
 
 def _document_title(document: Document) -> str:
+    metadata = document.metadata if isinstance(document.metadata, dict) else {}
     for key in ("title", "Title", "subject", "Subject"):
-        value = document.metadata.get(key)
-        if value:
+        value = metadata.get(key)
+        if isinstance(value, str) and value:
             return value
-    return document.source_name or "Converted Ami Pro document"
+    return (
+        document.source_name
+        if isinstance(document.source_name, str) and document.source_name
+        else "Converted Ami Pro document"
+    )
 
 
 def _language(document: Document) -> str:
-    value = document.metadata.get("language") or document.metadata.get("lang") or "en"
+    metadata = document.metadata if isinstance(document.metadata, dict) else {}
+    value = metadata.get("language") or metadata.get("lang") or "en"
     # BCP-47 is broader, but this subset avoids putting arbitrary content in
     # the root attribute and covers common preservation metadata.
-    return value if re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", value) else "en"
+    return (
+        value
+        if isinstance(value, str)
+        and re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", value)
+        else "en"
+    )
 
 
 def _heading_level(style_name: str | None) -> int | None:
-    if not style_name:
+    if not isinstance(style_name, str) or not style_name:
         return None
     normalized = " ".join(style_name.strip().split()).casefold()
     match = _HEADING_NUMBER.search(normalized)
@@ -941,7 +1204,8 @@ def _named_character_style(
 ) -> CharacterStyle:
     result = CharacterStyle()
     for definition in _style_chain(document, style_name):
-        result = _merge_character_style(result, definition.character)
+        if isinstance(definition.character, CharacterStyle):
+            result = _merge_character_style(result, definition.character)
     return result
 
 
@@ -951,8 +1215,13 @@ def _style_chain(
     result: list[StyleDefinition] = []
     seen: set[str] = set()
     current = _find_style(document, style_name)
-    while current is not None and current.name.casefold() not in seen and len(result) < 64:
-        seen.add(current.name.casefold())
+    while current is not None and len(result) < 64:
+        if not isinstance(current.name, str):
+            break
+        folded_name = current.name.casefold()
+        if folded_name in seen:
+            break
+        seen.add(folded_name)
         result.append(current)
         current = _find_style(document, current.parent)
     result.reverse()
@@ -960,13 +1229,23 @@ def _style_chain(
 
 
 def _find_style(document: Document, name: str | None) -> StyleDefinition | None:
-    if not name:
+    if not isinstance(name, str) or not name:
         return None
-    if name in document.styles:
-        return document.styles[name]
+    styles = getattr(document, "styles", None)
+    if not isinstance(styles, dict):
+        return None
+    if name in styles:
+        candidate = styles[name]
+        return candidate if isinstance(candidate, StyleDefinition) else None
     folded = name.casefold()
     return next(
-        (item for key, item in document.styles.items() if key.casefold() == folded),
+        (
+            item
+            for key, item in styles.items()
+            if isinstance(key, str)
+            and key.casefold() == folded
+            and isinstance(item, StyleDefinition)
+        ),
         None,
     )
 
@@ -987,7 +1266,7 @@ def _merge_character_style(base: CharacterStyle, override: CharacterStyle) -> Ch
 
 
 def _font_stack(value: str | None) -> str | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     normalized = value.casefold()
     if any(item in normalized for item in ("courier", "mono", "console", "typewriter")):
@@ -998,7 +1277,7 @@ def _font_stack(value: str | None) -> str | None:
 
 
 def _color(value: str | None) -> str | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     match = _HEX_COLOR.fullmatch(value.strip())
     return f"#{match.group(1).lower()}" if match else None

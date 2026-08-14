@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
+
+from amipro_sam import cli, model
 from amipro_sam.cli import main
+from amipro_sam.model import Document, Frame, PageBreak, Paragraph, TextRun
+from amipro_sam.renderers import json as json_renderer
 
 
 def _sam(text: str) -> bytes:
@@ -82,3 +88,76 @@ def test_dump_refuses_source_and_existing_destination(tmp_path: Path) -> None:
     assert source.read_bytes() == original
     assert main(["dump", str(source), "--output", str(output)]) == 1
     assert output.read_text(encoding="utf-8") == "keep"
+
+
+def test_dump_uses_bounded_json_renderer_with_visible_omission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.sam"
+    output = tmp_path / "dump.json"
+    source.write_bytes(_sam("safe"))
+    document = Document(
+        "manual.sam",
+        "cp1252",
+        blocks=[PageBreak(), PageBreak(), PageBreak()],
+    )
+    monkeypatch.setattr(cli, "parse_file", lambda *_args, **_kwargs: document)
+    monkeypatch.setattr(json_renderer, "_MAX_JSON_ITEMS", 2)
+
+    assert main(["dump", str(source), "--output", str(output)]) == 0
+    dumped = json.loads(output.read_text(encoding="utf-8"))
+    assert dumped["blocks"][-1]["encoding"] == "block-limit"
+    assert dumped["blocks"][-1]["omitted_count"] == 1
+
+
+def test_document_text_marks_root_and_nested_block_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model, "_MAX_TEXT_BLOCKS", 2)
+    blocks = [PageBreak(), PageBreak(), PageBreak()]
+
+    root_text = Document("root.sam", "cp1252", blocks=blocks).text
+    nested_text = Document(
+        "nested.sam",
+        "cp1252",
+        blocks=[Frame(blocks=blocks)],
+    ).text
+
+    assert root_text.count("\f") == 2
+    assert nested_text.count("\f") == 2
+    assert "Block content omitted at safe text limit" in root_text
+    assert "Block content omitted at safe text limit" in nested_text
+
+
+def test_document_text_bounds_repeated_large_block_aliases() -> None:
+    content = "X" * 10_000
+    paragraph = Paragraph(runs=[TextRun(content)])
+    document = Document("aliases.sam", "cp1252", blocks=[paragraph] * 1_000)
+
+    rendered = document.text
+
+    assert rendered.count(content) == 1
+    assert rendered.count("Repeated block omitted at safe text limit") == 1
+    assert len(rendered) < 20_000
+
+
+def test_document_to_dict_marks_sequence_and_mapping_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model, "_MAX_JSON_ITEMS", 2)
+    document = Document(
+        "bounded.sam",
+        "cp1252",
+        metadata={"one": "1", "two": "2", "three": "3"},
+        blocks=[PageBreak(), PageBreak(), PageBreak()],
+    )
+
+    encoded = document.to_dict()
+
+    assert encoded["blocks"][-1] == {
+        "encoding": "block-limit",
+        "message": "[Content omitted at safe JSON item limit]",
+        "omitted_count": 1,
+    }
+    assert encoded["metadata"]["encoding"] == "mapping-entries"
+    assert encoded["metadata"]["omitted_count"] == 1

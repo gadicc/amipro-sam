@@ -134,6 +134,11 @@ Confirmed character flag bits include bold, italic, underline, word underline,
 and double underline. Confirmed alignment bits represent left, right, center, and
 justified paragraphs. Break flags can request page/column breaks and paragraph
 keep behavior; only the currently verified subset is rendered.
+Unsupported, duplicate, incomplete, or malformed style subrecords remain in the
+raw section model and receive an explicit semantic-loss diagnostic instead of
+being mistaken for fully interpreted formatting. Nonempty fields after the
+interpreted `[fnt]`, `[algn]`, and `[spc]` prefixes are likewise retained and
+classified as opaque rather than silently treated as supported.
 
 ## Text stream
 
@@ -168,6 +173,23 @@ containers use their own standalone `>` close inside `[edoc]`; this must not be
 mistaken for the outer document terminator. A close is standalone only when the
 physical line contains `>` and whitespace. A line such as `>trailing` is text,
 not a terminator.
+
+If an unterminated `[edoc]` reaches a NUL-bearing physical line, recovery keeps
+the readable stream through that line and resumes at a later appended
+`[Embedded]` directory when present. Any intervening bytes that cannot be
+interpreted as text remain represented by a bounded byte length, SHA-256, and
+source span. This opaque-tail recovery is classified as content loss, so strict
+mode rejects it instead of silently accepting the omission.
+
+Inline commands are scanned in linear time and capped at 4,095 materialized
+commands per paragraph, leaving room for an initial text run within the
+4,096-run renderer boundary. Materialized runs across body text, frames, tables,
+and layout streams also charge the shared document record budget (a built-in
+ceiling of 1,000,000 that callers may lower). If either cap is exceeded,
+surrounding text and one visible marker remain while the unmaterialized
+formatting semantics receive a strict semantic-loss classification. Repeated
+unterminated `<` syntax and undefined-style references are coalesced into
+bounded diagnostics.
 
 Born's reverse-engineering reference identifies `<:N...` as an annotation,
 `<:F` as a footnote, `<:H...` as a header, and `<:h...` as a footer. Header and
@@ -239,6 +261,11 @@ is retained as opaque frame-layout metadata: public evidence corroborates its
 second field as a width, but its first field does not consistently behave as a
 height, so it is not used to derive geometry.
 
+Unknown direct `[lay]` or `[frm]` subrecords, extra layout name/flag fields,
+frame-layout fields, and other fixed-prefix tails remain raw and receive visible
+semantic-loss markers. Exact marker-looking lines inside a terminated text
+stream remain text rather than being reclassified as structure.
+
 `Frame` objects wrap their readable child blocks. Anchored body commands
 `<:tN>` and `<:AN>` select only anchor-flagged frames by zero-based source order,
 and the complete `Frame` is inserted at that exact body location. This ordering
@@ -269,12 +296,16 @@ still requests a visible page break before the following paragraph.
 Tables use `[tbl]`, optional row/column definition records, then `[data]`
 records whose first two integers are zero-based row and column coordinates. The
 current table reader recovers rectangular cell text but does not yet reproduce
-every border, merge, formula, or page coordinate.
+every border, merge, formula, or page coordinate. Duplicate cell coordinates
+retain both readable values in source order with a visible marker and semantic
+diagnostic; cell text uses the same bounded inline parser as body text.
 
 `[fopts]` has four bounded integers: option flags, starting number, separator
 length, and indentation. Known bits request collection at the page end,
 per-page numbering reset, and a separator line. Dimensions use twips. Unknown
 bits and malformed fields are preserved and diagnosed.
+Nonempty fields after the supported four-field prefix are retained as opaque
+semantic data.
 
 The installation corpus contains 29 validated indexed objects: 18 BMP, three
 Ami Draw SDW, and eight standard WMF payloads. Each has a companion block
@@ -288,6 +319,17 @@ object-id .type primary-offset primary-length companion-offset companion-length
 
 Normal offsets are absolute from byte zero; the preamble variant uses the
 post-preamble base. Lengths and offsets are untrusted and must be range-checked.
+An appended directory is recognized only when its terminal decimal pointer
+matches the actual `[Embedded]` byte offset or at least one complete bounded row
+provides independent evidence for a damaged pointer. A bare or corrupt marker is
+unindexed trailing data. Only fully parsed, in-range primary and companion spans
+are excluded from text line limits; undeclared gaps retain the normal line and
+line-length ceilings. A manifest range must also lie wholly between the verified
+outer `[edoc]` close and directory marker; a row cannot reclassify body or
+directory bytes as an asset. The directory is capped at 4,096 physical records
+(and callers may lower that ceiling) before offsets or object placeholders are
+materialized. Skipped indexed spans are not implicit line breaks: undeclared
+text on both sides still shares one line-length budget.
 
 ### Windows Metafile payloads
 
@@ -412,6 +454,50 @@ Raw SDW or `SS` bytes never enter browser objects, PDF attachments, office
 package members, operating-system graphics APIs, or external converters. No
 production path invokes Ami Pro, Ami Draw, Wine, DOSBox, LibreOffice, or a
 proprietary filter. OLE and equations remain inert placeholders.
+
+The final robustness audit reconfirmed the `SS` envelope and storage findings
+above across the local installation and private validation sets. It found no
+additional evidence for the four opaque words, an original palette, or the
+16-/24-bit color-channel layouts. Those fields and depths therefore remain
+inertly preserved rather than promoted to an unsupported fidelity claim.
+
+## Strict preservation and bounded parsing
+
+`Diagnostic.severity` controls reporting urgency; `Diagnostic.lossiness`
+independently records `none`, `semantic`, or `content`. Strict parsing fails only
+for the latter two. This means an info-level fixed-frame reflow is a strict loss,
+while an encoding-selection notice is not. Undecodable bytes in actual text are
+content loss. Encoding detection uses only bytes through the verified outer
+`[edoc]` close, so identical bytes inside either a validated payload or a damaged
+post-document tail cannot corrupt the body encoding. Validated payload bytes do
+not contribute textual undecodable-byte diagnostics or the strict decision.
+
+`Document.text`, JSON, HTML, Markdown, plain text, ODT, and DOCX share the same
+renderer policy: at most 1,000,000 characters from one text value and a
+4,000,000-character cumulative document budget, with conservative charging for
+HTML/XML escaping. A 65,536-character reserve keeps a bounded omission marker
+and later ordinary text visible. Immutable text values of at least 4,096
+characters are tracked by identity so an adversarial manual IR cannot multiply
+one shared string through thousands of distinct owners. PDF applies its own
+equivalent document-wide source-text budget and large-string alias marker before
+layout, shaping, page generation, or encoded-output caps.
+
+The decoder constructs one validated byte envelope before line-oriented parsing.
+It does not split indexed binary payloads into Python strings. In local
+`tracemalloc` measurements, newline-dense invented indexed payloads of 0.25, 1,
+2, and 4 MiB peaked at approximately 0.3, 1, 2, and 4 MiB respectively and took
+0.008, 0.026, 0.051, and 0.102 seconds. The earlier whole-payload line expansion
+scaled by roughly two orders of magnitude. A committed regression warms imports
+and requires a representative 0.5 MiB case to remain below eight times input
+size.
+
+Seeded deterministic tests mutate section boundaries, nested containers,
+bounded and oversized numeric fields, manifests, offsets, duplicate identifiers, tables,
+frames, image headers, and renderer-facing IR. The same input must produce the
+same parsed text, loss classifications, controlled exception, and rendered
+marker on repeated runs. Caller-provided file, line, and line-byte settings may
+only lower the built-in ceilings; the same rule applies to the embedded-directory
+record ceiling.
 
 ## Active content and safety
 

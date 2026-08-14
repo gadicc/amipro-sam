@@ -60,15 +60,34 @@ def test_resource_limits_apply_before_decoding() -> None:
 
 def test_binary_payload_line_uses_asset_limit_not_text_line_limit() -> None:
     payload = b"BM" + b"\0" * 128
-    source = (
-        b"[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nbody\r\n>\r\n"
-        + payload
-        + b"\r\n[Embedded]\r\n00000000\r\n"
-    )
+    prefix = b"[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nbody\r\n>\r\n"
+    marker_offset = len(prefix) + len(payload) + 2
+    directory = (
+        f"[Embedded]\r\n1 .bmp {len(prefix)} {len(payload)} 0 0 \r\n"
+        f"{marker_offset:08d}\r\n"
+    ).encode("ascii")
+    source = prefix + payload + b"\r\n" + directory
 
     decoded = decode_bytes(source, limits=ParseLimits(max_line_bytes=32))
 
     assert "[edoc]" in decoded.text
+
+
+def test_indexed_span_cannot_fragment_an_oversized_unindexed_line() -> None:
+    prefix = b"[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nbody\r\n>\r\n"
+    payload = b"A" * 60 + b"x" + b"B" * 60 + b"\r\n"
+    asset_offset = len(prefix) + 60
+    marker_offset = len(prefix) + len(payload)
+    directory = (
+        f"[Embedded]\r\n1 .bin {asset_offset} 1 0 0 \r\n"
+        f"{marker_offset:08d}\r\n"
+    ).encode("ascii")
+
+    with pytest.raises(ResourceLimitError, match="line longer"):
+        decode_bytes(
+            prefix + payload + directory,
+            limits=ParseLimits(max_line_bytes=64),
+        )
 
 
 def test_text_line_limit_still_applies_before_edoc_close() -> None:
@@ -76,3 +95,110 @@ def test_text_line_limit_still_applies_before_edoc_close() -> None:
 
     with pytest.raises(ResourceLimitError, match="byte line"):
         decode_bytes(source, limits=ParseLimits(max_line_bytes=32))
+
+
+def test_undecodable_utf8_tail_uses_source_bytes_for_line_limit() -> None:
+    prefix = "[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nπ\r\n>\r\n".encode()
+    tail = b"\xff" * 8 + b"\r\n"
+    marker_offset = len(prefix) + len(tail)
+    directory = f"[Embedded]\r\n{marker_offset:08d}\r\n".encode()
+
+    decoded = decode_bytes(
+        prefix + tail + directory,
+        limits=ParseLimits(max_line_bytes=16),
+    )
+
+    assert decoded.encoding == "utf-8"
+    assert decoded.unindexed_ranges == ((len(prefix), marker_offset),)
+
+
+@pytest.mark.parametrize(
+    ("bom", "encoding", "partial"),
+    [
+        (codecs.BOM_UTF16_LE, "utf-16-le", b"X"),
+        (codecs.BOM_UTF32_LE, "utf-32-le", b"XYZ"),
+    ],
+)
+def test_partial_multibyte_line_uses_exact_source_length_and_span(
+    bom: bytes, encoding: str, partial: bytes
+) -> None:
+    source = bom + partial
+
+    decoded = decode_bytes(
+        source,
+        limits=ParseLimits(max_line_bytes=len(partial)),
+    )
+
+    assert decoded.encoding == encoding
+    assert decoded.line_byte_offsets == [len(bom)]
+    assert decoded.span_for_line(0, decoded.text).end_byte_offset == len(source)
+
+
+@pytest.mark.parametrize(
+    ("bom", "encoding", "asset"),
+    [
+        (codecs.BOM_UTF16_LE, "utf-16-le", b"X"),
+        (codecs.BOM_UTF32_LE, "utf-32-le", b"XYZ"),
+    ],
+)
+def test_multibyte_directory_restarts_after_odd_length_binary(
+    bom: bytes, encoding: str, asset: bytes
+) -> None:
+    logical = "[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nBODY\r\n>\r\n"
+    prefix = bom + logical.encode(encoding)
+    separator = "\r\n".encode(encoding)
+    marker_offset = len(prefix) + len(asset) + len(separator)
+    base_offset = len(bom)
+    directory = (
+        f"[Embedded]\r\n"
+        f"1 .bin {len(prefix) - base_offset} {len(asset)} 0 0 \r\n"
+        f"{marker_offset - base_offset:08d}\r\n"
+    ).encode(encoding)
+
+    decoded = decode_bytes(prefix + asset + separator + directory)
+
+    assert decoded.directory_byte_offset == marker_offset
+    assert decoded.directory_pointer_valid is True
+    assert decoded.binary_ranges == ((len(prefix), len(prefix) + len(asset)),)
+
+
+def test_multibyte_binary_gap_cannot_fragment_an_oversized_text_line() -> None:
+    encoding = "utf-16-le"
+    bom = codecs.BOM_UTF16_LE
+    logical = "[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nBODY\r\n>\r\n"
+    prefix = bom + logical.encode(encoding)
+    before = ("A" * 80).encode(encoding)
+    asset = b"x"
+    after = (("B" * 80) + "\r\n").encode(encoding)
+    marker_offset = len(prefix) + len(before) + len(asset) + len(after)
+    base_offset = len(bom)
+    directory = (
+        f"[Embedded]\r\n"
+        f"1 .bin {len(prefix) + len(before) - base_offset} 1 0 0 \r\n"
+        f"{marker_offset - base_offset:08d}\r\n"
+    ).encode(encoding)
+
+    with pytest.raises(ResourceLimitError, match="line longer"):
+        decode_bytes(
+            prefix + before + asset + after + directory,
+            limits=ParseLimits(max_line_bytes=128),
+        )
+
+
+def test_trailing_false_marker_does_not_hide_valid_directory() -> None:
+    prefix = b"[ver]\r\n\t4\r\n[sty]\r\n\t\r\n[edoc]\r\nBODY\r\n>\r\n"
+    asset = b"opaque"
+    marker_offset = len(prefix) + len(asset) + 2
+    directory = (
+        f"[Embedded]\r\n1 .bin {len(prefix)} {len(asset)} 0 0 \r\n"
+        f"{marker_offset:08d}\r\n"
+    ).encode()
+    false_marker = b"[Embedded]\r\nnot a manifest"
+
+    decoded = decode_bytes(
+        prefix + asset + b"\r\n" + directory + false_marker
+    )
+
+    assert decoded.directory_byte_offset == marker_offset
+    assert decoded.directory_pointer_valid is False
+    assert decoded.binary_ranges == ((len(prefix), len(prefix) + len(asset)),)

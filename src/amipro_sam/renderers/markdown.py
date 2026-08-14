@@ -20,8 +20,10 @@ from ..model import (
     Table,
     TableCell,
     TableRow,
+    TextRun,
     UnsupportedObject,
     WmfGraphic,
+    _TextOutputBudget,
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size
@@ -36,11 +38,19 @@ _HEADING_NUMBER = re.compile(
 _MAX_RENDER_DEPTH = 32
 _MAX_RENDER_BLOCKS = 100_000
 _MAX_TABLE_ROWS = 390
+_MAX_PARAGRAPH_RUNS = 4_096
+_MAX_PARAGRAPH_TEXT = 1_000_000
 
 def render(document: Document, **_options: object) -> bytes:
     """Return CommonMark-like Markdown without source-controlled raw HTML."""
 
-    rendered = _render_blocks(document, document.blocks, seen=set())
+    rendered = _render_blocks(
+        document,
+        document.blocks,
+        seen=set(),
+        seen_blocks=set(),
+        text_budget=_TextOutputBudget(),
+    )
     if not rendered:
         return b""
     return (rendered + "\n").encode("utf-8", errors="backslashreplace")
@@ -52,12 +62,16 @@ def _render_blocks(
     *,
     depth: int = 0,
     seen: set[int] | None = None,
+    seen_blocks: set[int] | None = None,
+    text_budget: _TextOutputBudget | None = None,
 ) -> str:
     if depth >= _MAX_RENDER_DEPTH:
         return _escape_text("[Nested content omitted at safe depth limit]")
     if not isinstance(blocks, list | tuple):
         return _escape_text("[Invalid nested content omitted]")
     seen = set() if seen is None else seen
+    seen_blocks = set() if seen_blocks is None else seen_blocks
+    text_budget = _TextOutputBudget() if text_budget is None else text_budget
     identity = id(blocks)
     if identity in seen:
         return _escape_text("[Repeated or recursive content omitted]")
@@ -65,33 +79,47 @@ def _render_blocks(
     chunks: list[str] = []
     counters: dict[int, int] = {}
     index = 0
+    block_limit_reached = len(blocks) > _MAX_RENDER_BLOCKS
     safe_blocks = blocks[:_MAX_RENDER_BLOCKS]
     while index < len(safe_blocks):
         block = safe_blocks[index]
+        block_identity = id(block)
+        if block_identity in seen_blocks:
+            chunks.append(_escape_text("[Repeated block object omitted]"))
+            counters.clear()
+            index += 1
+            continue
+        seen_blocks.add(block_identity)
         if isinstance(block, Paragraph):
             if block.page_break_before:
                 chunks.append("[Page break]")
                 counters.clear()
             if block.list_kind is not None:
-                items: list[str] = []
+                items = [_paragraph(document, block, counters, text_budget)]
+                index += 1
                 while index < len(safe_blocks):
                     candidate = safe_blocks[index]
+                    if id(candidate) in seen_blocks:
+                        break
                     if (
                         not isinstance(candidate, Paragraph)
                         or candidate.list_kind is None
                         or (candidate.page_break_before and items)
                     ):
                         break
-                    items.append(_paragraph(document, candidate, counters))
+                    seen_blocks.add(id(candidate))
+                    items.append(
+                        _paragraph(document, candidate, counters, text_budget)
+                    )
                     index += 1
                 chunks.append("\n".join(items))
                 continue
-            chunks.append(_paragraph(document, block, counters))
+            chunks.append(_paragraph(document, block, counters, text_budget))
         elif isinstance(block, PageBreak):
             chunks.append("[Page break]")
             counters.clear()
         elif isinstance(block, Table):
-            chunks.append(_table(document, block))
+            chunks.append(_table(document, block, text_budget))
             counters.clear()
         elif isinstance(block, Image):
             chunks.append(_image_placeholder(block))
@@ -103,8 +131,14 @@ def _render_blocks(
             chunks.append(_sdw_marker(block))
             counters.clear()
         elif isinstance(block, UnsupportedObject):
+            kind = _safe_label_field(
+                block.kind, "unknown object kind", maximum=128
+            )
+            description = _safe_label_field(
+                block.description, "description unavailable", maximum=256
+            )
             chunks.append(
-                _escape_text(f"[Unsupported {block.kind}: {block.description}]")
+                _escape_text(f"[Unsupported {kind}: {description}]")
             )
             counters.clear()
         elif isinstance(block, Frame):
@@ -112,7 +146,12 @@ def _render_blocks(
                 _marked_container(
                     _frame_marker(block),
                     _render_blocks(
-                        document, block.blocks, depth=depth + 1, seen=seen
+                        document,
+                        block.blocks,
+                        depth=depth + 1,
+                        seen=seen,
+                        seen_blocks=seen_blocks,
+                        text_budget=text_budget,
                     ),
                 )
             )
@@ -122,18 +161,36 @@ def _render_blocks(
                 _marked_container(
                     "[Annotation]",
                     _render_blocks(
-                        document, block.blocks, depth=depth + 1, seen=seen
+                        document,
+                        block.blocks,
+                        depth=depth + 1,
+                        seen=seen,
+                        seen_blocks=seen_blocks,
+                        text_budget=text_budget,
                     ),
                 )
             )
             counters.clear()
         elif isinstance(block, Footnote):
-            marker = f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+            marker = (
+                "[Footnote "
+                + _safe_label_field(
+                    block.number, "number unavailable", maximum=64
+                )
+                + "]"
+                if block.number is not None
+                else "[Footnote]"
+            )
             chunks.append(
                 _marked_container(
                     marker,
                     _render_blocks(
-                        document, block.blocks, depth=depth + 1, seen=seen
+                        document,
+                        block.blocks,
+                        depth=depth + 1,
+                        seen=seen,
+                        seen_blocks=seen_blocks,
+                        text_budget=text_budget,
                     ),
                 )
             )
@@ -145,12 +202,33 @@ def _render_blocks(
                 _marked_container(
                     marker,
                     _render_blocks(
-                        document, block.blocks, depth=depth + 1, seen=seen
+                        document,
+                        block.blocks,
+                        depth=depth + 1,
+                        seen=seen,
+                        seen_blocks=seen_blocks,
+                        text_budget=text_budget,
                     ),
                 )
             )
             counters.clear()
+        else:
+            chunks.append(
+                _escape_text(
+                    f"[Unrecognized block object omitted: {type(block).__name__}]"
+                )
+            )
+            counters.clear()
         index += 1
+
+    if block_limit_reached:
+        omitted = len(blocks) - _MAX_RENDER_BLOCKS
+        chunks.append(
+            _escape_text(
+                "[Block content omitted at safe rendering limit: "
+                f"{omitted} additional block(s)]"
+            )
+        )
 
     return "\n\n".join(chunks)
 
@@ -160,6 +238,8 @@ def _marked_container(marker: str, content: str) -> str:
 
 
 def _placement_label(value: str) -> str:
+    if not isinstance(value, str):
+        return "placement unknown"
     return {
         "all": "all pages",
         "odd": "odd/right pages",
@@ -190,9 +270,12 @@ def _frame_marker(frame: Frame) -> str:
 
 
 def _paragraph(
-    document: Document, paragraph: Paragraph, counters: dict[int, int]
+    document: Document,
+    paragraph: Paragraph,
+    counters: dict[int, int],
+    text_budget: _TextOutputBudget,
 ) -> str:
-    content = _paragraph_inline(document, paragraph)
+    content = _paragraph_inline(document, paragraph, text_budget)
     heading = _heading_level(paragraph.style_name)
     if paragraph.list_kind is not None:
         level = max(0, min(_integer(paragraph.list_level, 0), 15))
@@ -220,16 +303,50 @@ def _paragraph(
     return _protect_block_prefixes(content)
 
 
-def _paragraph_inline(document: Document, paragraph: Paragraph) -> str:
+def _paragraph_inline(
+    document: Document,
+    paragraph: Paragraph,
+    text_budget: _TextOutputBudget,
+) -> str:
     base = _named_character_style(document, paragraph.style_name)
     runs = paragraph.runs
     if not isinstance(runs, list | tuple):
-        return _escape_text(paragraph.text)
-    return "".join(
-        _run(run.text, base, run.style)
-        for run in runs[:100_000]
-        if hasattr(run, "text") and hasattr(run, "style")
-    )
+        return _escape_text("[Invalid paragraph runs omitted]")
+    values: list[str] = []
+    paragraph_remaining = _MAX_PARAGRAPH_TEXT
+    omitted = len(runs) > _MAX_PARAGRAPH_RUNS
+    for run in runs[:_MAX_PARAGRAPH_RUNS]:
+        if not isinstance(run, TextRun):
+            values.append(_escape_text("[Invalid text run omitted]"))
+            continue
+        if not isinstance(run.style, CharacterStyle):
+            values.append(_escape_text("[Invalid text run style omitted]"))
+            continue
+        if isinstance(run.text, bytes):
+            run_text = run.text.decode("utf-8", errors="replace")
+        elif isinstance(run.text, str):
+            run_text = run.text
+        else:
+            values.append(_escape_text("[Invalid text run content omitted]"))
+            continue
+        prepared = text_budget.prepare(
+            run_text,
+            unit_limit=paragraph_remaining,
+            expansion_factor=2,
+        )
+        if prepared.visible:
+            values.append(_run(prepared.visible, base, run.style))
+        paragraph_remaining -= len(prepared.text)
+        if prepared.encoding in {"bounded-text", "text-budget-limit"}:
+            omitted = True
+        if paragraph_remaining <= 0:
+            omitted = True
+            break
+    if omitted:
+        values.append(
+            _escape_text("[Paragraph content omitted at safe rendering limit]")
+        )
+    return "".join(values)
 
 
 def _run(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
@@ -252,7 +369,11 @@ def _run(text: str, base: CharacterStyle, run: CharacterStyle) -> str:
     return value
 
 
-def _table(document: Document, table: Table) -> str:
+def _table(
+    document: Document,
+    table: Table,
+    text_budget: _TextOutputBudget,
+) -> str:
     rows = table.rows
     if not isinstance(rows, list | tuple):
         return _escape_text("[Invalid table rows omitted]")
@@ -290,7 +411,7 @@ def _table(document: Document, table: Table) -> str:
             seen_cells.add(id(cell))
             blocks = cell.blocks if isinstance(cell.blocks, list | tuple) else []
             paragraphs = [
-                _paragraph_inline(document, item)
+                _paragraph_inline(document, item, text_budget)
                 for item in blocks[:_MAX_RENDER_BLOCKS]
                 if isinstance(item, Paragraph)
             ]
@@ -328,11 +449,14 @@ def _markdown_row(cells: list[str]) -> str:
 
 
 def _image_placeholder(image: Image) -> str:
-    alt = image.alt_text or "Embedded image"
+    alt = _safe_label_field(image.alt_text, "Embedded image", maximum=256)
     if image.data is not None:
         detail = f"[Image: {alt} (embedded image data)]"
     elif image.reference:
-        detail = f"[Image: {alt} (external reference not loaded: {image.reference})]"
+        reference = _safe_label_field(
+            image.reference, "invalid reference omitted", maximum=256
+        )
+        detail = f"[Image: {alt} (external reference not loaded: {reference})]"
     else:
         detail = f"[Image: {alt}]"
     return _escape_text(detail)
@@ -343,7 +467,9 @@ def _wmf_placeholder(graphic: WmfGraphic) -> str:
         wmf_display_size(graphic)
     except WmfDecodeError:
         return _escape_text("[Invalid WMF preview]")
-    alt = str(graphic.alt_text or "Embedded WMF preview")
+    alt = _safe_label_field(
+        graphic.alt_text, "Embedded WMF preview", maximum=256
+    )
     return _escape_text(
         f"[WMF preview: {alt} ({graphic.width_px} x {graphic.height_px} pixels)]"
     )
@@ -354,14 +480,14 @@ def _sdw_marker(drawing: SdwDrawing) -> str:
         sdw_display_size(drawing)
     except SdwDecodeError:
         return _escape_text(_sdw_placeholder(drawing))
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
     return _escape_text(f"[{sdw_preview_caption(drawing)}: {alt}]")
 
 
 def _sdw_placeholder(drawing: SdwDrawing) -> str:
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
-    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
-    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_label_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_label_field(drawing.reason, "preview unavailable", maximum=256)
     details = [
         f"Ami Draw object: {alt}",
         "no valid companion preview",
@@ -378,16 +504,23 @@ def _sdw_placeholder(drawing: SdwDrawing) -> str:
     return "[" + "; ".join(details) + "]"
 
 
-def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+def _safe_label_field(value: object, default: str, *, maximum: int) -> str:
     if isinstance(value, str):
-        result = value
+        result = value[: maximum * 4]
     elif isinstance(value, bytes):
-        result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+        result = value[: maximum * 4].decode("utf-8", errors="replace")
+    elif isinstance(value, bool | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):
             return default
+    elif isinstance(value, int):
+        bits = value.bit_length()
+        result = (
+            f"[oversized integer omitted: {bits} bits]"
+            if bits > 1_024
+            else str(value)
+        )
     else:
         return default
     result = " ".join(result.split())[:maximum]
@@ -395,7 +528,7 @@ def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
 
 
 def _heading_level(style_name: str | None) -> int | None:
-    if not style_name:
+    if not isinstance(style_name, str) or not style_name:
         return None
     normalized = " ".join(style_name.strip().split()).casefold()
     match = _HEADING_NUMBER.search(normalized)
@@ -425,7 +558,8 @@ def _named_character_style(
 ) -> CharacterStyle:
     result = CharacterStyle()
     for definition in _style_chain(document, style_name):
-        result = _merge_character_style(result, definition.character)
+        if isinstance(definition.character, CharacterStyle):
+            result = _merge_character_style(result, definition.character)
     return result
 
 
@@ -435,8 +569,13 @@ def _style_chain(
     result: list[StyleDefinition] = []
     seen: set[str] = set()
     current = _find_style(document, style_name)
-    while current is not None and current.name.casefold() not in seen and len(result) < 64:
-        seen.add(current.name.casefold())
+    while current is not None and len(result) < 64:
+        if not isinstance(current.name, str):
+            break
+        folded_name = current.name.casefold()
+        if folded_name in seen:
+            break
+        seen.add(folded_name)
         result.append(current)
         current = _find_style(document, current.parent)
     result.reverse()
@@ -444,12 +583,25 @@ def _style_chain(
 
 
 def _find_style(document: Document, name: str | None) -> StyleDefinition | None:
-    if not name:
+    if not isinstance(name, str) or not name:
         return None
-    if name in document.styles:
-        return document.styles[name]
+    styles = getattr(document, "styles", None)
+    if not isinstance(styles, dict):
+        return None
+    if name in styles:
+        candidate = styles[name]
+        return candidate if isinstance(candidate, StyleDefinition) else None
     folded = name.casefold()
-    return next((item for key, item in document.styles.items() if key.casefold() == folded), None)
+    return next(
+        (
+            item
+            for key, item in styles.items()
+            if isinstance(key, str)
+            and key.casefold() == folded
+            and isinstance(item, StyleDefinition)
+        ),
+        None,
+    )
 
 
 def _merge_character_style(base: CharacterStyle, override: CharacterStyle) -> CharacterStyle:
@@ -467,7 +619,11 @@ def _merge_character_style(base: CharacterStyle, override: CharacterStyle) -> Ch
     )
 
 
-def _clean(value: str) -> str:
+def _clean(value: object) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    if not isinstance(value, str):
+        return ""
     normalized = value.replace("\r\n", "\n").replace("\r", "\n")
     return _CONTROL_CHARACTERS.sub("\ufffd", normalized)
 

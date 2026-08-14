@@ -97,8 +97,9 @@ Write plain text to standard output:
 amipro-sam convert document.sam --format text
 ```
 
-Dump the complete intermediate representation, including unknown records and
-diagnostics:
+Dump the bounded structured intermediate representation, including unknown
+records, diagnostics, and explicit descriptors wherever safe output limits omit
+additional entries:
 
 ```console
 amipro-sam dump document.sam --format json --output document.json
@@ -128,17 +129,25 @@ paths; quote them in a shell as usual.
 
 ## Diagnostics and strict mode
 
-HTML includes a warning appendix by default. Use `--no-warning-summary` to omit
-it from the presentation; warnings remain available through `inspect` and
+HTML includes a diagnostic appendix by default. Use `--no-warning-summary` to omit
+it from the presentation; diagnostics remain available through `inspect` and
 `dump`.
 
 By default the converter favors recovery: unsupported constructs become visible
-placeholders and surrounding text remains available. `--strict` instead rejects
-a document as soon as parsing produces any warning or error diagnostic:
+placeholders and surrounding text remains available. Diagnostics classify
+severity and preservation loss independently. Loss can be `semantic` (content
+is retained but meaning, behavior, or placement is approximated) or `content`
+(source material cannot be represented); `none` is an ordinary informational or
+fully preserved recovery condition. `--strict` rejects semantic or content loss,
+regardless of whether its diagnostic severity is info, warning, or error:
 
 ```console
 amipro-sam convert document.sam --format pdf --strict --output document.pdf
 ```
+
+`inspect --json` reports per-file `lossy` and `losses` fields. Aggregate summaries
+also report `lossy_files`, loss categories, and severity counts. Bytes confined to
+a validated indexed binary range do not become text-decoding losses.
 
 Use `--encoding` only when a document's charset declaration is absent or wrong:
 

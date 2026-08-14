@@ -59,7 +59,6 @@ from reportlab.platypus.doctemplate import LayoutError
 from ..errors import RenderError
 from ..model import (
     Annotation,
-    Block,
     CharacterStyle,
     Document,
     Footer,
@@ -102,6 +101,8 @@ _MAX_PDF_PAGES = 128
 _MAX_PDF_FONT_SIZE = 72.0
 _MIN_PAGE_TWIPS = 1_440
 _MIN_CONTENT_TWIPS = 720
+_INVALID_BLOCK_CONTAINER = object()
+_BLOCK_LIMIT_OMISSION = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,7 +256,7 @@ def _primary_story(
 
 def _append_primary_blocks(
     document: Document,
-    blocks: list[Block],
+    blocks: list[object],
     story: list[object],
     list_counters: dict[int, int],
     text_budget: PdfTextBudget,
@@ -275,6 +276,16 @@ def _append_primary_blocks(
     promoted_furniture = set() if promoted_furniture is None else promoted_furniture
     has_content = False
     for block in blocks:
+        block_identity = id(block)
+        if block_identity in text_budget.seen_blocks:
+            story.append(
+                _placeholder_flowable(
+                    "[Repeated block object omitted]", text_budget
+                )
+            )
+            list_counters.clear()
+            continue
+        text_budget.seen_blocks.add(block_identity)
         if isinstance(block, Paragraph):
             if block.page_break_before and has_content:
                 story.append(ReportLabPageBreak())
@@ -314,9 +325,15 @@ def _append_primary_blocks(
                 promoted_furniture,
             )
         elif isinstance(block, UnsupportedObject):
+            kind = _safe_label_field(
+                block.kind, "unknown object kind", maximum=128
+            )
+            description = _safe_label_field(
+                block.description, "description unavailable", maximum=256
+            )
             story.append(
                 _placeholder_flowable(
-                    f"[Unsupported {block.kind}: {block.description}]", text_budget
+                    f"[Unsupported {kind}: {description}]", text_budget
                 )
             )
             list_counters.clear()
@@ -350,6 +367,27 @@ def _append_primary_blocks(
                 active,
                 promoted_furniture,
             )
+        elif block is _INVALID_BLOCK_CONTAINER:
+            story.append(
+                _placeholder_flowable(
+                    "[Invalid block container omitted]", text_budget
+                )
+            )
+            list_counters.clear()
+        elif block is _BLOCK_LIMIT_OMISSION:
+            story.append(
+                _placeholder_flowable(
+                    "[Block content omitted at safe rendering limit]", text_budget
+                )
+            )
+            list_counters.clear()
+        else:
+            story.append(
+                _placeholder_flowable(
+                    "[Unrecognized block object omitted]", text_budget
+                )
+            )
+            list_counters.clear()
         if not isinstance(block, PageBreak):
             has_content = True
 
@@ -383,7 +421,7 @@ def _fallback_story(
 
 def _append_fallback_blocks(
     document: Document,
-    blocks: list[Block],
+    blocks: list[object],
     story: list[object],
     list_counters: dict[int, int],
     text_budget: PdfTextBudget,
@@ -405,6 +443,18 @@ def _append_fallback_blocks(
     promoted_furniture = set() if promoted_furniture is None else promoted_furniture
     has_content = False
     for block in blocks:
+        block_identity = id(block)
+        if block_identity in text_budget.seen_blocks:
+            story.append(
+                _fallback_paragraph(
+                    "[Repeated block object omitted]",
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
+            list_counters.clear()
+            continue
+        text_budget.seen_blocks.add(block_identity)
         if isinstance(block, Paragraph):
             if block.page_break_before and has_content:
                 story.append(ReportLabPageBreak())
@@ -457,9 +507,15 @@ def _append_fallback_blocks(
                 promoted_furniture,
             )
         elif isinstance(block, UnsupportedObject):
+            kind = _safe_label_field(
+                block.kind, "unknown object kind", maximum=128
+            )
+            description = _safe_label_field(
+                block.description, "description unavailable", maximum=256
+            )
             story.append(
                 _fallback_paragraph(
-                    f"[Unsupported {block.kind}: {block.description}]",
+                    f"[Unsupported {kind}: {description}]",
                     placeholder=True,
                     text_budget=text_budget,
                 )
@@ -507,6 +563,33 @@ def _append_fallback_blocks(
                 active,
                 promoted_furniture,
             )
+        elif block is _INVALID_BLOCK_CONTAINER:
+            story.append(
+                _fallback_paragraph(
+                    "[Invalid block container omitted]",
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
+            list_counters.clear()
+        elif block is _BLOCK_LIMIT_OMISSION:
+            story.append(
+                _fallback_paragraph(
+                    "[Block content omitted at safe rendering limit]",
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
+            list_counters.clear()
+        else:
+            story.append(
+                _fallback_paragraph(
+                    "[Unrecognized block object omitted]",
+                    placeholder=True,
+                    text_budget=text_budget,
+                )
+            )
+            list_counters.clear()
         if not isinstance(block, PageBreak):
             has_content = True
 
@@ -515,7 +598,15 @@ def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
     if isinstance(block, Annotation):
         return "[Annotation]"
     if isinstance(block, Footnote):
-        return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+        return (
+            "[Footnote "
+            + _safe_label_field(
+                block.number, "number unavailable", maximum=64
+            )
+            + "]"
+            if block.number is not None
+            else "[Footnote]"
+        )
     kind = "Header" if isinstance(block, Header) else "Footer"
     placement_value = _choice(
         block.placement, {"all", "odd", "even", "odd-even"}, "unknown"
@@ -619,13 +710,16 @@ def _append_nested_fallback(
     )
 
 
-def _safe_blocks(value: object) -> list[Block]:
+def _safe_blocks(value: object) -> list[object]:
     if not isinstance(value, list | tuple):
-        return []
-    return list(value[:_MAX_RENDER_BLOCKS])
+        return [_INVALID_BLOCK_CONTAINER]
+    result: list[object] = list(value[:_MAX_RENDER_BLOCKS])
+    if len(value) > _MAX_RENDER_BLOCKS:
+        result.append(_BLOCK_LIMIT_OMISSION)
+    return result
 
 
-def _trim_edge_page_breaks(blocks: list[Block]) -> list[Block]:
+def _trim_edge_page_breaks(blocks: list[object]) -> list[object]:
     start = 0
     end = len(blocks)
     while start < end and isinstance(blocks[start], PageBreak):
@@ -1571,9 +1665,13 @@ def _font_name(style: CharacterStyle) -> str:
 
 
 def _image_placeholder(image: Image) -> str:
-    detail = f"Image: {image.alt_text or 'Embedded image'}"
+    alt = _safe_label_field(image.alt_text, "Embedded image", maximum=256)
+    detail = f"Image: {alt}"
     if image.reference:
-        detail += f" (source reference not opened: {image.reference})"
+        reference = _safe_label_field(
+            image.reference, "invalid reference omitted", maximum=256
+        )
+        detail += f" (source reference not opened: {reference})"
     elif image.data is not None:
         detail += " (embedded image preserved as a placeholder)"
     return f"[{detail}]"
@@ -1627,9 +1725,9 @@ def _sdw_flowables(
 
 
 def _sdw_placeholder(drawing: SdwDrawing) -> str:
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
-    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
-    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_label_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_label_field(drawing.reason, "preview unavailable", maximum=256)
     details = [
         f"Ami Draw object: {alt}",
         "no valid companion preview",
@@ -1646,16 +1744,23 @@ def _sdw_placeholder(drawing: SdwDrawing) -> str:
     return "[" + "; ".join(details) + "]"
 
 
-def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+def _safe_label_field(value: object, default: str, *, maximum: int) -> str:
     if isinstance(value, str):
-        result = value
+        result = value[: maximum * 4]
     elif isinstance(value, bytes):
-        result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+        result = value[: maximum * 4].decode("utf-8", errors="replace")
+    elif isinstance(value, bool | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):
             return default
+    elif isinstance(value, int):
+        bits = value.bit_length()
+        result = (
+            f"[oversized integer omitted: {bits} bits]"
+            if bits > 1_024
+            else str(value)
+        )
     else:
         return default
     result = " ".join(result.split())[:maximum]

@@ -18,7 +18,6 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from ..errors import RenderError
 from ..model import (
     Annotation,
-    Block,
     CharacterStyle,
     Footer,
     Footnote,
@@ -35,6 +34,8 @@ from ..model import (
     TextRun,
     UnsupportedObject,
     WmfGraphic,
+    _paragraph_text,
+    _TextOutputBudget,
 )
 from ..model import Document as AmiProDocument
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
@@ -58,6 +59,8 @@ _MIN_BODY_TWIPS = 720
 _MIN_FURNITURE_MARGIN_TWIPS = 720
 _MAX_BLOCKS_PER_LIST = 100_000
 _MAX_BLOCK_DEPTH = 64
+_INVALID_BLOCK_CONTAINER = object()
+_BLOCK_LIMIT_OMISSION = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,16 +277,19 @@ def _native_paragraph_is_safe(value: object) -> bool:
     )
 
 
-def _safe_blocks(value: object) -> list[Block]:
+def _safe_blocks(value: object) -> list[object]:
     if not isinstance(value, (list, tuple)):
-        return []
-    return list(value[:_MAX_BLOCKS_PER_LIST])
+        return [_INVALID_BLOCK_CONTAINER]
+    result: list[object] = list(value[:_MAX_BLOCKS_PER_LIST])
+    if len(value) > _MAX_BLOCKS_PER_LIST:
+        result.append(_BLOCK_LIMIT_OMISSION)
+    return result
 
 
-def _normalized_blocks(blocks: list[Block]) -> list[Block]:
+def _normalized_blocks(blocks: list[object]) -> list[object]:
     """Discard edge breaks while preserving every explicit interior break."""
 
-    result: list[Block] = []
+    result: list[object] = []
     index = 0
     while index < len(blocks):
         if not isinstance(blocks[index], PageBreak):
@@ -297,20 +303,6 @@ def _normalized_blocks(blocks: list[Block]) -> list[Block]:
             result.extend(blocks[index:end])
         index = end
     return result
-
-
-def _safe_paragraph_text(paragraph: object) -> str:
-    parts: list[str] = []
-    runs = getattr(paragraph, "runs", None)
-    if not isinstance(runs, (list, tuple)):
-        return ""
-    for run in runs:
-        value = getattr(run, "text", "")
-        if isinstance(value, str):
-            parts.append(value)
-        elif isinstance(value, bytes):
-            parts.append(value.decode("utf-8", errors="replace"))
-    return "".join(parts)
 
 
 def _frame_label(frame: Frame) -> str:
@@ -375,7 +367,8 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
         normal.paragraph_format.line_spacing = 1.1
         _scrub_core_properties(output_document.core_properties)
 
-        _add_native_page_content(output_document, section, native)
+        text_budget = _TextOutputBudget()
+        _add_native_page_content(output_document, section, native, text_budget)
         _add_blocks(
             output_document,
             document,
@@ -383,6 +376,8 @@ def render(document: AmiProDocument, **_options: object) -> bytes:
             geometry,
             native.ids,
             active_container_ids=set(),
+            seen_block_ids=set(),
+            text_budget=text_budget,
         )
 
         buffer = BytesIO()
@@ -403,6 +398,8 @@ def _add_blocks(
     *,
     depth: int = 0,
     active_container_ids: set[int],
+    seen_block_ids: set[int],
+    text_budget: _TextOutputBudget,
 ) -> None:
     if depth > _MAX_BLOCK_DEPTH:
         _add_placeholder(target, "[Nested content omitted: safe depth limit reached]")
@@ -423,13 +420,27 @@ def _add_blocks(
     ]
     try:
         for block in _normalized_blocks(visible):
+            block_identity = id(block)
+            if block_identity in seen_block_ids:
+                _add_placeholder(
+                    target,
+                    "[Nested content omitted: repeated or cyclic block reference]",
+                )
+                continue
+            seen_block_ids.add(block_identity)
             if isinstance(block, Paragraph):
                 paragraph = target.add_paragraph()
-                _populate_paragraph(paragraph, block, document)
+                _populate_paragraph(paragraph, block, document, text_budget)
             elif isinstance(block, PageBreak):
                 target.add_page_break()
             elif isinstance(block, Table):
-                _add_table(target, block, document, geometry.body_width_twips)
+                _add_table(
+                    target,
+                    block,
+                    document,
+                    geometry.body_width_twips,
+                    text_budget,
+                )
             elif isinstance(block, Image):
                 _add_placeholder(target, _image_placeholder(block))
             elif isinstance(block, WmfGraphic):
@@ -446,9 +457,17 @@ def _add_blocks(
                     native_ids,
                     depth=depth + 1,
                     active_container_ids=active_container_ids,
+                    seen_block_ids=seen_block_ids,
+                    text_budget=text_budget,
                 )
             elif isinstance(block, UnsupportedObject):
-                _add_placeholder(target, f"[Unsupported {block.kind}: {block.description}]")
+                kind = _safe_label_field(
+                    block.kind, "unknown object kind", maximum=128
+                )
+                description = _safe_label_field(
+                    block.description, "description unavailable", maximum=256
+                )
+                _add_placeholder(target, f"[Unsupported {kind}: {description}]")
             elif isinstance(block, Annotation | Footnote | Header | Footer):
                 _add_placeholder(target, _container_label(block))
                 _add_blocks(
@@ -459,7 +478,17 @@ def _add_blocks(
                     native_ids,
                     depth=depth + 1,
                     active_container_ids=active_container_ids,
+                    seen_block_ids=seen_block_ids,
+                    text_budget=text_budget,
                 )
+            elif block is _INVALID_BLOCK_CONTAINER:
+                _add_placeholder(target, "[Invalid block container omitted]")
+            elif block is _BLOCK_LIMIT_OMISSION:
+                _add_placeholder(
+                    target, "[Block content omitted at safe rendering limit]"
+                )
+            else:
+                _add_placeholder(target, "[Unrecognized block object omitted]")
     finally:
         # Keep visited containers for the full render to bound shared DAGs.
         pass
@@ -469,6 +498,7 @@ def _add_native_page_content(
     output_document: Any,
     section: Any,
     native: _NativePageContent,
+    text_budget: _TextOutputBudget,
 ) -> None:
     if native.uses_odd_even:
         output_document.settings.odd_and_even_pages_header_footer = True
@@ -487,10 +517,18 @@ def _add_native_page_content(
         if container is None or source is None:
             continue
         container.is_linked_to_previous = False
-        _populate_native_container(container, getattr(source, "blocks", None))
+        _populate_native_container(
+            container,
+            getattr(source, "blocks", None),
+            text_budget,
+        )
 
 
-def _populate_native_container(container: Any, blocks: object) -> None:
+def _populate_native_container(
+    container: Any,
+    blocks: object,
+    text_budget: _TextOutputBudget,
+) -> None:
     paragraphs = _safe_blocks(blocks)
     if not paragraphs:
         return
@@ -498,7 +536,12 @@ def _populate_native_container(container: Any, blocks: object) -> None:
     for index, source in enumerate(paragraphs):
         target = existing[0] if index == 0 and existing else container.add_paragraph()
         _clear_word_paragraph(target)
-        target.add_run(_clean_xml_text(_safe_paragraph_text(source)))
+        if isinstance(source, Paragraph):
+            target.add_run(
+                _clean_xml_text(
+                    _paragraph_text(source, text_budget, expansion_factor=5)
+                )
+            )
 
 
 def _clear_word_paragraph(paragraph: Any) -> None:
@@ -512,7 +555,15 @@ def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
     if isinstance(block, Annotation):
         return "[Annotation]"
     if isinstance(block, Footnote):
-        return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+        return (
+            "[Footnote "
+            + _safe_label_field(
+                block.number, "number unavailable", maximum=64
+            )
+            + "]"
+            if block.number is not None
+            else "[Footnote]"
+        )
     kind = "Header" if isinstance(block, Header) else "Footer"
     source_placement = getattr(block, "placement", None)
     if not isinstance(source_placement, str):
@@ -541,7 +592,13 @@ def _add_wmf(target: Any, graphic: WmfGraphic, geometry: _PageGeometry) -> None:
         _add_placeholder(target, "[Invalid WMF preview]")
         return
     paragraph = target.add_paragraph()
-    paragraph.add_run(_clean_xml_text(str(graphic.alt_text or "Embedded WMF preview")))
+    paragraph.add_run(
+        _clean_xml_text(
+            _safe_label_field(
+                graphic.alt_text, "Embedded WMF preview", maximum=256
+            )
+        )
+    )
     paragraph.add_run().add_picture(
         BytesIO(payload), width=Inches(width), height=Inches(height)
     )
@@ -574,7 +631,7 @@ def _add_sdw(target: Any, drawing: SdwDrawing, geometry: _PageGeometry) -> None:
         BytesIO(payload), width=Inches(width), height=Inches(height)
     )
     alt = _clean_xml_text(
-        _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+        _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
     )
     inline_shape._inline.docPr.set("descr", alt)
     inline_shape._inline.docPr.set("title", alt)
@@ -584,6 +641,7 @@ def _populate_paragraph(
     target: Any,
     source: Paragraph,
     document: AmiProDocument,
+    text_budget: _TextOutputBudget,
 ) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches, Pt
@@ -650,7 +708,7 @@ def _populate_paragraph(
     base = style_definition.character if style_definition else CharacterStyle()
     source_runs = source.runs
     if not isinstance(source_runs, list | tuple):
-        target.add_run(_clean_xml_text(source.text))
+        target.add_run("[Invalid paragraph runs omitted]")
         return
     seen_runs: set[int] = set()
     omitted = len(source_runs) > 4_096
@@ -671,13 +729,20 @@ def _populate_paragraph(
         if not isinstance(value, str):
             target.add_run("[Invalid text run omitted]")
             continue
-        total_characters += len(value)
-        if total_characters > 1_000_000:
-            value = value[: max(0, 1_000_000 - (total_characters - len(value)))]
+        paragraph_remaining = max(0, 1_000_000 - total_characters)
+        prepared = text_budget.prepare(
+            value,
+            unit_limit=paragraph_remaining,
+            expansion_factor=5,
+        )
+        value = prepared.visible
+        total_characters += len(prepared.text)
+        if prepared.encoding in {"bounded-text", "text-budget-limit"}:
             omitted = True
         run = target.add_run(_clean_xml_text(value))
         _format_run(run, _merge_character_style(base, source_run.style))
-        if total_characters > 1_000_000:
+        if total_characters >= 1_000_000:
+            omitted = True
             break
     if omitted:
         target.add_run("[Paragraph content omitted at safe rendering limit]")
@@ -694,7 +759,7 @@ def _format_run(run: Any, style: CharacterStyle) -> None:
     run.font.strike = bool(style.strike)
     run.font.superscript = bool(style.superscript)
     run.font.subscript = bool(style.subscript and not style.superscript)
-    if style.font_family:
+    if isinstance(style.font_family, str) and style.font_family:
         family = _clean_xml_text(style.font_family)[:128]
         run.font.name = family
         run_properties = run._element.get_or_add_rPr()
@@ -738,6 +803,7 @@ def _add_table(
     source: Table,
     ir_document: AmiProDocument,
     body_width_twips: int,
+    text_budget: _TextOutputBudget,
 ) -> None:
     from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
@@ -828,7 +894,12 @@ def _add_table(
                 if paragraph_index == 0
                 else target.add_paragraph()
             )
-            _populate_paragraph(paragraph, source_paragraph, ir_document)
+            _populate_paragraph(
+                paragraph,
+                source_paragraph,
+                ir_document,
+                text_budget,
+            )
         if rows[row_index].is_header:
             _shade_cell(target, "F2F4F7")
             for paragraph in target.paragraphs:
@@ -1185,18 +1256,23 @@ def _resolved_style(
     document: AmiProDocument,
     name: str | None,
 ) -> StyleDefinition | None:
-    if not name or name not in document.styles:
+    styles = getattr(document, "styles", None)
+    if not isinstance(name, str) or not name or not isinstance(styles, dict):
+        return None
+    if name not in styles:
         return None
     chain: list[StyleDefinition] = []
     seen: set[str] = set()
     current_name: str | None = name
     while current_name and current_name not in seen and len(chain) < 64:
-        current = document.styles.get(current_name)
-        if current is None:
+        current = styles.get(current_name)
+        if not isinstance(current, StyleDefinition) or not isinstance(
+            current.character, CharacterStyle
+        ):
             break
         chain.append(current)
         seen.add(current_name)
-        current_name = current.parent
+        current_name = current.parent if isinstance(current.parent, str) else None
 
     resolved = StyleDefinition(name=name)
     for item in reversed(chain):
@@ -1217,18 +1293,22 @@ def _resolved_style(
 
 
 def _image_placeholder(image: Image) -> str:
-    detail = f"Image: {image.alt_text or 'Embedded image'}"
+    alt = _safe_label_field(image.alt_text, "Embedded image", maximum=256)
+    detail = f"Image: {alt}"
     if image.reference:
-        detail += f" (source reference not opened: {image.reference})"
+        reference = _safe_label_field(
+            image.reference, "invalid reference omitted", maximum=256
+        )
+        detail += f" (source reference not opened: {reference})"
     elif image.data is not None:
         detail += " (embedded image preserved as a placeholder)"
     return f"[{detail}]"
 
 
 def _sdw_placeholder(drawing: SdwDrawing) -> str:
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
-    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
-    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_label_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_label_field(drawing.reason, "preview unavailable", maximum=256)
     details = [
         f"Ami Draw object: {alt}",
         "no valid companion preview",
@@ -1245,16 +1325,23 @@ def _sdw_placeholder(drawing: SdwDrawing) -> str:
     return "[" + "; ".join(details) + "]"
 
 
-def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+def _safe_label_field(value: object, default: str, *, maximum: int) -> str:
     if isinstance(value, str):
-        result = value
+        result = value[: maximum * 4]
     elif isinstance(value, bytes):
-        result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+        result = value[: maximum * 4].decode("utf-8", errors="replace")
+    elif isinstance(value, bool | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):
             return default
+    elif isinstance(value, int):
+        bits = value.bit_length()
+        result = (
+            f"[oversized integer omitted: {bits} bits]"
+            if bits > 1_024
+            else str(value)
+        )
     else:
         return default
     result = " ".join(result.split())[:maximum]
@@ -1291,7 +1378,7 @@ def _is_xml_character(codepoint: int) -> bool:
 
 
 def _color(value: str | None) -> str | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     match = _HEX_COLOR.fullmatch(value.strip())
     return match.group(1).upper() if match else None
@@ -1300,7 +1387,7 @@ def _color(value: str | None) -> str | None:
 def _number(value: float | None, default: float, minimum: float, maximum: float) -> float:
     try:
         number = float(value) if value is not None else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if not math.isfinite(number):
         return default

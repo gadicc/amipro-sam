@@ -60,7 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--recursive", action="store_true", help="recurse into input directories")
     convert.add_argument("--encoding", help="override source encoding")
     convert.add_argument(
-        "--strict", action="store_true", help="fail on any warning or error diagnostic"
+        "--strict",
+        action="store_true",
+        help="fail on explicitly classified semantic or content preservation loss",
     )
     convert.add_argument(
         "--no-warning-summary",
@@ -159,6 +161,14 @@ def _command_inspect(args: argparse.Namespace) -> int:
             block_counts = Counter(type(block).__name__ for block in document.blocks)
             section_counts = Counter(section.name.lower() for section in document.sections)
             diagnostic_counts = Counter(item.code for item in document.diagnostics)
+            severity_counts = Counter(
+                getattr(item.severity, "value", str(item.severity))
+                for item in document.diagnostics
+            )
+            loss_counts = Counter(
+                item.lossiness.value
+                for item in document.preservation_losses
+            )
             records.append(
                 {
                     "path": str(source),
@@ -171,6 +181,9 @@ def _command_inspect(args: argparse.Namespace) -> int:
                     "blocks": dict(sorted(block_counts.items())),
                     "sections": dict(sorted(section_counts.items())),
                     "diagnostics": dict(sorted(diagnostic_counts.items())),
+                    "severities": dict(sorted(severity_counts.items())),
+                    "lossy": document.is_lossy,
+                    "losses": dict(sorted(loss_counts.items())),
                     "unknown_records": len(document.unknown_records),
                 }
             )
@@ -194,13 +207,11 @@ def _command_dump(args: argparse.Namespace) -> int:
             force=bool(args.force),
         )
     document = parse_file(args.input, encoding=args.encoding)
-    payload = json.dumps(
-        document.to_dict(), ensure_ascii=False, indent=2, sort_keys=True
-    ).encode("utf-8", errors="backslashreplace")
+    payload = _load_renderer("json")(document)
     if args.output:
-        _atomic_write(args.output, payload + b"\n")
+        _atomic_write(args.output, payload)
     else:
-        sys.stdout.buffer.write(payload + b"\n")
+        sys.stdout.buffer.write(payload)
     return 0
 
 
@@ -307,9 +318,12 @@ def _summarize(records: list[dict[str, object]]) -> dict[str, object]:
     blocks: Counter[str] = Counter()
     sections: Counter[str] = Counter()
     diagnostics: Counter[str] = Counter()
+    severities: Counter[str] = Counter()
+    losses: Counter[str] = Counter()
     total_bytes = 0
     text_characters = 0
     successful = 0
+    lossy_files = 0
     for record in records:
         if record["status"] != "ok":
             continue
@@ -319,6 +333,9 @@ def _summarize(records: list[dict[str, object]]) -> dict[str, object]:
         blocks.update(record["blocks"])
         sections.update(record["sections"])
         diagnostics.update(record["diagnostics"])
+        severities.update(record["severities"])
+        losses.update(record["losses"])
+        lossy_files += int(bool(record["lossy"]))
     return {
         "files": len(records),
         "successful": successful,
@@ -328,6 +345,9 @@ def _summarize(records: list[dict[str, object]]) -> dict[str, object]:
         "blocks": dict(sorted(blocks.items())),
         "sections": dict(sorted(sections.items())),
         "diagnostics": dict(sorted(diagnostics.items())),
+        "severities": dict(sorted(severities.items())),
+        "lossy_files": lossy_files,
+        "losses": dict(sorted(losses.items())),
         "failures": [record for record in records if record["status"] != "ok"],
     }
 
@@ -337,9 +357,10 @@ def _print_inspection(result: object, *, summary: bool) -> None:
         assert isinstance(result, dict)
         print(
             f"files={result['files']} ok={result['successful']} failed={result['failed']} "
-            f"bytes={result['bytes']} text_characters={result['text_characters']}"
+            f"lossy={result['lossy_files']} bytes={result['bytes']} "
+            f"text_characters={result['text_characters']}"
         )
-        for name in ("blocks", "sections", "diagnostics"):
+        for name in ("blocks", "sections", "diagnostics", "severities", "losses"):
             values = result[name]
             print(f"{name}: " + ", ".join(f"{key}={value}" for key, value in values.items()))
         for failure in result["failures"]:
@@ -352,7 +373,8 @@ def _print_inspection(result: object, *, summary: bool) -> None:
             continue
         print(
             f"{record['path']}: SAM v{record['version']} {record['encoding']}, "
-            f"{record['text_characters']} text characters, {record['styles']} styles"
+            f"{record['text_characters']} text characters, {record['styles']} styles, "
+            f"lossy={str(record['lossy']).lower()}"
         )
         print("  blocks: " + ", ".join(f"{k}={v}" for k, v in record["blocks"].items()))
         print("  sections: " + ", ".join(f"{k}={v}" for k, v in record["sections"].items()))
@@ -360,6 +382,11 @@ def _print_inspection(result: object, *, summary: bool) -> None:
             print(
                 "  diagnostics: "
                 + ", ".join(f"{k}={v}" for k, v in record["diagnostics"].items())
+            )
+        if record["losses"]:
+            print(
+                "  losses: "
+                + ", ".join(f"{k}={v}" for k, v in record["losses"].items())
             )
 
 

@@ -11,6 +11,12 @@ from dataclasses import dataclass
 # they cannot truncate the outer EDOC stream.
 MULTILINE_CONTAINER = re.compile(r"(?<!<)<:(?P<kind>[NFHh])(?=$|[^A-Za-z])")
 _MULTILINE_PREFIX = re.compile(r"(?<!<)<:(?P<kind>[NFHh])")
+_STRUCTURAL_OR_DYNAMIC_PREFIX = re.compile(r"(?<!<)<:(?P<kind>[NFHhXZ])")
+_EMBEDDED_ROW = re.compile(
+    r"^\s*(?P<id>\d{1,20})\s+(?P<ext>\.[A-Za-z0-9]{1,8})\s+"
+    r"(?P<asset_offset>\d{1,20})\s+(?P<asset_length>\d{1,20})\s+"
+    r"(?P<preview_offset>\d{1,20})\s+(?P<preview_length>\d{1,20})\s*$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +82,24 @@ class MultilineContainerScanner:
                 self._inline_open = True
                 self._inline_in_quote = quote_state
                 return ContainerScan(None, False)
-            # A literal/corrupt angle is not enough evidence to hide a later
-            # structural opener on the same physical line.
-            index += 1
+            # No later close exists, so rescanning from every subsequent '<'
+            # would be quadratic. A literal/corrupt angle is still not enough
+            # evidence to hide a later structural opener or multiline dynamic
+            # field: jump directly to the next relevant prefix once.
+            candidate = _STRUCTURAL_OR_DYNAMIC_PREFIX.search(line, index + 1)
+            if candidate is None:
+                break
+            kind = candidate.group("kind")
+            if kind in "NFHh":
+                return ContainerScan(candidate, False)
+            _, quote_state = _inline_content_end_state(
+                line,
+                candidate.start() + 1,
+                quoted=True,
+            )
+            self._inline_open = True
+            self._inline_in_quote = quote_state
+            return ContainerScan(None, False)
 
         return ContainerScan(
             None,
@@ -144,3 +165,19 @@ def is_standalone_terminator(line: str) -> bool:
     """Return whether *line* contains only the SAM ``>`` terminator."""
 
     return line.strip() == ">"
+
+
+def parse_embedded_manifest_row(
+    line: str,
+) -> tuple[int, int, int, int] | None:
+    """Return asset/companion offset-length pairs for one exact row."""
+
+    match = _EMBEDDED_ROW.fullmatch(line)
+    if match is None:
+        return None
+    return (
+        int(match.group("asset_offset")),
+        int(match.group("asset_length")),
+        int(match.group("preview_offset")),
+        int(match.group("preview_length")),
+    )

@@ -28,3 +28,4 @@ class ParseLimits:
     max_sdw_dimension: int = 4_096
     max_sdw_pixels: int = 4_000_000
     max_total_sdw_pixels: int = 8_000_000
+    max_embedded_records: int = 4_096

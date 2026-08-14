@@ -414,6 +414,37 @@ def test_shared_pdf_text_budget_covers_embedded_object_captions() -> None:
     assert "PDF text omitted" in story[0].getPlainText()
 
 
+def test_shared_large_pdf_text_alias_is_omitted_once_and_keeps_tail(
+    tmp_path: Path,
+) -> None:
+    shared_text = ("PDF_SHARED_ALIAS " + "A " * 2_100)[:4_096]
+    document = Document(
+        "invented-shared-pdf-text.sam",
+        "utf-8",
+        blocks=[
+            *(Paragraph(runs=[TextRun(shared_text)]) for _ in range(977)),
+            _paragraph("FOLLOWING_READABLE_TAIL"),
+        ],
+    )
+
+    payload = pdf.render(document)
+    extracted = _poppler_text(payload, tmp_path)
+
+    assert extracted.count("PDF_SHARED_ALIAS") == 1
+    assert extracted.count("Repeated PDF text omitted") == 1
+    assert "FOLLOWING_READABLE_TAIL" in extracted
+    assert len(payload) < 1_000_000
+
+
+def test_pdf_text_budget_preserves_ordinary_repeated_values() -> None:
+    budget = PdfTextBudget()
+    ordinary_text = "ORDINARY_REPEATED_PDF_TEXT"
+
+    assert budget.prepare(ordinary_text) == ordinary_text
+    assert budget.prepare(ordinary_text) == ordinary_text
+    assert not budget.repeated_alias_marker_emitted
+
+
 def test_encoded_pdf_output_backstop_is_controlled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pdf, "_MAX_PDF_OUTPUT_BYTES", 100)
     with pytest.raises(pdf.RenderError, match="64 MiB output limit"):

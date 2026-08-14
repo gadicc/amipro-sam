@@ -16,7 +16,6 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 from ..errors import RenderError
 from ..model import (
     Annotation,
-    Block,
     CharacterStyle,
     Document,
     Footer,
@@ -34,6 +33,8 @@ from ..model import (
     TextRun,
     UnsupportedObject,
     WmfGraphic,
+    _paragraph_text,
+    _TextOutputBudget,
 )
 from ..sdw import SdwDecodeError, sdw_display_size, sdw_png, sdw_preview_caption
 from ..wmf import WmfDecodeError, wmf_display_size, wmf_png
@@ -53,6 +54,8 @@ _MAX_PAGE_TWIPS = 31_680
 _MIN_PAGE_TWIPS = 1_440
 _MIN_BODY_TWIPS = 720
 _MIN_FURNITURE_MARGIN_TWIPS = 720
+_INVALID_BLOCK_CONTAINER = object()
+_BLOCK_LIMIT_OMISSION = object()
 NS = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
     "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
@@ -287,16 +290,19 @@ def _native_paragraph_is_safe(value: object) -> bool:
     )
 
 
-def _safe_blocks(value: object) -> list[Block]:
+def _safe_blocks(value: object) -> list[object]:
     if not isinstance(value, (list, tuple)):
-        return []
-    return list(value[:_MAX_BLOCKS_PER_LIST])
+        return [_INVALID_BLOCK_CONTAINER]
+    result: list[object] = list(value[:_MAX_BLOCKS_PER_LIST])
+    if len(value) > _MAX_BLOCKS_PER_LIST:
+        result.append(_BLOCK_LIMIT_OMISSION)
+    return result
 
 
-def _normalized_blocks(blocks: list[Block]) -> list[Block]:
+def _normalized_blocks(blocks: list[object]) -> list[object]:
     """Discard edge breaks while preserving every explicit interior break."""
 
-    result: list[Block] = []
+    result: list[object] = []
     index = 0
     while index < len(blocks):
         if not isinstance(blocks[index], PageBreak):
@@ -312,26 +318,19 @@ def _normalized_blocks(blocks: list[Block]) -> list[Block]:
     return result
 
 
-def _append_native_paragraphs(parent: ET.Element, blocks: object) -> None:
+def _append_native_paragraphs(
+    parent: ET.Element,
+    blocks: object,
+    text_budget: _TextOutputBudget,
+) -> None:
     for paragraph in _safe_blocks(blocks):
         if not isinstance(paragraph, Paragraph):
             continue
         node = ET.SubElement(parent, _q("text", "p"))
-        _append_text(node, _safe_paragraph_text(paragraph))
-
-
-def _safe_paragraph_text(paragraph: object) -> str:
-    parts: list[str] = []
-    runs = getattr(paragraph, "runs", None)
-    if not isinstance(runs, (list, tuple)):
-        return ""
-    for run in runs:
-        value = getattr(run, "text", "")
-        if isinstance(value, str):
-            parts.append(value)
-        elif isinstance(value, bytes):
-            parts.append(value.decode("utf-8", errors="replace"))
-    return "".join(parts)
+        _append_text(
+            node,
+            _paragraph_text(paragraph, text_budget, expansion_factor=5),
+        )
 
 
 def _frame_label(frame: Frame) -> str:
@@ -361,11 +360,12 @@ def render(document: Document, **_options: object) -> bytes:
     try:
         geometry = _page_geometry(document)
         native = _native_page_content(document, geometry)
-        builder = _ContentBuilder(document, geometry, native)
+        text_budget = _TextOutputBudget()
+        builder = _ContentBuilder(document, geometry, native, text_budget)
         content = builder.build()
         members = [
             ("content.xml", content),
-            ("styles.xml", _styles_xml(geometry, native)),
+            ("styles.xml", _styles_xml(geometry, native, text_budget)),
             ("meta.xml", _meta_xml()),
             ("settings.xml", _settings_xml()),
             (
@@ -392,10 +392,12 @@ class _ContentBuilder:
         document: Document,
         geometry: _PageGeometry,
         native: _NativePageContent,
+        text_budget: _TextOutputBudget,
     ) -> None:
         self.document = document
         self.geometry = geometry
         self.native_ids = native.ids
+        self.text_budget = text_budget
         self.automatic_styles = ET.Element(_q("office", "automatic-styles"))
         self.body_text = ET.Element(_q("office", "text"))
         self._paragraph_style_counter = 0
@@ -404,6 +406,7 @@ class _ContentBuilder:
         self._image_counter = 0
         self._sdw_image_counter = 0
         self._active_container_ids: set[int] = set()
+        self._seen_block_ids: set[int] = set()
         self.generated_images: list[tuple[str, bytes]] = []
         self._define_list_styles()
         self._define_table_cell_styles()
@@ -444,6 +447,14 @@ class _ContentBuilder:
             index = 0
             while index < len(blocks_to_render):
                 block = blocks_to_render[index]
+                block_identity = id(block)
+                if block_identity in self._seen_block_ids:
+                    self._add_placeholder(
+                        "[Nested content omitted: repeated or cyclic block reference]"
+                    )
+                    index += 1
+                    continue
+                self._seen_block_ids.add(block_identity)
                 if isinstance(block, Paragraph) and block.list_kind is not None:
                     list_kind = block.list_kind
                     list_node = ET.SubElement(
@@ -455,10 +466,16 @@ class _ContentBuilder:
                             )
                         },
                     )
+                    item = ET.SubElement(list_node, _q("text", "list-item"))
+                    self._add_paragraph(item, block, list_item=True)
+                    index += 1
                     while index < len(blocks_to_render):
                         candidate = blocks_to_render[index]
+                        if id(candidate) in self._seen_block_ids:
+                            break
                         if not isinstance(candidate, Paragraph) or candidate.list_kind != list_kind:
                             break
+                        self._seen_block_ids.add(id(candidate))
                         item = ET.SubElement(list_node, _q("text", "list-item"))
                         self._add_paragraph(item, candidate, list_item=True)
                         index += 1
@@ -484,10 +501,26 @@ class _ContentBuilder:
                     self._add_placeholder(_frame_label(block))
                     self._add_blocks(getattr(block, "blocks", None), depth=depth + 1)
                 elif isinstance(block, UnsupportedObject):
-                    self._add_placeholder(f"[Unsupported {block.kind}: {block.description}]")
+                    kind = _safe_label_field(
+                        block.kind, "unknown object kind", maximum=128
+                    )
+                    description = _safe_label_field(
+                        block.description, "description unavailable", maximum=256
+                    )
+                    self._add_placeholder(
+                        f"[Unsupported {kind}: {description}]"
+                    )
                 elif isinstance(block, Annotation | Footnote | Header | Footer):
                     self._add_placeholder(_container_label(block))
                     self._add_blocks(getattr(block, "blocks", None), depth=depth + 1)
+                elif block is _INVALID_BLOCK_CONTAINER:
+                    self._add_placeholder("[Invalid block container omitted]")
+                elif block is _BLOCK_LIMIT_OMISSION:
+                    self._add_placeholder(
+                        "[Block content omitted at safe rendering limit]"
+                    )
+                else:
+                    self._add_placeholder("[Unrecognized block object omitted]")
                 index += 1
         finally:
             # Retaining visited containers bounds shared acyclic graphs as
@@ -568,7 +601,7 @@ class _ContentBuilder:
         )
         title = ET.SubElement(frame, _q("svg", "title"))
         title.text = _clean_xml_text(
-            _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
+            _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
         )
         ET.SubElement(
             frame,
@@ -594,7 +627,7 @@ class _ContentBuilder:
         base = style_definition.character if style_definition else CharacterStyle()
         runs = paragraph.runs
         if not isinstance(runs, list | tuple):
-            _append_text(node, paragraph.text)
+            _append_text(node, "[Invalid paragraph runs omitted]")
             return
         seen_runs: set[int] = set()
         omitted = len(runs) > 4_096
@@ -613,9 +646,15 @@ class _ContentBuilder:
             if not isinstance(value, str):
                 _append_text(node, "[Invalid text run omitted]")
                 continue
-            total_characters += len(value)
-            if total_characters > 1_000_000:
-                value = value[: max(0, 1_000_000 - (total_characters - len(value)))]
+            paragraph_remaining = max(0, 1_000_000 - total_characters)
+            prepared = self.text_budget.prepare(
+                value,
+                unit_limit=paragraph_remaining,
+                expansion_factor=5,
+            )
+            value = prepared.visible
+            total_characters += len(prepared.text)
+            if prepared.encoding in {"bounded-text", "text-budget-limit"}:
                 omitted = True
             effective = _merge_character_style(base, run.style)
             span = ET.SubElement(
@@ -624,7 +663,8 @@ class _ContentBuilder:
                 {_q("text", "style-name"): self._text_style(effective)},
             )
             _append_text(span, value)
-            if total_characters > 1_000_000:
+            if total_characters >= 1_000_000:
+                omitted = True
                 break
         if omitted:
             _append_text(node, "[Paragraph content omitted at safe rendering limit]")
@@ -788,7 +828,14 @@ class _ContentBuilder:
         alignment = paragraph.alignment or (
             style_definition.alignment if style_definition else None
         )
-        if alignment:
+        if isinstance(alignment, str) and alignment in {
+            "left",
+            "right",
+            "center",
+            "justify",
+            "start",
+            "end",
+        }:
             properties[_q("fo", "text-align")] = alignment
         left = _first_not_none(
             paragraph.left_indent_in,
@@ -856,8 +903,10 @@ class _ContentBuilder:
             properties[_q("style", "text-position")] = "super 58%"
         elif style.subscript:
             properties[_q("style", "text-position")] = "sub 58%"
-        if style.font_family:
-            properties[_q("fo", "font-family")] = _clean_xml_text(style.font_family[:128])
+        if isinstance(style.font_family, str) and style.font_family:
+            properties[_q("fo", "font-family")] = _clean_xml_text(
+                style.font_family[:128]
+            )
         if style.font_size_pt is not None:
             properties[_q("fo", "font-size")] = _points(
                 style.font_size_pt,
@@ -1011,6 +1060,7 @@ class _ContentBuilder:
 def _styles_xml(
     geometry: _PageGeometry,
     native: _NativePageContent,
+    text_budget: _TextOutputBudget,
 ) -> bytes:
     root = ET.Element(
         _q("office", "document-styles"),
@@ -1070,7 +1120,9 @@ def _styles_xml(
             continue
         odd_node = ET.SubElement(master, _q("style", odd_tag))
         if odd is not None:
-            _append_native_paragraphs(odd_node, getattr(odd, "blocks", None))
+            _append_native_paragraphs(
+                odd_node, getattr(odd, "blocks", None), text_budget
+            )
         else:
             # LibreOffice treats a structurally empty left/right container as
             # absent and inherits the opposite side.  An explicit empty
@@ -1078,7 +1130,9 @@ def _styles_xml(
             ET.SubElement(odd_node, _q("text", "p"))
         even_node = ET.SubElement(master, _q("style", even_tag))
         if even is not None:
-            _append_native_paragraphs(even_node, getattr(even, "blocks", None))
+            _append_native_paragraphs(
+                even_node, getattr(even, "blocks", None), text_budget
+            )
         else:
             ET.SubElement(even_node, _q("text", "p"))
     return _xml_bytes(root)
@@ -1243,18 +1297,23 @@ def _merge_character_style(base: CharacterStyle, run: CharacterStyle) -> Charact
 
 
 def _resolved_style(document: Document, name: str | None) -> StyleDefinition | None:
-    if not name or name not in document.styles:
+    styles = getattr(document, "styles", None)
+    if not isinstance(name, str) or not name or not isinstance(styles, dict):
+        return None
+    if name not in styles:
         return None
     chain: list[StyleDefinition] = []
     seen: set[str] = set()
     current_name: str | None = name
     while current_name and current_name not in seen and len(chain) < 64:
-        current = document.styles.get(current_name)
-        if current is None:
+        current = styles.get(current_name)
+        if not isinstance(current, StyleDefinition) or not isinstance(
+            current.character, CharacterStyle
+        ):
             break
         chain.append(current)
         seen.add(current_name)
-        current_name = current.parent
+        current_name = current.parent if isinstance(current.parent, str) else None
 
     resolved = StyleDefinition(name=name)
     for item in reversed(chain):
@@ -1319,18 +1378,22 @@ def _is_xml_character(codepoint: int) -> bool:
 
 
 def _image_placeholder(image: Image) -> str:
-    detail = f"Image: {image.alt_text or 'Embedded image'}"
+    alt = _safe_label_field(image.alt_text, "Embedded image", maximum=256)
+    detail = f"Image: {alt}"
     if image.reference:
-        detail += f" (source reference not opened: {image.reference})"
+        reference = _safe_label_field(
+            image.reference, "invalid reference omitted", maximum=256
+        )
+        detail += f" (source reference not opened: {reference})"
     elif image.data is not None:
         detail += " (embedded image preserved as a placeholder)"
     return f"[{detail}]"
 
 
 def _sdw_placeholder(drawing: SdwDrawing) -> str:
-    alt = _safe_sdw_field(drawing.alt_text, "Ami Draw object", maximum=256)
-    status = _safe_sdw_field(drawing.status, "unavailable", maximum=64)
-    reason = _safe_sdw_field(drawing.reason, "preview unavailable", maximum=256)
+    alt = _safe_label_field(drawing.alt_text, "Ami Draw object", maximum=256)
+    status = _safe_label_field(drawing.status, "unavailable", maximum=64)
+    reason = _safe_label_field(drawing.reason, "preview unavailable", maximum=256)
     details = [
         f"Ami Draw object: {alt}",
         "no valid companion preview",
@@ -1347,16 +1410,23 @@ def _sdw_placeholder(drawing: SdwDrawing) -> str:
     return "[" + "; ".join(details) + "]"
 
 
-def _safe_sdw_field(value: object, default: str, *, maximum: int) -> str:
+def _safe_label_field(value: object, default: str, *, maximum: int) -> str:
     if isinstance(value, str):
-        result = value
+        result = value[: maximum * 4]
     elif isinstance(value, bytes):
-        result = value.decode("utf-8", errors="replace")
-    elif isinstance(value, (bool, int, float)):
+        result = value[: maximum * 4].decode("utf-8", errors="replace")
+    elif isinstance(value, bool | float):
         try:
             result = str(value)
         except (TypeError, ValueError, OverflowError):
             return default
+    elif isinstance(value, int):
+        bits = value.bit_length()
+        result = (
+            f"[oversized integer omitted: {bits} bits]"
+            if bits > 1_024
+            else str(value)
+        )
     else:
         return default
     result = " ".join(result.split())[:maximum]
@@ -1380,7 +1450,15 @@ def _container_label(block: Annotation | Footnote | Header | Footer) -> str:
     if isinstance(block, Annotation):
         return "[Annotation]"
     if isinstance(block, Footnote):
-        return f"[Footnote {block.number}]" if block.number is not None else "[Footnote]"
+        return (
+            "[Footnote "
+            + _safe_label_field(
+                block.number, "number unavailable", maximum=64
+            )
+            + "]"
+            if block.number is not None
+            else "[Footnote]"
+        )
     kind = "Header" if isinstance(block, Header) else "Footer"
     source_placement = getattr(block, "placement", None)
     if not isinstance(source_placement, str):
@@ -1412,7 +1490,7 @@ def _q(prefix: str, local_name: str) -> str:
 
 
 def _color(value: str | None) -> str | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     match = _HEX_COLOR.fullmatch(value.strip())
     return f"#{match.group(1).upper()}" if match else None
@@ -1421,7 +1499,7 @@ def _color(value: str | None) -> str | None:
 def _number(value: float | None, default: float, minimum: float, maximum: float) -> float:
     try:
         number = float(value) if value is not None else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if not math.isfinite(number):
         return default

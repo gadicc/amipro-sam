@@ -85,8 +85,8 @@ def test_html_like_source_is_only_text_in_ir() -> None:
 
 def test_unknown_inline_tag_keeps_surrounding_text_and_diagnostic() -> None:
     document = parse_bytes(sam("before<:mystery>after"))
-    assert "beforeafter" in document.text
-    assert document.unknown_records[0].record_type == "inline-tag"
+    assert "before[Unsupported inline command: <:mystery>]after" in document.text
+    assert any(item.record_type == "inline-tag" for item in document.unknown_records)
     assert any(item.code == "unsupported-inline-tags" for item in document.diagnostics)
 
 

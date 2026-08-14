@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
 import re
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .decoding import DecodedSource, decode_bytes
-from .errors import ParseError, ResourceLimitError
+from .errors import ParseError, PreservationLossError, ResourceLimitError
 from .limits import ParseLimits
 from .model import (
     Annotation,
     Block,
     CharacterStyle,
-    Diagnostic,
     Document,
     Footer,
     Footnote,
@@ -24,6 +24,7 @@ from .model import (
     Frame,
     Header,
     Image,
+    Lossiness,
     OpaquePageHints,
     PageLayout,
     PageVariantGeometry,
@@ -42,9 +43,11 @@ from .model import (
     UnsupportedObject,
     WmfGraphic,
 )
+from .model import Diagnostic as _DiagnosticRecord
 from .sdw import SdwDecodeError, decode_sdw_preview, sdw_asset_limit, validate_sdw
 from .syntax import (
     MultilineContainerScanner,
+    parse_embedded_manifest_row,
 )
 from .wmf import WmfDecodeError, decode_wmf
 
@@ -60,8 +63,11 @@ _FONT_TAG = re.compile(
     re.IGNORECASE,
 )
 _LINE_SPACING = re.compile(r"^:S\+(?P<value>-?\d+(?:\.\d+)?)$", re.IGNORECASE)
-_PARAGRAPH_LAYOUT = re.compile(r"^:#(?P<first>-?\d+)(?:,(?P<rest>-?\d+))?.*$")
+_PARAGRAPH_LAYOUT = re.compile(r"^:#(?P<first>-?\d+)(?:,(?P<rest>-?\d+))?$")
 _FRAME_ANCHOR = re.compile(r"(?<!<)<:(?P<kind>t|A)(?P<index>\d+)>")
+_MAX_INLINE_COMMANDS_PER_PARAGRAPH = 4_095
+_MAX_OPAQUE_TABLE_FIELD_ENTRIES = 256
+_MAX_OPAQUE_TABLE_FIELD_CHARS = 16_384
 _LAYOUT_TABBED_MARKER = re.compile(
     r"^(?P<indent>\t*)\[(?P<name>[A-Za-z][A-Za-z0-9_-]{0,63})\]\s*$"
 )
@@ -69,6 +75,29 @@ _LAYOUT_BRANCH_MARKER = re.compile(
     r"^(?P<indent>[ \t]*)\[(?P<name>hrght|hlft|frght|flft)\]\s*$",
     re.IGNORECASE,
 )
+
+_KNOWN_LAYOUT_SUBRECORDS = {
+    "rght",
+    "lft",
+    "hrght",
+    "hlft",
+    "frght",
+    "flft",
+    "lyfrm",
+    "frmlay",
+    "txt",
+}
+_KNOWN_FRAME_SUBRECORDS = {
+    "tbl",
+    "data",
+    "e",
+    "tble",
+    "txt",
+    "isd",
+    "btmap",
+    "frmlay",
+    "lyfrm",
+}
 
 _KNOWN_HEADER_SECTIONS = {
     "ver",
@@ -94,18 +123,83 @@ _KNOWN_HEADER_SECTIONS = {
     "chint",
     "ehint",
 }
+_OPAQUE_HEADER_SECTIONS = {
+    "book",
+    "chint",
+    "docopts",
+    "docvars",
+    "ehint",
+    "files",
+    "fldnames",
+    "gramstyle",
+    "lnopts",
+    "master",
+    "paranum",
+    "port",
+    "prn",
+    "recfile",
+    "toc",
+}
 _STRUCTURAL_SECTIONS = {
     "frm",
     "lay",
-    "l1",
     "pg",
-    "elay",
     "embedded",
     "newmac",
     "macro",
     "frmmac",
 }
 _DANGEROUS_SECTIONS = {"newmac", "macro", "frmmac"}
+_LOSSLESS_DIAGNOSTICS = {
+    "decode-selected",
+    "embedded-directory",
+    "frame-field-summary-truncated",
+    "missing-edoc",
+    "page-geometry-summary-truncated",
+    "page-layout-summary-truncated",
+}
+_CONTENT_LOSS_DIAGNOSTICS = {
+    "embedded-asset-too-large",
+    "embedded-companion-unsupported",
+    "embedded-format-unsupported",
+    "embedded-offset-invalid",
+    "frame-anchor-out-of-range",
+    "frame-image-unavailable",
+    "preview-offset-invalid",
+    "sdw-asset-too-large",
+    "sdw-asset-unavailable",
+    "sdw-preview-too-large",
+    "unterminated-edoc-opaque-tail",
+    "unindexed-trailing-data",
+}
+
+
+def Diagnostic(  # noqa: N802 - parser-local factory mirrors the model constructor
+    severity: Severity,
+    code: str,
+    message: str,
+    source: SourceSpan | None = None,
+    raw: str | None = None,
+    *,
+    lossiness: Lossiness | None = None,
+) -> _DiagnosticRecord:
+    """Create a parser diagnostic with an explicit preservation classification."""
+
+    if lossiness is None:
+        if code in _LOSSLESS_DIAGNOSTICS:
+            lossiness = Lossiness.NONE
+        elif code in _CONTENT_LOSS_DIAGNOSTICS or code.startswith("wmf-"):
+            lossiness = Lossiness.CONTENT
+        else:
+            lossiness = Lossiness.SEMANTIC
+    return _DiagnosticRecord(
+        severity=severity,
+        code=code,
+        message=message,
+        source=source,
+        raw=raw,
+        lossiness=lossiness,
+    )
 
 
 @dataclass(slots=True)
@@ -186,13 +280,18 @@ def parse_file(
 ) -> Document:
     source = Path(path)
     limits = limits or ParseLimits()
+    file_limit = _effective_lowerable_limit(
+        limits.max_file_bytes,
+        ParseLimits().max_file_bytes,
+        "input byte limit",
+    )
     try:
         size = source.stat().st_size
     except OSError:
         raise
-    if size > limits.max_file_bytes:
+    if size > file_limit:
         raise ResourceLimitError(
-            f"input is {size} bytes; configured maximum is {limits.max_file_bytes}"
+            f"input is {size} bytes; configured maximum is {file_limit}"
         )
     data = source.read_bytes()
     return parse_bytes(
@@ -239,6 +338,15 @@ def parse_bytes(
         newline=decoded.newline,
         diagnostics=list(decoded.diagnostics),
     )
+    if decoded.directory_pointer_valid is False:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "embedded-directory-pointer-mismatch",
+                "[Embedded] rows were retained, but the terminal directory pointer "
+                "does not match the marker byte offset",
+            )
+        )
     if version_line:
         document.diagnostics.append(
             Diagnostic(
@@ -248,7 +356,9 @@ def parse_bytes(
                 raw="\n".join(all_lines[:version_line]),
             )
         )
-    logical_lines = _logical_lines(all_lines[version_line:], start_index=version_line)
+    logical_lines, nul_opaque_tail = _logical_lines(
+        all_lines[version_line:], start_index=version_line
+    )
     sections = _collect_sections(logical_lines, decoded, limits)
     document.sections = sections
     _parse_metadata_and_styles(document, sections, decoded, limits)
@@ -256,12 +366,20 @@ def parse_bytes(
         raise ParseError("malformed Ami Pro SAM document: [ver] has no version value")
     if not any(section.name.lower() == "sty" for section in sections):
         raise ParseError("malformed Ami Pro SAM document: required [sty] section is missing")
+    materialization_budget = _RecordBudget(
+        _effective_lowerable_limit(
+            limits.max_records,
+            ParseLimits().max_records,
+            "content record limit",
+        )
+    )
     structures = _parse_structures(
         document,
         sections,
         data,
         decoded,
         limits,
+        record_budget=materialization_budget,
         data_base_offset=decoded.line_byte_offsets[version_line],
     )
     edoc_sections = [section for section in sections if section.name.lower() == "edoc"]
@@ -277,6 +395,16 @@ def parse_bytes(
             limits,
             anchored_frames=structures.anchored_frames,
             used_anchors=used_anchors,
+            record_budget=materialization_budget,
+        )
+    if nul_opaque_tail is not None:
+        materialization_budget.charge(1, "unterminated EDOC opaque-tail recovery")
+        _preserve_nul_opaque_tail(
+            document,
+            data,
+            decoded,
+            start_line=nul_opaque_tail[0],
+            end_line=nul_opaque_tail[1],
         )
 
     for index, frame in enumerate(structures.anchored_frames):
@@ -299,14 +427,11 @@ def parse_bytes(
             )
         )
     document.blocks.extend(structures.supplemental_blocks)
-    _diagnose_unindexed_tail(
-        document, data, data_base_offset=decoded.line_byte_offsets[version_line]
-    )
+    _diagnose_unindexed_tail(document, data, decoded)
 
     _record_unknown_main_sections(document, sections)
-    if strict and any(item.severity is not Severity.INFO for item in document.diagnostics):
-        first = next(item for item in document.diagnostics if item.severity is not Severity.INFO)
-        raise ParseError(f"strict parsing failed: {first.code}: {first.message}")
+    if strict and document.preservation_losses:
+        raise PreservationLossError(document.preservation_losses)
     return document
 
 
@@ -333,8 +458,15 @@ def _collect_sections(
     return sections
 
 
-def _logical_lines(lines: list[str], *, start_index: int = 0) -> list[tuple[int, str]]:
-    """Exclude appended binary payloads from the line-oriented section scanner."""
+def _logical_lines(
+    lines: list[str], *, start_index: int = 0
+) -> tuple[list[tuple[int, str]], tuple[int, int | None] | None]:
+    """Return scanner lines plus any byte range hidden by NUL-tail recovery.
+
+    The line range uses absolute decoded line indexes.  Its optional end is the
+    first line retained again for an appended ``[Embedded]`` directory; ``None``
+    means the omitted range continues through the physical end of the source.
+    """
 
     indexed = [(start_index + index, line) for index, line in enumerate(lines)]
     edoc = next(
@@ -342,17 +474,19 @@ def _logical_lines(lines: list[str], *, start_index: int = 0) -> list[tuple[int,
         None,
     )
     if edoc is None:
-        return indexed
+        return indexed, None
     terminator = _edoc_terminator(indexed, edoc + 1)
+    nul_boundary: int | None = None
     if terminator is None:
-        terminator = next(
+        nul_boundary = next(
             (
                 index
                 for index in range(edoc + 1, len(indexed))
                 if "\x00" in indexed[index][1]
             ),
-            len(indexed),
+            None,
         )
+        terminator = len(indexed) if nul_boundary is None else nul_boundary
     prefix = indexed[: min(terminator + 1, len(indexed))]
     embedded = next(
         (
@@ -362,9 +496,62 @@ def _logical_lines(lines: list[str], *, start_index: int = 0) -> list[tuple[int,
         ),
         None,
     )
+    opaque_tail: tuple[int, int | None] | None = None
+    if nul_boundary is not None:
+        omitted_start = nul_boundary + 1
+        omitted_end = (
+            embedded
+            if embedded is not None and embedded > terminator
+            else len(indexed)
+        )
+        if omitted_start < omitted_end:
+            opaque_tail = (
+                indexed[omitted_start][0],
+                indexed[omitted_end][0] if omitted_end < len(indexed) else None,
+            )
     if embedded is not None and embedded > terminator:
-        return prefix + indexed[embedded:]
-    return prefix
+        return prefix + indexed[embedded:], opaque_tail
+    return prefix, opaque_tail
+
+
+def _preserve_nul_opaque_tail(
+    document: Document,
+    data: bytes,
+    decoded: DecodedSource,
+    *,
+    start_line: int,
+    end_line: int | None,
+) -> None:
+    """Represent bytes skipped after an unterminated EDOC NUL boundary."""
+
+    start = decoded.line_byte_offsets[start_line]
+    end = len(data) if end_line is None else decoded.line_byte_offsets[end_line]
+    if end <= start:
+        return
+    length = end - start
+    digest = hashlib.sha256(memoryview(data)[start:end]).hexdigest()
+    source = SourceSpan(
+        line=start_line + 1,
+        column=1,
+        byte_offset=start,
+        end_byte_offset=end,
+    )
+    description = (
+        f"{length} byte(s) after an unterminated [edoc] NUL recovery boundary "
+        f"(SHA-256 {digest}); source bytes were retained as opaque evidence"
+    )
+    document.blocks.append(
+        UnsupportedObject("unterminated EDOC opaque tail", description, source)
+    )
+    document.diagnostics.append(
+        Diagnostic(
+            Severity.WARNING,
+            "unterminated-edoc-opaque-tail",
+            description,
+            source,
+            lossiness=Lossiness.CONTENT,
+        )
+    )
 
 
 def _edoc_terminator(lines: list[tuple[int, str]], start: int) -> int | None:
@@ -395,40 +582,119 @@ def _parse_metadata_and_styles(
         name = section.name.lower()
         counts[name] = counts.get(name, 0) + 1
         values = [line.strip() for line in section.raw_lines]
-        if name == "ver" and values:
-            document.version = values[0]
-            if values[0] not in {"3", "4"}:
+        if name == "ver":
+            if values:
+                document.version = values[0]
+                if values[0] not in {"3", "4"}:
+                    document.diagnostics.append(
+                        Diagnostic(
+                            Severity.WARNING,
+                            "unverified-version",
+                            f"format version {values[0]!r} has not been verified",
+                            section.source,
+                        )
+                    )
+            _record_opaque_fields(
+                document,
+                section,
+                section.raw_lines[1:],
+                record_type="version-fields-tail",
+                diagnostic_code="version-fields-opaque",
+                object_kind="version header fields",
+                description=(
+                    "fields after the supported [ver] version were preserved "
+                    "without interpretation; raw data remains in JSON"
+                ),
+            )
+        elif name == "sty":
+            if values and values[0]:
+                document.metadata["stylesheet"] = values[0]
                 document.diagnostics.append(
                     Diagnostic(
                         Severity.WARNING,
-                        "unverified-version",
-                        f"format version {values[0]!r} has not been verified",
+                        "external-stylesheet-not-loaded",
+                        "external stylesheet reference was preserved but not followed",
                         section.source,
+                        values[0],
                     )
                 )
-        elif name == "sty" and values and values[0]:
-            document.metadata["stylesheet"] = values[0]
-            document.diagnostics.append(
-                Diagnostic(
-                    Severity.WARNING,
-                    "external-stylesheet-not-loaded",
-                    "external stylesheet reference was preserved but not followed",
-                    section.source,
-                    values[0],
-                )
+            _record_opaque_fields(
+                document,
+                section,
+                section.raw_lines[1:],
+                record_type="stylesheet-fields-tail",
+                diagnostic_code="stylesheet-fields-opaque",
+                object_kind="stylesheet header fields",
+                description=(
+                    "fields after the supported [sty] stylesheet reference were "
+                    "preserved without interpretation; raw data remains in JSON"
+                ),
             )
         elif name == "charset":
             document.metadata["charset"] = " | ".join(value for value in values if value)
-        elif name in {"lang", "desc", "revisions"} and values:
+        elif name in {"lang", "desc"} and values:
             document.metadata[name] = values[0]
+            if len([value for value in values if value]) > 1:
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "metadata-values-opaque",
+                        f"additional [{section.name}] values remain opaque",
+                        section.source,
+                    )
+                )
+        elif name == "revisions" and any(values):
+            document.metadata[name] = next(value for value in values if value)
+            document.blocks.append(
+                UnsupportedObject(
+                    "revision state",
+                    "revision metadata was preserved, but changes were not interpreted",
+                    section.source,
+                )
+            )
+            document.unknown_records.append(
+                UnknownRecord(
+                    section=section.name,
+                    record_type="revision-state",
+                    raw="\n".join(section.raw_lines),
+                    source=section.source,
+                    reason="revision state is preserved raw but not interpreted",
+                )
+            )
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "revisions-opaque",
+                    "revision state was preserved without semantic interpretation",
+                    section.source,
+                )
+            )
         elif name == "fopts":
             _parse_footnote_options(document, section, values)
         elif name == "tag":
             if len(document.styles) >= limits.max_styles:
                 raise ResourceLimitError(f"document exceeds {limits.max_styles} styles")
-            style = _parse_style(section, decoded)
+            style = _parse_style(document, section, decoded)
             if style:
                 document.styles[style.name] = style
+        elif name in _OPAQUE_HEADER_SECTIONS and any(values):
+            document.unknown_records.append(
+                UnknownRecord(
+                    section=section.name,
+                    record_type="known-opaque-section",
+                    raw="\n".join(section.raw_lines),
+                    source=section.source,
+                    reason="known section is preserved raw but its semantics are not interpreted",
+                )
+            )
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "known-section-opaque",
+                    f"[{section.name}] is preserved without semantic interpretation",
+                    section.source,
+                )
+            )
 
     if counts.get("ver", 0) != 1:
         document.diagnostics.append(
@@ -438,6 +704,42 @@ def _parse_metadata_and_styles(
                 f"expected one [ver] section, found {counts.get('ver', 0)}",
             )
         )
+
+
+def _record_opaque_fields(
+    document: Document,
+    section: SectionRecord,
+    raw_fields: list[str],
+    *,
+    record_type: str,
+    diagnostic_code: str,
+    object_kind: str,
+    description: str,
+) -> None:
+    opaque_fields = [field for field in raw_fields if field.strip()]
+    if not opaque_fields:
+        return
+    raw = "\n".join(opaque_fields)
+    document.unknown_records.append(
+        UnknownRecord(
+            section=section.name,
+            record_type=record_type,
+            raw=raw,
+            source=section.source,
+            reason="fields outside the supported prefix were preserved without interpretation",
+        )
+    )
+    document.blocks.append(UnsupportedObject(object_kind, description, section.source))
+    document.diagnostics.append(
+        Diagnostic(
+            Severity.WARNING,
+            diagnostic_code,
+            description,
+            section.source,
+            raw,
+            lossiness=Lossiness.SEMANTIC,
+        )
+    )
 
 
 def _parse_footnote_options(
@@ -485,6 +787,29 @@ def _parse_footnote_options(
             )
         )
         return
+    opaque_tail = [value for value in values[4:] if value]
+    if opaque_tail:
+        document.unknown_records.append(
+            UnknownRecord(
+                section="fopts",
+                record_type="footnote-options-tail",
+                raw="\n".join(opaque_tail),
+                source=section.source,
+                reason=(
+                    "fields after the supported four-field prefix were preserved "
+                    "without interpretation"
+                ),
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "footnote-options-tail-opaque",
+                "[fopts] fields after the supported four-field prefix were "
+                "preserved without semantic interpretation",
+                section.source,
+            )
+        )
     unknown_bits = flags & ~7
     document.footnote_options = FootnoteOptions(
         flags=flags,
@@ -518,6 +843,13 @@ def _bounded_small_signed(value: str) -> int | None:
         return None
 
 
+def _bounded_inline_int(value: str) -> int | None:
+    parsed = _bounded_small_signed(value)
+    if parsed is None or not -(2**31) <= parsed <= 2**31 - 1:
+        return None
+    return parsed
+
+
 _MAX_PAGE_TWIPS = 22 * 1440
 _MIN_PAGE_TWIPS = 1440
 _MIN_CONTENT_TWIPS = 720
@@ -525,6 +857,8 @@ _MIN_FRAME_COORD = -32768
 _MAX_FRAME_COORD = 32767
 _MAX_TYPED_GEOMETRY_FIELDS = 1024
 _PAGE_LAYOUT_FEATURE_FLAGS = 256 | 512 | 1024 | 2048 | 4096
+_STYLE_CHARACTER_KNOWN_FLAGS = 1 | 2 | 4 | 8 | 32 | 64
+_STYLE_PARAGRAPH_KNOWN_FLAGS = 1 | 2 | 4 | 8
 _FRAME_KNOWN_FLAGS = (
     1
     | 2
@@ -559,6 +893,28 @@ def _parse_page_layout(
         )
     name = _unescape_literal(prefix[0]) if prefix else ""
     flags = _bounded_small_signed(prefix[1]) if len(prefix) > 1 else None
+    if len(prefix) > 2 or prefix_truncated:
+        document.unknown_records.append(
+            UnknownRecord(
+                section=section.name,
+                record_type="page-layout-fields",
+                raw="\n".join(prefix[2:]),
+                source=section.source,
+                reason=(
+                    "fields after the supported layout name and flag word were "
+                    "preserved without interpretation"
+                ),
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "page-layout-fields-opaque",
+                "[lay] fields after the supported name-and-flags prefix were "
+                "preserved without semantic interpretation",
+                section.source,
+            )
+        )
     if flags is not None and not 0 <= flags <= 0x7FFFFFFF:
         flags = None
     if flags is None:
@@ -608,6 +964,23 @@ def _parse_page_layout(
     )
     if not layout.valid:
         layout.reason = "no complete, bounded right/odd or left/even page geometry"
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "page-layout-unusable",
+                layout.reason,
+                section.source,
+            )
+        )
+    if layout.unknown_flag_bits:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "page-layout-unknown-flags",
+                f"[lay] has unsupported flag bits 0x{layout.unknown_flag_bits:x}",
+                section.source,
+            )
+        )
     if paper_kind == "unknown" and flags is not None:
         document.diagnostics.append(
             Diagnostic(
@@ -683,6 +1056,16 @@ def _parse_page_variant(
                 "page-geometry-summary-truncated",
                 f"[{marker_name}] typed field summary was capped at {_MAX_TYPED_GEOMETRY_FIELDS}; "
                 f"{omitted_fields} additional field(s) remain in the raw [lay] record",
+                source,
+            )
+        )
+    if len(raw_fields) > 9 or omitted_fields:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "page-geometry-tail-opaque",
+                f"[{marker_name}] fields after the typed nine-field prefix were "
+                "preserved without semantic interpretation",
                 source,
             )
         )
@@ -779,7 +1162,9 @@ def _parse_page_variant(
     return geometry
 
 
-def _parse_style(section: SectionRecord, decoded: DecodedSource) -> StyleDefinition | None:
+def _parse_style(
+    document: Document, section: SectionRecord, decoded: DecodedSource
+) -> StyleDefinition | None:
     lines = section.raw_lines
     if not lines:
         return None
@@ -788,24 +1173,189 @@ def _parse_style(section: SectionRecord, decoded: DecodedSource) -> StyleDefinit
         return None
     style = StyleDefinition(name=name, raw="\n".join(lines), source=section.source)
     subsections: dict[str, list[str]] = {}
+    duplicate_subrecords: set[str] = set()
     current: str | None = None
-    top_level: list[str] = []
+    current_indent = 0
+    top_level: list[tuple[str, str]] = []
     for line in lines[1:]:
         match = _SUBSECTION.match(line)
         if match:
             current = match.group(1).lower()
+            current_indent = len(line) - len(line.lstrip())
+            if current in subsections:
+                duplicate_subrecords.add(current)
             subsections[current] = []
-        elif current is None:
-            top_level.append(line.strip())
-        else:
+        elif current is not None and len(line) - len(line.lstrip()) > current_indent:
             subsections[current].append(line.strip())
+        else:
+            current = None
+            top_level.append((line.strip(), line))
 
+    unsupported_subrecords = sorted(set(subsections) - {"fnt", "algn", "spc"})
+    if unsupported_subrecords:
+        document.unknown_records.append(
+            UnknownRecord(
+                section=section.name,
+                record_type="style-subrecord",
+                raw=" ".join(f"[{name}]" for name in unsupported_subrecords),
+                source=section.source,
+                reason="style subrecord semantics are preserved raw but not interpreted",
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "style-subrecords-opaque",
+                "preserved unsupported style subrecord(s): "
+                + ", ".join(f"[{name}]" for name in unsupported_subrecords),
+                section.source,
+            )
+        )
+
+    malformed_subrecords: set[str] = set(duplicate_subrecords)
     font = subsections.get("fnt", [])
+    if "fnt" in subsections and (
+        len(font) < 4
+        or _bounded_inline_int(font[1]) is None
+        or _bounded_inline_int(font[2]) is None
+        or _bounded_inline_int(font[3]) is None
+    ):
+        malformed_subrecords.add("fnt")
+    alignment = subsections.get("algn", [])
+    if "algn" in subsections and (
+        not alignment
+        or _bounded_inline_int(alignment[0]) is None
+        or (
+            len(alignment) >= 5
+            and (
+                _bounded_inline_int(alignment[3]) is None
+                or _bounded_inline_int(alignment[4]) is None
+            )
+        )
+    ):
+        malformed_subrecords.add("algn")
+    spacing = subsections.get("spc", [])
+    if "spc" in subsections and (
+        len(spacing) < 5
+        or any(_bounded_inline_int(value) is None for value in spacing[:5])
+    ):
+        malformed_subrecords.add("spc")
+    if malformed_subrecords:
+        document.unknown_records.append(
+            UnknownRecord(
+                section=section.name,
+                record_type="malformed-style-subrecord",
+                raw=" ".join(f"[{name}]" for name in sorted(malformed_subrecords)),
+                source=section.source,
+                reason="style subrecord was duplicate, incomplete, or malformed",
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "style-subrecords-malformed",
+                "preserved duplicate or malformed style subrecord(s): "
+                + ", ".join(f"[{name}]" for name in sorted(malformed_subrecords)),
+                section.source,
+            )
+        )
+
+    interpreted_field_counts = {"fnt": 4, "algn": 5, "spc": 5}
+    opaque_field_tails = {
+        subrecord: fields[interpreted_field_counts[subrecord] :]
+        for subrecord, fields in subsections.items()
+        if subrecord in interpreted_field_counts
+        and any(fields[interpreted_field_counts[subrecord] :])
+    }
+    if opaque_field_tails:
+        document.unknown_records.append(
+            UnknownRecord(
+                section=section.name,
+                record_type="style-subrecord-tail",
+                raw="\n".join(
+                    f"[{subrecord}]\n" + "\n".join(fields)
+                    for subrecord, fields in sorted(opaque_field_tails.items())
+                ),
+                source=section.source,
+                reason=(
+                    "fields after supported style-subrecord prefixes were preserved "
+                    "without interpretation"
+                ),
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "style-subrecord-fields-opaque",
+                "preserved trailing fields without semantic interpretation in: "
+                + ", ".join(f"[{name}]" for name in sorted(opaque_field_tails)),
+                section.source,
+            )
+        )
+
+    supported_flag_fields = {
+        "fnt": (font, 3, _STYLE_CHARACTER_KNOWN_FLAGS),
+        "algn": (alignment, 0, _STYLE_PARAGRAPH_KNOWN_FLAGS),
+        "spc": (spacing, 0, _STYLE_PARAGRAPH_KNOWN_FLAGS),
+    }
+    unknown_flag_fields: list[tuple[str, str, int]] = []
+    for subrecord, (fields, field_index, known_mask) in supported_flag_fields.items():
+        if subrecord in malformed_subrecords or len(fields) <= field_index:
+            continue
+        parsed_flag = _bounded_inline_int(fields[field_index])
+        if parsed_flag is None:
+            continue
+        unknown_bits = parsed_flag & ~known_mask
+        if unknown_bits:
+            unknown_flag_fields.append(
+                (subrecord, fields[field_index], unknown_bits)
+            )
+    if unknown_flag_fields:
+        raw = "\n".join(
+            f"[{subrecord}]\n{value}"
+            for subrecord, value, _unknown_bits in unknown_flag_fields
+        )
+        affected = ", ".join(f"[{name}]" for name, _value, _bits in unknown_flag_fields)
+        details = ", ".join(
+            f"[{subrecord}]=0x{unknown_bits:x}"
+            for subrecord, _value, unknown_bits in unknown_flag_fields
+        )
+        description = (
+            f"style {name!r} has unsupported flag bits in {affected}; "
+            "supported formatting bits were retained and raw data remains in JSON"
+        )
+        document.unknown_records.append(
+            UnknownRecord(
+                section=section.name,
+                record_type="style-subrecord-unknown-flags",
+                raw=raw,
+                source=section.source,
+                reason=(
+                    "unsupported style flag bits were preserved while the verified "
+                    "flag subset remained typed"
+                ),
+            )
+        )
+        document.blocks.append(
+            UnsupportedObject("style flag bits", description, section.source)
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "style-subrecord-unknown-flags",
+                f"{description}: {details}",
+                section.source,
+                raw,
+                lossiness=Lossiness.SEMANTIC,
+            )
+        )
+
     if len(font) >= 4:
         family = _unescape_literal(font[0]) or None
-        size = _twips_to_points(font[1])
-        packed = _safe_int(font[2]) or 0
-        flags = _safe_int(font[3]) or 0
+        size_value = _bounded_inline_int(font[1])
+        size = size_value / 20.0 if size_value is not None else None
+        packed = _bounded_inline_int(font[2]) or 0
+        flags = _bounded_inline_int(font[3]) or 0
         style.character = CharacterStyle(
             font_family=family,
             font_size_pt=size,
@@ -816,9 +1366,8 @@ def _parse_style(section: SectionRecord, decoded: DecodedSource) -> StyleDefinit
             strike=bool(flags & 32),
         )
 
-    alignment = subsections.get("algn", [])
     if alignment:
-        align_flag = _safe_int(alignment[0]) or 0
+        align_flag = _bounded_inline_int(alignment[0]) or 0
         style.alignment = (
             "justify"
             if align_flag & 8
@@ -829,23 +1378,161 @@ def _parse_style(section: SectionRecord, decoded: DecodedSource) -> StyleDefinit
             else "left"
         )
         if len(alignment) >= 5:
-            style.left_indent_in = _twips_to_inches(alignment[3])
-            style.first_line_indent_in = _twips_to_inches(alignment[4])
+            left = _bounded_inline_int(alignment[3])
+            first = _bounded_inline_int(alignment[4])
+            style.left_indent_in = left / 1440.0 if left is not None else None
+            style.first_line_indent_in = first / 1440.0 if first is not None else None
 
-    spacing = subsections.get("spc", [])
     if len(spacing) >= 5:
-        flag = _safe_int(spacing[0]) or 0
+        flag = _bounded_inline_int(spacing[0]) or 0
         style.line_spacing = 1.0 if flag & 1 else 1.5 if flag & 2 else 2.0 if flag & 4 else None
         if flag & 8:
-            points = _twips_to_points(spacing[1])
+            point_twips = _bounded_inline_int(spacing[1])
+            points = point_twips / 20.0 if point_twips is not None else None
             style.line_spacing = points / 12.0 if points else None
-        style.space_before_pt = _twips_to_points(spacing[3])
-        style.space_after_pt = _twips_to_points(spacing[4])
+        before = _bounded_inline_int(spacing[3])
+        after = _bounded_inline_int(spacing[4])
+        style.space_before_pt = before / 20.0 if before is not None else None
+        style.space_after_pt = after / 20.0 if after is not None else None
     if top_level:
-        parent_candidates = [value for value in top_level if value and not value.isdigit()]
+        parent_candidates = [
+            (index, value)
+            for index, (value, _raw) in enumerate(top_level)
+            if value and not value.isdigit()
+        ]
+        consumed_parent_index: int | None = None
         if parent_candidates:
-            style.parent = _unescape_literal(parent_candidates[-1])
+            consumed_parent_index, parent_value = parent_candidates[-1]
+            style.parent = _unescape_literal(parent_value)
+        opaque_top_level = [
+            raw
+            for index, (value, raw) in enumerate(top_level)
+            if value and index != consumed_parent_index
+        ]
+        _record_opaque_fields(
+            document,
+            section,
+            opaque_top_level,
+            record_type="style-top-level-fields",
+            diagnostic_code="style-top-level-fields-opaque",
+            object_kind="style fields",
+            description=(
+                f"uninterpreted top-level fields in style {name!r} were preserved; "
+                "raw data remains in JSON"
+            ),
+        )
     return style
+
+
+def _direct_subrecords_outside_content(
+    section: SectionRecord,
+    *,
+    text_marker_indents: set[int],
+    suppress_table_data: bool = False,
+) -> list[tuple[int, str]]:
+    """Find exact depth-one subrecords without treating readable content as syntax."""
+
+    direct: list[tuple[int, str]] = []
+    in_text_stream = False
+    text_scanner = MultilineContainerScanner()
+    text_container_depth = 0
+    in_table_data = False
+
+    for index, line in enumerate(section.raw_lines):
+        if in_text_stream:
+            scan = text_scanner.scan_line(line)
+            if scan.standalone_terminator:
+                if text_container_depth:
+                    text_container_depth -= 1
+                else:
+                    in_text_stream = False
+            else:
+                text_container_depth += int(scan.opener is not None)
+            continue
+
+        marker = _LAYOUT_TABBED_MARKER.fullmatch(line)
+        if in_table_data:
+            if marker is not None and marker.group("name").lower() in {"e", "tble"}:
+                in_table_data = False
+                if len(marker.group("indent")) == 1:
+                    direct.append((index, marker.group("name").lower()))
+            continue
+        if marker is None:
+            continue
+
+        indent = len(marker.group("indent"))
+        name = marker.group("name").lower()
+        if name == "txt" and indent in text_marker_indents:
+            if indent == 1:
+                direct.append((index, name))
+            in_text_stream = True
+            text_scanner = MultilineContainerScanner()
+            text_container_depth = 0
+            continue
+        if suppress_table_data and name == "data" and indent == 1:
+            direct.append((index, name))
+            in_table_data = True
+            continue
+        if indent == 1:
+            direct.append((index, name))
+    return direct
+
+
+def _classify_opaque_subrecords(
+    document: Document,
+    section: SectionRecord,
+    direct_subrecords: list[tuple[int, str]],
+    *,
+    known: set[str],
+    scope: str,
+    budget: _RecordBudget,
+) -> list[Block]:
+    """Preserve unsupported nested records with bounded, visible placeholders."""
+
+    unsupported = [
+        (position, index, name)
+        for position, (index, name) in enumerate(direct_subrecords)
+        if name not in known
+    ]
+    budget.charge(len(unsupported) * 2, f"unsupported [{scope}] subrecord parsing")
+    blocks: list[Block] = []
+    for position, start, name in unsupported:
+        end = (
+            direct_subrecords[position + 1][0]
+            if position + 1 < len(direct_subrecords)
+            else len(section.raw_lines)
+        )
+        raw = "\n".join(section.raw_lines[start:end])
+        source = section.raw_spans[start]
+        document.unknown_records.append(
+            UnknownRecord(
+                section=f"{scope}/{name}",
+                record_type=f"unsupported-{scope}-subrecord",
+                raw=raw,
+                source=source,
+                reason=(
+                    f"[{name}] {scope} subrecord was preserved raw but its semantics "
+                    "are not interpreted"
+                ),
+            )
+        )
+        blocks.append(
+            UnsupportedObject(
+                f"unsupported {scope} subrecord",
+                f"[{name}] was preserved without semantic interpretation",
+                source,
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                f"{scope}-subrecord-opaque",
+                f"unsupported [{name}] subrecord was preserved without semantic "
+                "interpretation",
+                source,
+            )
+        )
+    return blocks
 
 
 def _parse_structures(
@@ -855,12 +1542,13 @@ def _parse_structures(
     decoded: DecodedSource,
     limits: ParseLimits,
     *,
+    record_budget: _RecordBudget,
     data_base_offset: int = 0,
 ) -> _StructureResult:
     result = _StructureResult()
     table_cells = 0
     layout_index = 0
-    layout_budget = _RecordBudget(limits.max_records)
+    nested_record_budget = record_budget
     wmf_pixel_budget = _RecordBudget(
         min(
             ParseLimits().max_total_wmf_pixels,
@@ -887,6 +1575,7 @@ def _parse_structures(
                     data_base_offset=data_base_offset,
                     wmf_pixel_budget=wmf_pixel_budget,
                     sdw_pixel_budget=sdw_pixel_budget,
+                    fallback_blocks=result.supplemental_blocks,
                 )
             )
 
@@ -910,7 +1599,7 @@ def _parse_structures(
             )
             result.supplemental_blocks.extend(
                 _parse_layout_headers_footers(
-                    document, section, layout_index, limits, layout_budget
+                    document, section, layout_index, limits, nested_record_budget
                 )
             )
             layout_index += 1
@@ -920,12 +1609,38 @@ def _parse_structures(
                     raw="\n".join(section.raw_lines), source=section.source
                 )
             )
+            if section.raw_lines:
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "opaque-page-hints",
+                        "version-dependent [pg] page hints were preserved but not interpreted",
+                        section.source,
+                    )
+                )
         elif name == "frm":
-            frame_blocks: list[Block] = []
+            frame_blocks = _classify_opaque_subrecords(
+                document,
+                section,
+                _direct_subrecords_outside_content(
+                    section,
+                    text_marker_indents={1},
+                    suppress_table_data=True,
+                ),
+                known=_KNOWN_FRAME_SUBRECORDS,
+                scope="frame",
+                budget=nested_record_budget,
+            )
             has_table_marker = any(
                 line.strip().lower() == "[tbl]" for line in section.raw_lines
             )
-            table = _parse_table(document, section, limits)
+            table = _parse_table(
+                document,
+                section,
+                limits,
+                record_budget=nested_record_budget,
+                fallback_blocks=frame_blocks,
+            )
             if table is not None:
                 count = sum(len(row.cells) for row in table.rows)
                 table_cells += count
@@ -934,7 +1649,11 @@ def _parse_structures(
                         f"document exceeds {limits.max_table_cells} table cells"
                     )
                 frame_blocks.append(table)
-            frame_paragraphs = _parse_frame_text(document, section)
+            frame_paragraphs = _parse_frame_text(
+                document,
+                section,
+                record_budget=nested_record_budget,
+            )
             frame_blocks.extend(frame_paragraphs)
             is_image = False
             if table is None and has_table_marker:
@@ -942,6 +1661,14 @@ def _parse_structures(
                     UnsupportedObject(
                         "table frame",
                         "table metadata was found, but no cell text could be recovered",
+                        section.source,
+                    )
+                )
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "table-frame-content-unavailable",
+                        "table frame metadata was found, but no cell text could be recovered",
                         section.source,
                     )
                 )
@@ -963,11 +1690,27 @@ def _parse_structures(
                                 section.source,
                             )
                         )
+                        document.diagnostics.append(
+                            Diagnostic(
+                                Severity.WARNING,
+                                "frame-image-unavailable",
+                                "image frame metadata had no usable indexed asset",
+                                section.source,
+                            )
+                        )
                 else:
                     frame_blocks.append(
                         UnsupportedObject(
                             "drawing frame",
                             "non-text frame metadata was found; the object was not activated",
+                            section.source,
+                        )
+                    )
+                    document.diagnostics.append(
+                        Diagnostic(
+                            Severity.WARNING,
+                            "drawing-frame-unsupported",
+                            "non-text frame semantics are not interpreted",
                             section.source,
                         )
                     )
@@ -1019,6 +1762,13 @@ def _parse_structures(
             )
         )
         result.supplemental_blocks.extend(blocks)
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "unreferenced-embedded-asset",
+                f"indexed asset {asset_id} was retained without a frame association",
+            )
+        )
     return result
 
 
@@ -1030,6 +1780,18 @@ def _parse_layout_headers_footers(
     record_budget: _RecordBudget,
 ) -> list[Block]:
     """Recover frame-shaped header/footer streams nested in a ``[lay]`` record."""
+
+    opaque_subrecord_blocks = _classify_opaque_subrecords(
+        document,
+        section,
+        _direct_subrecords_outside_content(
+            section,
+            text_marker_indents={1, 2},
+        ),
+        known=_KNOWN_LAYOUT_SUBRECORDS,
+        scope="layout",
+        budget=record_budget,
+    )
 
     branch_types = {
         "hrght": (Header, "odd"),
@@ -1053,6 +1815,7 @@ def _parse_layout_headers_footers(
             structural_boundary = (
                 structural is not None
                 and len(structural.group("indent")) <= text_stream_indent
+                and structural.group("name").lower() in _KNOWN_LAYOUT_SUBRECORDS
             )
             if not structural_boundary:
                 scan = text_scanner.scan_line(line)
@@ -1319,7 +2082,11 @@ def _parse_layout_headers_footers(
                 continue
             record_budget.charge(1, "layout header/footer parsing")
             paragraph = _parse_inline_paragraph(
-                document, [value], section.raw_spans[index]
+                document,
+                [value],
+                section.raw_spans[index],
+                record_budget=record_budget,
+                record_label="layout header/footer inline runs",
             )
             if paragraph.text or paragraph.runs:
                 blocks.append(paragraph)
@@ -1332,6 +2099,7 @@ def _parse_layout_headers_footers(
                 reason="malformed layout indentation prevented typed placement",
             )
         )
+    blocks.extend(opaque_subrecord_blocks)
     return blocks
 
 
@@ -1417,6 +2185,21 @@ def _build_frame_from_fields(
                 source,
             )
         )
+    if len(raw_header_fields) > 6 or frame_layout_fields:
+        labels = []
+        if len(raw_header_fields) > 6:
+            labels.append("frame-header tail")
+        if frame_layout_fields:
+            labels.append("[frmlay]")
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "frame-layout-fields-opaque",
+                f"preserved {' and '.join(labels)} fields without semantic "
+                "interpretation",
+                source,
+            )
+        )
     parsed = [_bounded_small_signed(value) for value in raw_header_fields[:6]]
     page_number = parsed[0] if parsed and parsed[0] is not None else None
     flags = parsed[1] if len(parsed) > 1 and parsed[1] is not None else None
@@ -1489,6 +2272,16 @@ def _build_frame_from_fields(
         if page_number is not None
         else "unknown"
     )
+    unknown_flag_bits = (flags & ~_FRAME_KNOWN_FLAGS) if flags is not None else 0
+    if unknown_flag_bits:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "frame-unknown-flags",
+                f"frame has unsupported flag bits 0x{unknown_flag_bits:x}",
+                source,
+            )
+        )
     return Frame(
         blocks=blocks,
         content_kind=content_kind,  # type: ignore[arg-type]
@@ -1496,7 +2289,7 @@ def _build_frame_from_fields(
         region=parsed_region,  # type: ignore[arg-type]
         page_number=page_number,
         flags=flags,
-        unknown_flag_bits=(flags & ~_FRAME_KNOWN_FLAGS) if flags is not None else 0,
+        unknown_flag_bits=unknown_flag_bits,
         bounds=bounds,
         opaque=bool(flags & 64) if flags is not None else None,
         wrap_around=bool(flags & 128) if flags is not None else None,
@@ -1508,7 +2301,12 @@ def _build_frame_from_fields(
 
 
 def _parse_table(
-    document: Document, section: SectionRecord, limits: ParseLimits
+    document: Document,
+    section: SectionRecord,
+    limits: ParseLimits,
+    *,
+    record_budget: _RecordBudget,
+    fallback_blocks: list[Block],
 ) -> Table | None:
     lines = section.raw_lines
     table_marker = next(
@@ -1521,15 +2319,106 @@ def _parse_table(
         return None
     cells: dict[tuple[int, int], TableCell] = {}
     current: tuple[int, int] | None = None
+    current_source: SourceSpan | None = None
+    current_header = ""
     buffer: list[str] = []
     cell_closed = False
+    cell_records = 0
     formula_metadata: list[tuple[str, SourceSpan]] = []
+    opaque_field_fragments: list[str] = []
+    opaque_field_entries = 0
+    opaque_field_chars = 0
+    opaque_field_truncated = False
+
+    def retain_opaque_fields(label: str, raw_fields: str) -> None:
+        nonlocal opaque_field_entries, opaque_field_chars, opaque_field_truncated
+        value = raw_fields.strip()
+        if not value:
+            return
+        opaque_field_entries += 1
+        if (
+            len(opaque_field_fragments) >= _MAX_OPAQUE_TABLE_FIELD_ENTRIES
+            or opaque_field_chars >= _MAX_OPAQUE_TABLE_FIELD_CHARS
+        ):
+            opaque_field_truncated = True
+            return
+        fragment = f"{label}\n{value}"
+        separator_chars = int(bool(opaque_field_fragments))
+        remaining = (
+            _MAX_OPAQUE_TABLE_FIELD_CHARS
+            - opaque_field_chars
+            - separator_chars
+        )
+        if remaining <= 0:
+            opaque_field_truncated = True
+            return
+        if len(fragment) > remaining:
+            fragment = fragment[:remaining]
+            opaque_field_truncated = True
+        opaque_field_fragments.append(fragment)
+        opaque_field_chars += separator_chars + len(fragment)
+
+    definition_fields = [
+        line
+        for line in lines[table_marker + 1 : data_marker]
+        if line.strip() and _SUBSECTION.match(line) is None
+    ]
+    for definition_field in definition_fields:
+        retain_opaque_fields("[tbl]", definition_field)
 
     def flush() -> None:
         nonlocal buffer
         if current is not None:
-            paragraphs = _parse_plain_text_paragraphs(buffer, section.source)
-            cells[current] = TableCell(blocks=paragraphs or [Paragraph()])
+            source = current_source or section.source
+            paragraphs = _parse_plain_text_paragraphs(
+                document,
+                buffer,
+                source,
+                record_budget=record_budget,
+            )
+            if paragraphs:
+                recovered = paragraphs
+            else:
+                record_budget.charge(1, "table cell text parsing")
+                recovered = [Paragraph(source=source)]
+            if current in cells:
+                record_budget.charge(1, "duplicate table cell recovery")
+                cells[current].blocks.append(
+                    Paragraph(
+                        runs=[
+                            TextRun(
+                                "[Duplicate table cell coordinate; values retained "
+                                "in source order]",
+                                source=source,
+                            )
+                        ],
+                        source=source,
+                    )
+                )
+                cells[current].blocks.extend(recovered)
+                document.unknown_records.append(
+                    UnknownRecord(
+                        section="frm/data",
+                        record_type="duplicate-table-cell-coordinate",
+                        raw="\n".join([current_header, *buffer]),
+                        source=source,
+                        reason=(
+                            "duplicate table coordinate was preserved by appending "
+                            "both readable values in source order"
+                        ),
+                    )
+                )
+                document.diagnostics.append(
+                    Diagnostic(
+                        Severity.WARNING,
+                        "duplicate-table-cell-coordinate",
+                        f"duplicate table coordinate {current!r} was reflowed in "
+                        "source order",
+                        source,
+                    )
+                )
+            else:
+                cells[current] = TableCell(blocks=recovered)
         buffer = []
 
     for line_index, line in enumerate(lines[data_marker + 1 :], start=data_marker + 1):
@@ -1539,13 +2428,22 @@ def _parse_table(
         match = re.match(r"^\s*(\d+)\s+(\d+)\s+", stripped)
         if line.startswith("\t\t\t") and match:
             flush()
+            cell_records += 1
+            if cell_records > limits.max_table_cells:
+                raise ResourceLimitError(
+                    f"table exceeds {limits.max_table_cells} cell records"
+                )
             current = (
                 _bounded_decimal(match.group(1), field="table row"),
                 _bounded_decimal(match.group(2), field="table column"),
             )
+            retain_opaque_fields(
+                f"[data cell {current[0]} {current[1]}]",
+                stripped[match.end() :],
+            )
+            current_source = section.raw_spans[line_index]
+            current_header = line
             cell_closed = False
-            if len(cells) >= limits.max_table_cells:
-                raise ResourceLimitError(f"table exceeds {limits.max_table_cells} cells")
         elif current is not None:
             if stripped == ">":
                 cell_closed = True
@@ -1556,6 +2454,45 @@ def _parse_table(
                 continue
             buffer.append(line.lstrip("\t"))
     flush()
+    if opaque_field_fragments:
+        raw = "\n".join(opaque_field_fragments)
+        if opaque_field_truncated:
+            marker = (
+                "[Opaque table-field summary truncated; complete fields remain "
+                "in the raw frame record]"
+            )
+            raw = raw[: max(0, _MAX_OPAQUE_TABLE_FIELD_CHARS - len(marker) - 1)]
+            raw = f"{raw}\n{marker}" if raw else marker
+        description = (
+            f"{opaque_field_entries} table-definition or cell-header field set(s) "
+            "were preserved without interpretation; readable cell content follows"
+        )
+        record_budget.charge(2, "table opaque-field preservation")
+        document.unknown_records.append(
+            UnknownRecord(
+                section="frm/tbl",
+                record_type="table-fields",
+                raw=raw,
+                source=section.source,
+                reason=(
+                    "table definition and cell-header fields outside row/column "
+                    "coordinates are preserved raw but not interpreted"
+                ),
+            )
+        )
+        fallback_blocks.append(
+            UnsupportedObject("table fields", description, section.source)
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "table-fields-opaque",
+                description,
+                section.source,
+                raw,
+                lossiness=Lossiness.SEMANTIC,
+            )
+        )
     if formula_metadata:
         for raw, source in formula_metadata:
             document.unknown_records.append(
@@ -1599,7 +2536,12 @@ def _parse_table(
     return Table(rows=rows, source=section.source)
 
 
-def _parse_frame_text(document: Document, section: SectionRecord) -> list[Paragraph]:
+def _parse_frame_text(
+    document: Document,
+    section: SectionRecord,
+    *,
+    record_budget: _RecordBudget,
+) -> list[Paragraph]:
     """Recover text streams stored inside frames, headers, and footers."""
 
     paragraphs: list[Paragraph] = []
@@ -1610,26 +2552,66 @@ def _parse_frame_text(document: Document, section: SectionRecord) -> list[Paragr
             index += 1
             continue
         index += 1
-        stream: list[str] = []
-        spans: list[SourceSpan] = []
-        while index < len(lines) and not lines[index].startswith(">"):
-            stream.append(lines[index].lstrip("\t"))
-            spans.append(section.raw_spans[index])
-            index += 1
+        scanner = MultilineContainerScanner()
+        container_depth = 0
+        end: int | None = None
+        for line_index in range(index, len(lines)):
+            scan = scanner.scan_line(lines[line_index].lstrip("\t"))
+            if scan.standalone_terminator:
+                if container_depth:
+                    container_depth -= 1
+                else:
+                    end = line_index
+                    break
+            else:
+                container_depth += int(scan.opener is not None)
+        terminated = end is not None
+        if end is None:
+            end = len(lines)
+        stream = [lines[line_index].lstrip("\t") for line_index in range(index, end)]
+        spans = [section.raw_spans[line_index] for line_index in range(index, end)]
+        if not terminated:
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "unterminated-frame-text",
+                    "[frm] [txt] stream reached the frame boundary without a "
+                    "standalone terminator; readable content was retained",
+                    section.raw_spans[index - 1],
+                )
+            )
         current: list[str] = []
         current_source = section.source
         for line, line_source in zip(stream, spans, strict=False):
             if not line:
                 if current:
-                    paragraphs.append(_parse_inline_paragraph(document, current, current_source))
+                    record_budget.charge(1, "frame text parsing")
+                    paragraphs.append(
+                        _parse_inline_paragraph(
+                            document,
+                            current,
+                            current_source,
+                            record_budget=record_budget,
+                            record_label="frame inline runs",
+                        )
+                    )
                     current = []
             else:
                 if not current:
                     current_source = line_source
                 current.append(line)
         if current:
-            paragraphs.append(_parse_inline_paragraph(document, current, current_source))
-        index += 1
+            record_budget.charge(1, "frame text parsing")
+            paragraphs.append(
+                _parse_inline_paragraph(
+                    document,
+                    current,
+                    current_source,
+                    record_budget=record_budget,
+                    record_label="frame inline runs",
+                )
+            )
+        index = end + 1 if terminated else len(lines)
     return [paragraph for paragraph in paragraphs if paragraph.text or paragraph.runs]
 
 
@@ -1643,6 +2625,7 @@ def _parse_embedded_manifest(
     data_base_offset: int = 0,
     wmf_pixel_budget: _RecordBudget | None = None,
     sdw_pixel_budget: _RecordBudget | None = None,
+    fallback_blocks: list[Block] | None = None,
 ) -> dict[str, list[Block]]:
     raw = "\n".join(section.raw_lines).encode(decoded.encoding, errors="surrogateescape")
     effective_total_asset_bytes = _effective_lowerable_limit(
@@ -1650,15 +2633,87 @@ def _parse_embedded_manifest(
         ParseLimits().max_total_asset_bytes,
         "embedded asset total byte limit",
     )
+    effective_asset_bytes = _effective_lowerable_limit(
+        limits.max_embedded_asset_bytes,
+        ParseLimits().max_embedded_asset_bytes,
+        "embedded asset byte limit",
+    )
     effective_sdw_asset_bytes = sdw_asset_limit(limits)
+    effective_manifest_records = min(
+        limits.max_records,
+        _effective_lowerable_limit(
+            limits.max_embedded_records,
+            ParseLimits().max_embedded_records,
+            "embedded-directory record limit",
+        ),
+    )
     total = 0
     count = 0
     assets: dict[str, list[Block]] = {}
+    last_nonempty_index = next(
+        (
+            index
+            for index in range(len(section.raw_lines) - 1, -1, -1)
+            if section.raw_lines[index].strip()
+        ),
+        None,
+    )
+    pointer_index = (
+        last_nonempty_index
+        if last_nonempty_index is not None
+        and re.fullmatch(
+            r"\d{1,20}", section.raw_lines[last_nonempty_index].strip()
+        )
+        else None
+    )
+    malformed_count = 0
+    malformed_sample: list[str] = []
+    for index, line in enumerate(section.raw_lines):
+        if not line.strip() or index == pointer_index:
+            continue
+        if malformed_count >= effective_manifest_records:
+            raise ResourceLimitError(
+                "embedded directory exceeds the configured record limit"
+            )
+        if parse_embedded_manifest_row(line) is None:
+            malformed_count += 1
+            if len(malformed_sample) < 32:
+                malformed_sample.append(line)
+    if malformed_count:
+        document.unknown_records.append(
+            UnknownRecord(
+                section=section.name,
+                record_type="malformed-manifest-row",
+                raw="\n".join(malformed_sample),
+                source=section.source,
+                reason=(
+                    "directory row was not interpreted; the complete section remains "
+                    "available in the raw section records"
+                ),
+            )
+        )
+        if fallback_blocks is not None:
+            fallback_blocks.append(
+                UnsupportedObject(
+                    "malformed embedded directory",
+                    f"{malformed_count} non-pointer row(s) were preserved but "
+                    "could not be interpreted",
+                    section.source,
+                )
+            )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "embedded-directory-malformed",
+                f"preserved {malformed_count} malformed embedded-directory row(s)",
+                section.source,
+            )
+        )
     for match in _EMBEDDED_MANIFEST.finditer(raw):
         count += 1
-        if count > limits.max_records:
+        if count > effective_manifest_records:
             raise ResourceLimitError(
-                f"embedded directory exceeds {limits.max_records} records"
+                f"embedded directory exceeds {effective_manifest_records} records"
             )
         asset_id = match.group("id").decode("ascii")
         asset_blocks: list[Block] = []
@@ -1677,11 +2732,15 @@ def _parse_embedded_manifest(
         extension = match.group("ext").decode("ascii", errors="replace").lower()
         physical_asset_offset = asset_offset + data_base_offset
         physical_preview_offset = preview_offset + data_base_offset
-        asset_is_valid = _valid_range(physical_asset_offset, asset_length, len(data))
+        asset_is_valid = _valid_range(
+            physical_asset_offset, asset_length, len(data)
+        ) and _range_is_verified(
+            physical_asset_offset, asset_length, decoded.binary_ranges
+        )
         asset_byte_limit = (
             effective_sdw_asset_bytes
             if extension == ".sdw"
-            else max(0, limits.max_embedded_asset_bytes)
+            else effective_asset_bytes
         )
         if asset_length > asset_byte_limit:
             document.diagnostics.append(
@@ -1699,7 +2758,8 @@ def _parse_embedded_manifest(
                 Diagnostic(
                     Severity.WARNING,
                     "embedded-offset-invalid",
-                    f"{extension} asset offset/length is outside the input",
+                    f"{extension} asset offset/length is outside a validated "
+                    "post-EDOC payload interval",
                     section.source,
                 )
             )
@@ -1709,8 +2769,11 @@ def _parse_embedded_manifest(
                 f"embedded asset total exceeds {effective_total_asset_bytes} bytes"
             )
         total += accounted
-        preview_is_valid = preview_length == 0 or _valid_range(
-            physical_preview_offset, preview_length, len(data)
+        preview_is_valid = preview_length == 0 or (
+            _valid_range(physical_preview_offset, preview_length, len(data))
+            and _range_is_verified(
+                physical_preview_offset, preview_length, decoded.binary_ranges
+            )
         )
         sdw_preview_data: bytes | None = None
         if not preview_is_valid:
@@ -1751,6 +2814,14 @@ def _parse_embedded_manifest(
                     source=section.source,
                 )
             )
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "embedded-companion-unsupported",
+                    "opaque embedded companion data was not interpreted",
+                    section.source,
+                )
+            )
         if extension == ".sdw":
             sdw_data = (
                 data[physical_asset_offset : physical_asset_offset + asset_length]
@@ -1774,7 +2845,7 @@ def _parse_embedded_manifest(
         elif (
             extension == ".bmp"
             and asset_is_valid
-            and asset_length <= limits.max_embedded_asset_bytes
+            and asset_length <= effective_asset_bytes
             and data[physical_asset_offset : physical_asset_offset + 2] == b"BM"
         ):
             asset_blocks.insert(
@@ -1791,7 +2862,7 @@ def _parse_embedded_manifest(
         elif (
             extension == ".wmf"
             and asset_is_valid
-            and asset_length <= limits.max_embedded_asset_bytes
+            and asset_length <= effective_asset_bytes
         ):
             asset_data = data[
                 physical_asset_offset : physical_asset_offset + asset_length
@@ -1844,6 +2915,14 @@ def _parse_embedded_manifest(
                     kind=f"embedded {extension.lstrip('.') or 'object'}",
                     description=f"{asset_length} bytes at offset {asset_offset}; not activated",
                     source=section.source,
+                )
+            )
+            document.diagnostics.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "embedded-format-unsupported",
+                    f"embedded {extension or 'object'} format was not interpreted",
+                    section.source,
                 )
             )
         if asset_id in assets:
@@ -1998,43 +3077,28 @@ def _parse_sdw_asset(
 
 
 def _diagnose_unindexed_tail(
-    document: Document, data: bytes, *, data_base_offset: int = 0
+    document: Document, data: bytes, decoded: DecodedSource
 ) -> None:
     """Make an unindexed or damaged post-text payload visible to every renderer."""
 
-    stream = data[data_base_offset:]
-    try:
-        decoded = stream.decode(document.encoding, errors="surrogateescape")
-    except (LookupError, UnicodeError):
+    ranges = decoded.unindexed_ranges
+    if not ranges:
         return
-    lines = decoded.splitlines(keepends=True)
-    edoc_index = next(
-        (index for index, line in enumerate(lines) if line.rstrip("\r\n").lower() == "[edoc]"),
-        None,
-    )
-    if edoc_index is None:
+    ignored = {0, 9, 10, 13, 26, 32}
+    if not any(
+        value not in ignored
+        for start, end in ranges
+        for value in memoryview(data)[start:end]
+    ):
         return
-    indexed_lines = [
-        (index, line.rstrip("\r\n")) for index, line in enumerate(lines)
-    ]
-    terminator_index = _edoc_terminator(indexed_lines, edoc_index + 1)
-    if terminator_index is None:
-        return
-    tail_start = len(
-        "".join(lines[: terminator_index + 1]).encode(
-            document.encoding, errors="surrogateescape"
-        )
-    )
-    tail = stream[tail_start:]
-    embedded = re.search(br"(?im)^\[embedded\]\r?\n", tail)
-    if embedded:
-        return
-    meaningful = tail.strip(b"\x00\x1a\x20\t\r\n")
-    if not meaningful:
-        return
-    digest = hashlib.sha256(tail).hexdigest()
+    digest_state = hashlib.sha256()
+    total = 0
+    for start, end in ranges:
+        digest_state.update(memoryview(data)[start:end])
+        total += end - start
+    digest = digest_state.hexdigest()
     description = (
-        f"{len(tail)} unindexed trailing bytes (SHA-256 {digest}); "
+        f"{total} unindexed trailing bytes (SHA-256 {digest}); "
         "content was not activated"
     )
     document.blocks.append(UnsupportedObject("unindexed binary tail", description))
@@ -2043,6 +3107,7 @@ def _diagnose_unindexed_tail(
             Severity.WARNING,
             "unindexed-trailing-data",
             description,
+            lossiness=Lossiness.CONTENT,
         )
     )
 
@@ -2073,49 +3138,62 @@ def _parse_text_stream(
     top_lines: list[str] = []
     top_source = section.source
     stack: list[_OpenContainer] = []
-    record_count = 0
     saw_outer_terminator = False
     scanner = MultilineContainerScanner()
+    active_record_budget = record_budget or _RecordBudget(
+        _effective_lowerable_limit(
+            limits.max_records,
+            ParseLimits().max_records,
+            "content record limit",
+        )
+    )
 
     def count_record(count: int = 1) -> None:
-        nonlocal record_count
-        if record_budget is not None:
-            record_budget.charge(count, f"{stream_label} parsing")
-            return
-        record_count += count
-        if record_count > limits.max_records:
-            raise ResourceLimitError(f"document exceeds {limits.max_records} content records")
+        active_record_budget.charge(count, f"{stream_label} content records")
 
     def append_text_blocks(lines: list[str], source: SourceSpan, target: list[Block]) -> None:
         if not lines:
             return
-        count_record()
         text = "\n".join(lines)
         state = _initial_inline_state(document)
         cursor = 0
         for match in _FRAME_ANCHOR.finditer(text):
             prefix = text[cursor : match.start()]
             if prefix:
+                count_record()
                 paragraph = _parse_inline_paragraph(
-                    document, prefix.split("\n"), source, state=state
+                    document,
+                    prefix.split("\n"),
+                    source,
+                    state=state,
+                    record_budget=active_record_budget,
+                    record_label=f"{stream_label} inline runs",
                 )
                 if paragraph.text or paragraph.runs:
                     target.append(paragraph)
-            target.extend(
-                _resolve_frame_anchor(
-                    document,
-                    match.group("kind"),
-                    _bounded_decimal(match.group("index"), field="frame anchor index"),
-                    source,
-                    anchored_frames,
-                    used_anchors,
-                )
+            count_record()
+            resolved = _resolve_frame_anchor(
+                document,
+                match.group("kind"),
+                _bounded_decimal(match.group("index"), field="frame anchor index"),
+                source,
+                anchored_frames,
+                used_anchors,
             )
+            if len(resolved) > 1:
+                count_record(len(resolved) - 1)
+            target.extend(resolved)
             cursor = match.end()
         suffix = text[cursor:]
         if suffix or cursor == 0:
+            count_record()
             paragraph = _parse_inline_paragraph(
-                document, suffix.split("\n"), source, state=state
+                document,
+                suffix.split("\n"),
+                source,
+                state=state,
+                record_budget=active_record_budget,
+                record_label=f"{stream_label} inline runs",
             )
             if paragraph.text or paragraph.runs:
                 target.append(paragraph)
@@ -2199,7 +3277,7 @@ def _parse_text_stream(
                 )
             # A typed container plus its raw-preservation record are both
             # charged in layout streams, which share a cross-branch budget.
-            count_record(2 if record_budget is not None else 1)
+            count_record(2)
             kind = opener.group("kind")
             if stack and (kind in {"H", "h"} or stack[-1].kind in {"H", "h"}):
                 document.diagnostics.append(
@@ -2472,20 +3550,51 @@ def _parse_inline_paragraph(
     source: SourceSpan,
     *,
     state: _InlineState | None = None,
+    record_budget: _RecordBudget | None = None,
+    record_label: str = "inline runs",
 ) -> Paragraph:
     text = "\n".join(lines)
     state = state or _initial_inline_state(document)
     paragraph = Paragraph(source=source)
     buffer: list[str] = []
+    pending_style: CharacterStyle | None = None
+    pending_chunks: list[str] = []
+    inline_commands = 0
+    inline_commands_omitted = False
+    undefined_style_count = 0
+    undefined_styles: set[str] = set()
+
+    def finish_run() -> None:
+        nonlocal pending_style, pending_chunks
+        if pending_style is not None and pending_chunks:
+            if record_budget is not None:
+                record_budget.charge(1, record_label)
+            paragraph.runs.append(TextRun("".join(pending_chunks), pending_style, source))
+        pending_style = None
+        pending_chunks = []
 
     def flush() -> None:
+        nonlocal pending_style, pending_chunks
         if buffer:
             content = "".join(buffer)
-            if paragraph.runs and paragraph.runs[-1].style == state.style:
-                paragraph.runs[-1].text += content
+            current_style = copy.copy(state.style)
+            if pending_style is not None and pending_style == current_style:
+                pending_chunks.append(content)
             else:
-                paragraph.runs.append(TextRun(content, copy.copy(state.style), source))
+                finish_run()
+                pending_style = current_style
+                pending_chunks = [content]
             buffer.clear()
+
+    def allow_inline_command() -> bool:
+        nonlocal inline_commands, inline_commands_omitted
+        inline_commands += 1
+        if inline_commands <= _MAX_INLINE_COMMANDS_PER_PARAGRAPH:
+            return True
+        if not inline_commands_omitted:
+            inline_commands_omitted = True
+            buffer.append("[Additional inline commands omitted at safe parsing limit]")
+        return False
 
     index = 0
     while index < len(text):
@@ -2502,6 +3611,9 @@ def _parse_inline_paragraph(
             if end >= 0:
                 flush()
                 name = _unescape_literal(text[index + 1 : end])
+                if not allow_inline_command():
+                    index = end + 1
+                    continue
                 style = document.styles.get(name)
                 state.style_name = name
                 if style:
@@ -2509,14 +3621,9 @@ def _parse_inline_paragraph(
                     state.alignment = style.alignment
                     state.line_spacing = style.line_spacing
                 else:
-                    document.diagnostics.append(
-                        Diagnostic(
-                            Severity.WARNING,
-                            "undefined-style",
-                            f"paragraph references undefined style {name!r}",
-                            source,
-                        )
-                    )
+                    undefined_style_count += 1
+                    if len(undefined_styles) < 256:
+                        undefined_styles.add(name[:200])
                 index = end + 1
                 continue
         if text[index] == "<":
@@ -2530,9 +3637,10 @@ def _parse_inline_paragraph(
             if end >= 0:
                 flush()
                 tag = text[index + 1 : end]
-                visible = _apply_inline_tag(tag, state, document, source)
-                if visible:
-                    buffer.append(visible)
+                if allow_inline_command():
+                    visible = _apply_inline_tag(tag, state, document, source)
+                    if visible:
+                        buffer.append(visible)
                 index = end + 1
                 continue
             document.diagnostics.append(
@@ -2543,9 +3651,13 @@ def _parse_inline_paragraph(
                     source,
                 )
             )
+            buffer.append(text[index:])
+            index = len(text)
+            break
         buffer.append(text[index])
         index += 1
     flush()
+    finish_run()
     paragraph.style_name = state.style_name
     paragraph.alignment = state.alignment
     paragraph.line_spacing = state.line_spacing
@@ -2577,6 +3689,40 @@ def _parse_inline_paragraph(
             )
         )
         state.unknown_tags.clear()
+    if undefined_style_count:
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "undefined-style",
+                f"paragraph contains {undefined_style_count} reference(s) to "
+                f"{len(undefined_styles)} retained undefined style name(s)",
+                source,
+                " ".join(sorted(undefined_styles)),
+            )
+        )
+    if inline_commands_omitted:
+        document.unknown_records.append(
+            UnknownRecord(
+                section="edoc",
+                record_type="inline-command-limit",
+                raw=f"more than {_MAX_INLINE_COMMANDS_PER_PARAGRAPH} inline commands",
+                source=source,
+                reason=(
+                    "additional inline command semantics were not materialized after "
+                    "the safe per-paragraph limit"
+                ),
+            )
+        )
+        document.diagnostics.append(
+            Diagnostic(
+                Severity.WARNING,
+                "inline-command-limit",
+                f"paragraph exceeded the safe {_MAX_INLINE_COMMANDS_PER_PARAGRAPH} "
+                "inline-command limit; surrounding text and one visible marker "
+                "were retained",
+                source,
+            )
+        )
     if paragraph.text or paragraph.runs:
         state.page_break_before = False
     return paragraph
@@ -2616,7 +3762,14 @@ def _apply_inline_tag(
         state.alignment = alignments[tag]
         return None
     if match := _LINE_SPACING.match(tag):
-        value = float(match.group("value"))
+        raw_value = match.group("value")
+        try:
+            value = float(raw_value) if len(raw_value) <= 32 else math.nan
+        except (OverflowError, ValueError):
+            value = math.nan
+        if not math.isfinite(value) or abs(value) > 1_000_000:
+            state.unknown_tags.append(tag[:200])
+            return _unsupported_inline_marker(tag)
         state.line_spacing = (
             1.0
             if value == -1
@@ -2629,53 +3782,100 @@ def _apply_inline_tag(
         return None
     if tag.startswith(":f"):
         descriptor = tag[2:]
+        invalid = False
         if not descriptor:
             default = document.styles.get(state.style_name or "Body Text")
             state.style = copy.copy(default.character) if default else CharacterStyle()
         else:
             fields = descriptor.split(",")
-            size = _safe_int(fields[0]) if fields else None
+            if len(fields) not in {1, 2, 5}:
+                state.unknown_tags.append(tag[:200])
+                invalid = True
+            size = _bounded_inline_int(fields[0]) if fields else None
             if size is not None:
                 state.style.font_size_pt = size / 20.0
+            elif fields and fields[0]:
+                state.unknown_tags.append(tag[:200])
+                invalid = True
             if len(fields) > 1 and fields[1]:
-                state.style.font_family = re.sub(r"^\d", "", _unescape_literal(fields[1]))
-            if len(fields) >= 5 and all(_safe_int(item) is not None for item in fields[2:5]):
+                family = re.sub(r"^\d", "", _unescape_literal(fields[1]))
+                if len(family) <= 256:
+                    state.style.font_family = family
+                else:
+                    state.unknown_tags.append(tag[:200])
+                    invalid = True
+            if len(fields) == 5 and all(
+                _bounded_inline_int(item) is not None for item in fields[2:5]
+            ):
                 channels = [max(0, min(255, int(item))) for item in fields[2:5]]
                 state.style.color = "#{:02x}{:02x}{:02x}".format(*channels)
-        return None
+            elif len(fields) == 5:
+                state.unknown_tags.append(tag[:200])
+                invalid = True
+        return _unsupported_inline_marker(tag) if invalid else None
     if match := _PARAGRAPH_LAYOUT.match(tag):
-        first = _safe_int(match.group("first"))
-        rest = _safe_int(match.group("rest")) if match.group("rest") else None
+        first = _bounded_inline_int(match.group("first"))
+        rest = (
+            _bounded_inline_int(match.group("rest")) if match.group("rest") else None
+        )
         if first is not None:
             state.first_line_indent_in = first / 1440.0
+        else:
+            state.unknown_tags.append(tag[:200])
+            invalid = True
+        invalid = first is None
         if rest is not None:
             state.left_indent_in = rest / 1440.0
-        return None
+        elif match.group("rest"):
+            state.unknown_tags.append(tag[:200])
+            invalid = True
+        return _unsupported_inline_marker(tag) if invalid else None
     if tag.startswith(":I"):
         values = tag[2:].split(",")
-        if values and _safe_int(values[0]) is not None:
+        invalid = len(values) != 3 or any(
+            value and _bounded_inline_int(value) is None for value in values
+        )
+        if invalid:
+            state.unknown_tags.append(tag[:200])
+        if values and _bounded_inline_int(values[0]) is not None:
             state.left_indent_in = int(values[0]) / 1440.0
-        if len(values) >= 3 and _safe_int(values[2]) is not None:
+        elif values and values[0]:
+            if tag[:200] not in state.unknown_tags:
+                state.unknown_tags.append(tag[:200])
+            invalid = True
+        if len(values) >= 3 and _bounded_inline_int(values[2]) is not None:
             state.first_line_indent_in = int(values[2]) / 1440.0
-        return None
+        elif len(values) >= 3 and values[2]:
+            if tag[:200] not in state.unknown_tags:
+                state.unknown_tags.append(tag[:200])
+            invalid = True
+        return _unsupported_inline_marker(tag) if invalid else None
     if tag in {":s", ":S-"}:
         # Spell-check and line-spacing-reset state have no visible representation.
-        return None
+        state.unknown_tags.append(tag)
+        return _unsupported_inline_marker(tag)
     if tag == ":":
         default = document.styles.get(state.style_name or "Body Text")
         state.style = copy.copy(default.character) if default else CharacterStyle()
         return None
-    if tag.startswith(":p"):
+    if tag == ":p":
         state.page_break_before = True
         return None
+    if tag.startswith(":p"):
+        state.page_break_before = True
+        state.unknown_tags.append(tag[:200])
+        return _unsupported_inline_marker(tag)
     if tag.startswith(":t"):
-        return None
+        state.unknown_tags.append(tag[:200])
+        return _unsupported_inline_marker(tag)
     if tag.startswith(":A"):
         state.unknown_tags.append(tag[:200])
-        return None
+        return _unsupported_inline_marker(tag)
     if tag.startswith(":X~") or tag.startswith(":Z~"):
-        return None
+        state.unknown_tags.append(tag[:200])
+        return _unsupported_inline_marker(tag)
     if tag.startswith(":X"):
+        state.unknown_tags.append(tag[:200])
         field = tag.partition(";")[2].strip()
         fallback = re.search(r'\belse\s+"([^"]*)"', field, re.IGNORECASE)
         if fallback:
@@ -2684,8 +3884,10 @@ def _apply_inline_tag(
             return f"[{field}]"
         return f"[Dynamic field: {field or 'unavailable'}]"
     if tag.startswith(":D"):
+        state.unknown_tags.append(tag[:200])
         return "[Current date]"
     if tag.startswith(":P"):
+        state.unknown_tags.append(tag[:200])
         return "[Page number]"
     if re.match(r"^:[NFHh]", tag):
         state.unknown_tags.append(tag[:200])
@@ -2694,7 +3896,12 @@ def _apply_inline_tag(
         # These are normally consumed by _decode_special_escape.
         return None
     state.unknown_tags.append(tag[:200])
-    return None
+    return _unsupported_inline_marker(tag)
+
+
+def _unsupported_inline_marker(tag: str) -> str:
+    visible_tag = re.sub(r"[\x00-\x1f\x7f]", "�", tag[:120])
+    return f"[Unsupported inline command: <{visible_tag}>]"
 
 
 def _decode_special_escape(text: str, index: int) -> tuple[str, int] | None:
@@ -2711,54 +3918,43 @@ def _decode_special_escape(text: str, index: int) -> tuple[str, int] | None:
     return None
 
 
-def _parse_plain_text_paragraphs(lines: list[str], source: SourceSpan) -> list[Paragraph]:
+def _parse_plain_text_paragraphs(
+    document: Document,
+    lines: list[str],
+    source: SourceSpan,
+    *,
+    record_budget: _RecordBudget,
+) -> list[Paragraph]:
     paragraphs: list[Paragraph] = []
     current: list[str] = []
     for line in lines:
         if not line:
             if current:
-                paragraphs.append(Paragraph(runs=[TextRun("\n".join(current), source=source)]))
+                record_budget.charge(1, "table cell text parsing")
+                paragraphs.append(
+                    _parse_inline_paragraph(
+                        document,
+                        current,
+                        source,
+                        record_budget=record_budget,
+                        record_label="table cell inline runs",
+                    )
+                )
                 current = []
         else:
-            # Table frame text follows the same inline syntax, but removing commands is safer
-            # than presenting control records as user content until cell anchors are modeled.
-            current.append(_strip_inline_commands(line))
+            current.append(line)
     if current:
-        paragraphs.append(Paragraph(runs=[TextRun("\n".join(current), source=source)]))
+        record_budget.charge(1, "table cell text parsing")
+        paragraphs.append(
+            _parse_inline_paragraph(
+                document,
+                current,
+                source,
+                record_budget=record_budget,
+                record_label="table cell inline runs",
+            )
+        )
     return paragraphs
-
-
-def _strip_inline_commands(text: str) -> str:
-    result: list[str] = []
-    index = 0
-    while index < len(text):
-        if text.startswith("@@", index):
-            result.append("@")
-            index += 2
-        elif text[index] == "@":
-            # Named paragraph styles use ``@Style Name@``; they are controls,
-            # not visible cell text.  An unmatched at sign remains literal.
-            end = text.find("@", index + 1)
-            if end >= 0:
-                index = end + 1
-            else:
-                result.append("@")
-                index += 1
-        elif text.startswith("<<", index):
-            result.append("<")
-            index += 2
-        elif text[index] == "<":
-            special = _decode_special_escape(text, index)
-            if special:
-                result.append(special[0])
-                index += special[1]
-            else:
-                end = text.find(">", index + 1)
-                index = end + 1 if end >= 0 else index + 1
-        else:
-            result.append(text[index])
-            index += 1
-    return "".join(result)
 
 
 def _record_unknown_main_sections(document: Document, sections: list[SectionRecord]) -> None:
@@ -2773,6 +3969,13 @@ def _record_unknown_main_sections(document: Document, sections: list[SectionReco
                     raw="\n".join(section.raw_lines),
                     source=section.source,
                     reason="section syntax is not yet interpreted",
+                )
+            )
+            document.blocks.append(
+                UnsupportedObject(
+                    "unknown section",
+                    f"[{section.name}] semantics are not interpreted; raw data remains in JSON",
+                    section.source,
                 )
             )
             document.diagnostics.append(
@@ -2816,6 +4019,26 @@ def _twips_to_inches(value: str) -> float | None:
 
 def _valid_range(offset: int, length: int, total: int) -> bool:
     return offset >= 0 and length >= 0 and offset <= total and length <= total - offset
+
+
+def _range_is_verified(
+    offset: int, length: int, ranges: tuple[tuple[int, int], ...]
+) -> bool:
+    if length <= 0:
+        return False
+    end = offset + length
+    low = 0
+    high = len(ranges)
+    while low < high:
+        middle = (low + high) // 2
+        if ranges[middle][0] <= offset:
+            low = middle + 1
+        else:
+            high = middle
+    if low == 0:
+        return False
+    start, range_end = ranges[low - 1]
+    return start <= offset and end <= range_end
 
 
 def _unescape_literal(text: str) -> str:

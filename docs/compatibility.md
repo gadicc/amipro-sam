@@ -4,6 +4,12 @@ This matrix describes the current direct parser and renderers. "Placeholder"
 means content is kept visible and a diagnostic is emitted; it is never silently
 discarded or activated.
 
+Diagnostic severity and lossiness are orthogonal. Strict parsing rejects
+`semantic` loss (meaning/layout/behavior approximated) and `content` loss
+(material unavailable or unrepresented), but not a `none` diagnostic. This is
+parser/IR preservation strictness, not a claim that every target format is a
+facsimile.
+
 | Ami Pro construct | Parser | HTML/PDF/ODT/DOCX | Markdown/TXT |
 |---|---|---|---|
 | Version 4 header and CP1252 declaration | Supported | N/A | N/A |
@@ -21,9 +27,9 @@ discarded or activated.
 | Tables and cell text | Supported subset | Reflowed | Simple tables/TSV |
 | Table formulas | Cached value recovered; formula preserved in IR | Cached value | Cached value |
 | Annotations and inline footnotes | Typed recursive IR; raw metadata retained | Semantic/labeled reflow; footnotes are not native page-bottom objects | Explicit labeled reflow |
-| Page size and margins (`[lay]`, `[rght]`, `[lft]`) | Typed nine-field twip prefix; opaque tail and raw layout retained; impossible geometry diagnosed | First renderer-valid odd/right geometry, then even/left, controls page/print size and margins; otherwise a fixed Letter fallback | Typed data remains in JSON; prose formats do not simulate a page box |
+| Page size and margins (`[lay]`, `[rght]`, `[lft]`) | Typed nine-field twip prefix; opaque tail is retained with semantic-loss classification; impossible geometry diagnosed | First renderer-valid odd/right geometry, then even/left, controls page/print size and margins; otherwise a fixed Letter fallback | Typed data remains in JSON; prose formats do not simulate a page box |
 | Page-layout headers/footers | Typed odd/even IR with bounded `[lyfrm]` geometry; nested and sibling stream shapes supported | PDF/ODT/DOCX promote a narrow unambiguous, layout-matched, size-bounded subset to repeated page furniture; HTML and all ambiguous, malformed, complex, or body-stream variants remain visibly reflowed | Explicit placement markers |
-| Anchored body frames | Typed `Frame` at the original zero-based `<:tN>`/`<:AN>` anchor location | Contents rendered once in source order; bounded width may guide safe reflow, but absolute coordinates and overlap are not reproduced | Explicit frame marker and source-order contents |
+| Anchored body frames | Typed `Frame` at the original zero-based `<:tN>`/`<:AN>` anchor location; opaque header tails and `[frmlay]` fields are classified | Contents rendered once in source order; bounded width may guide safe reflow, but absolute coordinates and overlap are not reproduced | Explicit frame marker and source-order contents |
 | Fixed-page and repeating frames | Page/flag/rectangle metadata typed when bounded; raw fields retained | Visible labeled source-order reflow; original fixed/repeating placement is not reproduced | Explicit frame marker and source-order contents |
 | Background frames and z-order | No byte-level mapping claimed; `layer_role` remains `unknown` | No inferred background or stacking behavior | No inferred background or stacking behavior |
 | Explicit page breaks | Paragraph break request retained; unknown layout target remains opaque | Preserved between visible content; redundant leading/trailing breaks may be dropped | Explicit break marker where the format supports it |
@@ -39,7 +45,7 @@ discarded or activated.
 | Macros, DDE, active fields | Never executed/followed | Inert placeholder/fallback | Inert placeholder/fallback |
 | External `.sty`, merge, master/book links | Reference preserved; never followed | Warning | Warning |
 | Revisions | Not interpreted | Warning/flattened | Warning/flattened |
-| Unknown sections and inline tags | Preserved with source span | Warning | Warning |
+| Unknown sections and inline tags | Preserved with source span and classified semantic loss | Visible inert placeholder/diagnostic | Visible inert placeholder |
 | Corrupt embedded offsets | Bounds checked | Placeholder/warning | Placeholder/warning |
 
 All paged outputs are preservation-oriented reflows, not pixel-identical Ami Pro

@@ -50,7 +50,9 @@ _UNIQUE_LIMIT = 8_192
 _COMBINING_LIMIT = 64
 _BIDI_CONTROL_LIMIT = 4_096
 _FONT_SPAN_LIMIT = 4_096
+_MIN_TRACKED_TEXT_ALIAS = 4_096
 _OMITTED_TEXT = "[PDF text omitted at safe Unicode limit]"
+_REPEATED_OMITTED_TEXT = "[Repeated PDF text omitted at safe Unicode limit]"
 _OMITTED_TOKEN = "[overlong token omitted at safe PDF limit]"
 _OMITTED_SPANS = "[font fallback spans omitted at safe PDF limit]"
 _SUPPORTED_BIDI_CONTROLS = frozenset(
@@ -233,6 +235,9 @@ class PdfTextBudget:
     seen_codepoints: set[int] = field(default_factory=set)
     bidi_controls: int = 0
     exhausted_marker_emitted: bool = False
+    repeated_alias_marker_emitted: bool = False
+    seen_large_text_ids: set[int] = field(default_factory=set)
+    seen_blocks: set[int] = field(default_factory=set)
 
     def prepare(
         self,
@@ -245,6 +250,18 @@ class PdfTextBudget:
             value = value.decode("utf-8", errors="replace")
         if not isinstance(value, str):
             return ""
+        if len(value) >= _MIN_TRACKED_TEXT_ALIAS:
+            identity = id(value)
+            if identity in self.seen_large_text_ids:
+                if self.repeated_alias_marker_emitted:
+                    return ""
+                self.repeated_alias_marker_emitted = True
+                if len(_REPEATED_OMITTED_TEXT) <= self.remaining:
+                    self.remaining -= len(_REPEATED_OMITTED_TEXT)
+                else:
+                    self.remaining = 0
+                return _REPEATED_OMITTED_TEXT
+            self.seen_large_text_ids.add(identity)
         text = _bounded_unit(value, paragraph_limit) if unit_boundary else value
         text = _sanitize_scalars(text, self)
         text = _bound_tokens(text)
