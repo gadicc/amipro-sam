@@ -8,8 +8,10 @@ The current milestone provides a real, bounded Windows 3.1 Setup driver, an inde
 Program Manager boot/clean-exit gate, and an exact-dialog Ami Pro 3.1 installer. These phases have
 produced content-addressed **Windows-ready**, **Ami Pro install-candidate**, and **Ami Pro-ready**
 bases. The separate launch/clean-exit gate is exercised; an invented-document smoke is still
-required. No real rendering result has been produced, and no current manifest is accepted as a
-fidelity baseline. See the [investigation and adversarial plan](plans/amipro-oracle-plan.md).
+required. Its driver and native-text fixture are implemented and synthetic-tested, but the
+corrected fixture has not yet completed a real guest run. No real rendering result has been
+produced, and no current manifest is accepted as a fidelity baseline. See the
+[investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
 
@@ -21,7 +23,7 @@ Run from the repository root:
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
-./scripts/amipro-oracle smoke
+./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
@@ -115,13 +117,15 @@ has a unique name and cidfile. Host UI actions first verify that exact CID and i
 cleanup targets that identity rather than a reusable name. Killing only the `podman run` process
 group is not treated as sufficient container cleanup.
 
-The Windows installer, boot-probe, and Ami Pro installer phases retain their state traces,
-generated configurations, bounded stdout/stderr, changed-screen archives, observer status, raw
-and normalized runtime trees, and process cleanup results. The boot gate retains the accepted
-Program Manager and Exit Windows frames. The Ami Pro installer retains all seven recognized
-installer states plus the post-install Program Manager and Exit Windows frames. Stable checkpoint
-manifests exclude volatile job paths/timing; returned results name the ignored evidence jobs that
-back them. Troubleshooting starts with captured evidence, not manual guest inspection.
+The Windows installer, boot-probe, Ami Pro installer, launch gate, and document smoke retain their
+state traces, generated configurations, bounded stdout/stderr, changed-screen archives, observer
+status, runtime trees, and process cleanup results. The boot gate retains the accepted Program
+Manager and Exit Windows frames. The Ami Pro installer retains all seven recognized installer
+states plus the post-install Program Manager and Exit Windows frames. The document smoke retains
+the exact printer-warning, document-ready, Program Manager, and Exit Windows frames. Stable
+checkpoint manifests exclude volatile job paths/timing; returned results name the ignored
+evidence jobs that back them. Troubleshooting starts with captured evidence, not manual guest
+inspection.
 
 The prior failed Wine attempt has been copied, hash-verified, and retained in a local ignored
 content-addressed evidence namespace. It is not part of the oracle runtime, and no Wine prefix or
@@ -214,6 +218,27 @@ Exit-Windows frames hash to
 `launch-amipro-a1613ad18f59-ssfqbjiz` remains local and ignored. Cache reuse was verified without
 launching Ami Pro again. This proves the application lifecycle gate under screen formatting, not
 document fidelity or printing behavior.
+
+The next gate opens the invented, text-only fixture as the fixed guest name `SMOKE.SAM`:
+
+```console
+./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
+```
+
+If more than one Ami Pro-ready runtime exists, add `--runtime-key HASH`. The real command does not
+accept an arbitrary output directory: it writes evidence below the isolated oracle home and mounts
+only that disposable job. It verifies the fixture through a no-follow, mutation-detecting read and
+requires canonical CRLF, a version-4 text envelope, and a self-consistent `[Embedded]` directory
+offset before starting the guest. The checked-in fixture is 596 bytes, hashes to
+`22c8346b62dd3b0ad5858e752a92d4a0a1297b8dbda648c356bd5b6ab8982e49`, and points its trailer at
+byte 574.
+
+Success requires the exact `SMOKE.SAM` title, visible dark pixels in the expected upper document
+body, absence of the loading hourglass, an unchanged staged-source hash, clean Ami Pro and Windows
+return sentinels, valid observer evidence, and a clean bounded container exit. It produces a local
+`document-smoke-passed` result with `baseline_eligible: false`; it does not promote another base or
+print. The implementation and synthetic failure boundaries are tested, but no successful native
+run of the corrected fixture has yet been recorded.
 
 The supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup
 remains a later phase. Nothing fetches a driver, WPD, PPD, font, Windows, or Ami Pro bytes.

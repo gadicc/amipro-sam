@@ -2,8 +2,9 @@
 
 Status: Phase 1 complete; the Phase 2 Ami Pro launch/known-state/clean-exit gate also passed on
 2026-08-14. Exact Windows and Ami Pro media profiles, Windows Setup, Program Manager, Ami Pro
-installation, and Ami Pro lifecycle checkpoints are now content-addressed. The next gate opens one
-invented SAM without printing.
+installation, and Ami Pro lifecycle checkpoints are now content-addressed. The invented-document
+driver and native-text fixture are implemented and synthetic-tested; their first successful real
+guest run remains the next gate. Printing is still out of scope.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
 Windows 3.1 media. It now has verified Windows-ready, Ami Pro install-candidate, and Ami Pro-ready
@@ -324,7 +325,7 @@ The public surface is:
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
-./scripts/amipro-oracle smoke
+./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
@@ -428,10 +429,15 @@ The sealed runtime contains 925 files in 14 directories totaling 28,952,075 byte
 `launch-amipro-a1613ad18f59-ssfqbjiz` remains local and ignored; cache reuse was verified without
 launching the application again.
 
-The next implementation target is to stage and open one invented SAM in a disposable clone of the
-Ami Pro-ready base, prove the named document reached the editor, and close the document,
-application, Windows, and DOSBox-X within hard deadlines. Printing remains out of scope until the
-separately keyed printer phase.
+The invented-document gate is now implemented. It stages only a bounded, text-only `SMOKE.SAM` in
+a disposable clone, requires a canonical version-4 envelope and self-consistent `[Embedded]`
+offset, checks the exact document title plus visible body ink and absence of the loading hourglass,
+then requires clean document/application/Windows/DOSBox-X return evidence. The corrected fixture is
+596 bytes with SHA-256
+`22c8346b62dd3b0ad5858e752a92d4a0a1297b8dbda648c356bd5b6ab8982e49`; its trailer points to
+byte 574. Synthetic tests pass, but a successful native run of this corrected fixture has not yet
+been recorded, so Phase 2 is not complete. Printing remains out of scope until the separately
+keyed printer phase.
 
 For a fresh local rebuild, first affirm the right to use the supplied media:
 
@@ -449,6 +455,7 @@ media through the repository. Then run:
 ./scripts/amipro-oracle boot-probe --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
+./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ```
 
 The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed

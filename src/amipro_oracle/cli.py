@@ -29,6 +29,10 @@ from .constants import (
     EXIT_USAGE,
     VERSION,
 )
+from .document_smoke import (
+    OUTER_TIME_LIMIT_SECONDS as DOCUMENT_SMOKE_TIME_LIMIT_SECONDS,
+)
+from .document_smoke import smoke_document
 from .errors import OracleError
 from .fake import run_fake_job
 from .io import atomic_write_json, digest_json, read_json_object, sha256_file
@@ -138,7 +142,22 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument(
         "--input", type=Path, help="invented SAM fixture; defaults to repository fixture"
     )
-    smoke.add_argument("--output", type=Path, help="new job directory")
+    smoke.add_argument("--output", type=Path, help="new fake-backend job directory")
+    smoke.add_argument("--runtime-key")
+    smoke.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DOCUMENT_SMOKE_TIME_LIMIT_SECONDS,
+        help=(
+            "outer wall-clock deadline "
+            f"(maximum {DOCUMENT_SMOKE_TIME_LIMIT_SECONDS}s)"
+        ),
+    )
+    smoke.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the cached runtime made from proprietary media",
+    )
     smoke.set_defaults(handler=_command_smoke)
 
     batch = subparsers.add_parser("batch", help="process a directory of SAM files")
@@ -604,22 +623,50 @@ def _prepare_new_directory(path: Path) -> Path:
 
 
 def _command_smoke(args: argparse.Namespace) -> int:
-    if args.backend != "fake":
+    fixture = args.input or (repo_root() / "tests" / "fixtures" / "synthetic-basic.sam")
+    if args.backend == "fake":
+        home = oracle_home(args.oracle_home, allow_temporary=True)
+        bootstrap_fake(home)
+        default_output = home / "jobs" / f"fake-smoke-{digest_json(str(fixture.absolute()))[:16]}"
+        output = _prepare_new_directory(args.output or default_output)
+        manifest = run_fake_job(fixture, output, staged_name="SMOKE.SAM")
+        _emit(
+            args,
+            manifest,
+            text=f"fake smoke complete: {output / 'job.json'} (not baseline eligible)",
+        )
+        return EXIT_OK
+    if not args.confirm_proprietary_media_rights:
         raise OracleError(
-            "real smoke requires a Windows candidate that passed the Program Manager "
-            "boot gate and a verified Ami Pro installation",
+            "the real document smoke requires --confirm-proprietary-media-rights",
+            exit_code=EXIT_USAGE,
+        )
+    if args.output is not None:
+        raise OracleError(
+            "real smoke evidence is written under the isolated oracle home; omit --output",
+            exit_code=EXIT_USAGE,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
             exit_code=EXIT_MISSING,
         )
-    fixture = args.input or (repo_root() / "tests" / "fixtures" / "synthetic-basic.sam")
-    home = oracle_home(args.oracle_home, allow_temporary=True)
-    bootstrap_fake(home)
-    default_output = home / "jobs" / f"fake-smoke-{digest_json(str(fixture.absolute()))[:16]}"
-    output = _prepare_new_directory(args.output or default_output)
-    manifest = run_fake_job(fixture, output, staged_name="SMOKE.SAM")
+    result = smoke_document(
+        home,
+        image,
+        fixture,
+        runtime_key=args.runtime_key,
+        timeout_seconds=args.timeout_seconds,
+    )
     _emit(
         args,
-        manifest,
-        text=f"fake smoke complete: {output / 'job.json'} (not baseline eligible)",
+        result,
+        text=(
+            f"invented-document smoke passed: {result['evidence_job']}\n"
+            "Next: configure the pinned PostScript printer and prove one print capture."
+        ),
     )
     return EXIT_OK
 
