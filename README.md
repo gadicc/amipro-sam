@@ -42,8 +42,21 @@ experimental DOCX output.
 - No execution of macros, DDE, scripts, or OLE; no remote resource loading and
   no automatic following of document-controlled file paths.
 
-See [compatibility](docs/compatibility.md) for current fidelity and
-[format notes](docs/format-notes.md) for evidence and open questions.
+See [compatibility](docs/compatibility.md) for current fidelity, the living
+[SAM interoperability specification](spec/README.md) for the format and its
+provenance, and [format notes](docs/format-notes.md) for implementation decisions.
+
+## Project map
+
+The repository contains a production converter (`src/amipro_sam/`), an opt-in local
+rendering oracle (`src/amipro_oracle/` and `toolchain/`), bounded interoperability
+research (`tools/research/` and `docs/research/`), and the implementation-independent
+format RFC (`spec/`). These components share evidence but not production runtime
+dependencies.
+
+See [repository architecture](docs/architecture.md) for the boundaries and gradual
+directory plan, and the [project roadmap](ROADMAP.md) for the oracle, fidelity, web,
+Wasm, and future integration milestones.
 
 ## Installation
 

@@ -37,3 +37,17 @@ Do not derive image or prose content from Ami Pro installation media.
 Preserve unknown records and their source positions. A feature is not supported
 until readable content, formatting, malformed input, and renderer behavior have
 tests. New loss modes need stable diagnostic codes and compatibility notes.
+
+File-format semantics also need a stable claim and provenance entry in
+[`spec/evidence.md`](spec/evidence.md), followed by the corresponding grammar or
+command update in [`spec/sam-format.md`](spec/sam-format.md). Implementation code,
+synthetic fixtures, and generated converter output validate this toolkit but are not
+independent evidence of Ami Pro behavior.
+
+## Component boundaries
+
+The converter, rendering oracle, reverse-engineering tools, and format specification
+are separate components. Follow [`AGENTS.md`](AGENTS.md) for their canonical paths,
+dependency rules, evidence workflow, and verification commands. Avoid combining
+directory moves with behavioral changes, especially while another component has
+unfinished work.
