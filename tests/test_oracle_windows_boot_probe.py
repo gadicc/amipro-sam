@@ -113,7 +113,7 @@ def _candidate(home: Path) -> tuple[Path, dict[str, object], dict[str, object], 
 
 def _write_boot_success(job: Path) -> tuple[dict[str, object], dict[str, object]]:
     runtime = job / "runtime"
-    (runtime / "BOOT.START").write_bytes(b"WINDOWS_LAUNCH_REQUESTED\r\n")
+    (runtime / "BOOT.STA").write_bytes(b"WINDOWS_LAUNCH_REQUESTED\r\n")
     (runtime / "BOOT.OK").write_bytes(b"WINDOWS_RETURNED_ZERO\r\n")
     ready_payload = _screen(blue_pixels=20_000, variant=1)
     confirmation_payload = _screen(blue_pixels=8_000, variant=2)
@@ -166,6 +166,8 @@ def test_boot_config_batch_and_key_are_media_free_and_fail_closed() -> None:
     assert r"C:\WINBOOT.BAT" in config
     assert batch.endswith(b"\r\n")
     assert b"C:\\WINDOWS\\WIN.COM" in batch
+    assert b"BOOT.STA" in batch
+    assert b"BOOT.START" not in batch
     assert b"WINDOWS_RETURNED_ZERO" in batch
     assert inputs["outer_time_limit_seconds"] == boot_module.OUTER_TIME_LIMIT_SECONDS
 

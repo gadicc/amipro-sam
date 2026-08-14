@@ -99,11 +99,11 @@ def windows_boot_config() -> str:
 def windows_boot_batch() -> bytes:
     lines = (
         "@ECHO OFF",
-        r"IF EXIST C:\BOOT.START DEL C:\BOOT.START",
+        r"IF EXIST C:\BOOT.STA DEL C:\BOOT.STA",
         r"IF EXIST C:\BOOT.OK DEL C:\BOOT.OK",
         r"IF EXIST C:\BOOT.ERR DEL C:\BOOT.ERR",
         r"IF NOT EXIST C:\WINDOWS\WIN.COM GOTO BOOT_MISSING",
-        r"ECHO WINDOWS_LAUNCH_REQUESTED>C:\BOOT.START",
+        r"ECHO WINDOWS_LAUNCH_REQUESTED>C:\BOOT.STA",
         r"C:\WINDOWS\WIN.COM",
         "IF ERRORLEVEL 1 GOTO BOOT_FAILED",
         r"ECHO WINDOWS_RETURNED_ZERO>C:\BOOT.OK",
@@ -356,7 +356,7 @@ def _drive_program_manager_exit(
 ) -> dict[str, object]:
     started = monotonic()
     deadline = started + UI_DRIVER_TIMEOUT_SECONDS
-    launch = job / "runtime" / "BOOT.START"
+    launch = job / "runtime" / "BOOT.STA"
     while monotonic() < deadline and not stop.is_set():
         if launch.is_file() and launch.read_bytes() == b"WINDOWS_LAUNCH_REQUESTED\r\n":
             break
@@ -544,7 +544,7 @@ def _validate_ui_evidence(job: Path) -> dict[str, object]:
 
 def _validate_boot_return(runtime: Path) -> None:
     expected = {
-        "BOOT.START": b"WINDOWS_LAUNCH_REQUESTED\r\n",
+        "BOOT.STA": b"WINDOWS_LAUNCH_REQUESTED\r\n",
         "BOOT.OK": b"WINDOWS_RETURNED_ZERO\r\n",
     }
     for name, payload in expected.items():
@@ -566,7 +566,7 @@ def _validate_boot_return(runtime: Path) -> None:
 
 
 def _remove_boot_controls(runtime: Path) -> None:
-    for name in ("BOOT.START", "BOOT.OK", "BOOT.ERR", "WINBOOT.BAT"):
+    for name in ("BOOT.STA", "BOOT.OK", "BOOT.ERR", "WINBOOT.BAT"):
         path = runtime / name
         if path.is_symlink():
             raise OracleError("boot control path became a symlink", exit_code=EXIT_INTEGRITY)
