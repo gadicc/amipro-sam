@@ -15,14 +15,14 @@ facsimile.
 | Version 4 header and CP1252 declaration | Supported | N/A | N/A |
 | Version 3 header | Tolerated, not corpus-verified | N/A | N/A |
 | Paragraph text and anchored-object order | Supported | Supported | Supported |
-| Named paragraph styles | Supported where inline/in-file | Reflowed | Simplified |
+| Named paragraph styles | Character/paragraph subset plus exact shortcut/following-style envelope; raw behavioral flags retained | Reflowed; unimplemented spacing/all-indent semantics remain diagnostics, not body paragraphs | Simplified |
 | Bold, italic, underline, strike | Supported | Supported | Best effort |
 | Superscript and subscript | Supported | Supported | Plain text markers/flattened |
 | Font family, size, RGB color | Supported | Best effort with substitution | Flattened |
 | BMP Unicode text | Preserved in IR | PDF uses cmap-gated fixed bundled fonts for Latin, Greek, Cyrillic, documented SC-default CJK, Hebrew, and Arabic subsets; ODT/DOCX retain Unicode for consumer font selection; HTML uses browser fallback | Preserved as Unicode |
 | RTL Hebrew/Arabic | Preserved in logical order | PDF uses bounded line-level bidi ordering and shaping for whitespace-separated directional runs, flattens inline style within an RTL paragraph, and records logical `ActualText`; unsupported no-space mixed-direction tokens receive an explicit marker; HTML/ODT/DOCX delegate layout to the consumer | Preserved in logical order |
 | Non-BMP scalars, lone surrogates, noncharacters, and unsupported directional controls in PDF | Preserved by parser/IR where representable | PDF emits a visible U+FFFD for an unsupported scalar/control; no false glyph or `ToUnicode` claim | Preserved or escaped according to the target format |
-| Alignment, spacing, indents | Supported subset | Reflowed | Flattened |
+| Alignment, spacing, indents | Documented style positions plus bounded `<:#first,width>` regions; observed four-field `<:I...>` is typed but deliberately unapplied | Full measures retain a first-line position; narrower regions resolve only against an explicit page/cell width; impossible or unknown-container geometry safely falls back | Flattened; typed data remains in JSON |
 | Lists inferred from named styles | Best effort | Supported subset | Supported subset |
 | Tables and cell text | Supported subset | Reflowed | Simple tables/TSV |
 | Table formulas | Cached value recovered; formula preserved in IR | Cached value | Cached value |
@@ -44,8 +44,8 @@ facsimile.
 | Equations | Preserved as unsupported object | Placeholder | Placeholder |
 | Macros, DDE, active fields | Never executed/followed | Inert placeholder/fallback | Inert placeholder/fallback |
 | External `.sty`, merge, master/book links | Reference preserved; never followed | Warning | Warning |
-| Revisions | Not interpreted | Warning/flattened | Warning/flattened |
-| Unknown sections and inline tags | Preserved with source span and classified semantic loss | Visible inert placeholder/diagnostic | Visible inert placeholder |
+| Revisions | Exact single `[revisions] 0` is a no-revisions state; other/duplicate states are not interpreted | Noncanonical state remains warning/flattened | Noncanonical state remains warning/flattened |
+| Unknown sections and inline tags | Preserved with source span and classified semantic loss; exact empty `[elay]`, bounded `[l1]`, spelling state, compact font forms, and matched field closes are recognized | Genuine unknown content stays a visible inert placeholder; metadata-only losses stay in diagnostics/JSON instead of becoming body paragraphs | Genuine unknown content stays visible |
 | Corrupt embedded offsets | Bounds checked | Placeholder/warning | Placeholder/warning |
 
 All paged outputs are preservation-oriented reflows, not pixel-identical Ami Pro

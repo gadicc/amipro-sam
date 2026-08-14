@@ -201,6 +201,13 @@ Pro 3.1 installation media, and private regression documents. No proprietary
 executables, help files, templates, fonts, manuals, or samples are distributed.
 Synthetic fixtures contain invented content only.
 
+The repository history contains no disassembly, decompilation, instrumentation,
+or execution of an Ami Pro executable. Tests combine small invented SAM records,
+seeded malformed-input/mutation cases, renderer and package assertions, PDF text
+and raster checks, and an optional aggregate audit of the Git-ignored private
+corpus. Some public format notes used by the project were themselves produced by
+third-party reverse engineering; their uncertain fields remain labeled as such.
+
 Lotus Ami Pro belongs to its respective rights holders. This independent project
 is not affiliated with or endorsed by those rights holders. See [NOTICE](NOTICE).
 

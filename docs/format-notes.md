@@ -134,6 +134,24 @@ Confirmed character flag bits include bold, italic, underline, word underline,
 and double underline. Confirmed alignment bits represent left, right, center, and
 justified paragraphs. Break flags can request page/column breaks and paragraph
 keep behavior; only the currently verified subset is rendered.
+
+The public KOffice notes also identify the top-level style envelope as shortcut
+key, following-style name, and two zero sentinels. The following style controls
+what Ami Pro chooses after a break; it is not an inheritance parent. The same
+notes place `[algn]` values in the order flags, unit, all-indent, first-line
+position, and rest-lines position. The IR therefore stores the rest-lines value
+as the left indent and the first-minus-rest delta as its renderer-relative
+first-line indent. A nonzero all-indent value remains a semantic-loss diagnostic
+because its both-side behavior is not yet reproduced.
+
+Observed font flag bits `0xc000` are baseline class markers rather than visible
+formatting. The common `[spc]` tail `1,100` is a structural sentinel plus default
+text tightness. In contrast, spacing flags `0x10`/`0x20`, nondefault tightness,
+and other output-affecting fields remain raw semantic diagnostics. Style
+metadata diagnostics are not inserted into the document's body flow: JSON,
+HTML's diagnostic appendix, and strict mode retain the loss accounting without
+making thousands of pre-body warning paragraphs.
+
 Unsupported, duplicate, incomplete, or malformed style subrecords remain in the
 raw section model and receive an explicit semantic-loss diagnostic instead of
 being mistaken for fully interpreted formatting. Nonempty fields after the
@@ -161,6 +179,7 @@ Confirmed inline formatting:
 | `<+@>`, `<+A>`, `<+B>`, `<+C>` | left, right, center, justify |
 | `<:f...>` / `<:f>` | set/reset font |
 | `<:S+-1>`, `<:S+-2>`, `<:S+-3>` | single, 1.5, double spacing |
+| `<:s>` | nonprinting spelling state |
 
 Confirmed literal escapes include `<<` for `<`, `<;>` for `>`, `<[>` for `[`,
 `@@` for `@`, and `</R>` for an apostrophe. Two additional four-byte escape
@@ -173,6 +192,37 @@ containers use their own standalone `>` close inside `[edoc]`; this must not be
 mistaken for the outer document terminator. A close is standalone only when the
 physical line contains `>` and whitespace. A line such as `>trailing` is text,
 not a terminator.
+
+The private corpus contains 11,446 `<:#x,width>` forms across 299 files. In
+8,860 corpus cases with usable page geometry, the second value is within five
+twips of the body measure; two-column files reuse a half-width measure at
+different x positions. Treating that second value as a left indent caused the
+right-edge sliver: 6,641 paragraphs acquired left indents above three inches.
+The parser now retains the two values as distinct twip fields. When the measure
+matches the explicit body/cell width within three source-rounding twips, the
+first value is applied as a first-line position and never as a whole-paragraph
+left margin. A narrower region that fits the known container resolves to left
+and right base margins. Other geometry keeps ordinary indentation and the
+document receives one semantic `paragraph-region-reflowed` diagnostic. Reflowed
+frames and automatically sized HTML cells deliberately do not borrow the page
+body as a false container. Some observed column coordinates exceed the known
+body by more than the tolerance, suggesting an unmodeled coordinate origin;
+those safely fall back pending an Ami Pro rendering oracle.
+
+All 750 observed `<:I...>` commands have four bounded numeric fields and a zero
+fourth field. That establishes a canonical shape, not the meanings of the first
+three values. They are therefore retained atomically in typed IR and diagnosed
+as unapplied semantics without a body marker; malformed variants remain visible
+and cannot partially mutate paragraph state. Compact font forms such as
+`<:f240,Wingdings,>` apply their present size/family fields with an empty color
+tail. A matched `:X~...` field close is nonprinting after the opener has already
+produced its inert fallback; unmatched closes remain explicit.
+
+An exact single `[revisions]` value of `0` is the observed no-revisions state.
+Nonzero, additional, malformed, or duplicate revision records remain raw,
+visible semantic losses. Empty `[elay]` terminators, a single bounded `[l1]`
+value, and exact bounded `[frmname]` values are typed. `[l1]` is not used to
+select renderer geometry because its indexing and scope are not yet proven.
 
 If an unterminated `[edoc]` reaches a NUL-bearing physical line, recovery keeps
 the readable stream through that line and resumes at a later appended
@@ -514,6 +564,11 @@ treated as HTML. Renderers escape source text and do not load remote resources.
   actual non-ASCII textual bytes need targeted samples.
 - Frame z-order and exact floating coordinates need more reverse engineering;
   body anchor order is recovered, but exact original pagination is not.
+- The coordinate origin for overflowing/nested `<:#first,width>` regions and
+  the meanings of the first three four-field `<:I...>` values need a controlled
+  Ami Pro rendering oracle. Reflowed frames, native list indentation, and
+  automatically sized HTML cells currently retain typed source geometry but do
+  not invent a containing width.
 - The meanings of SDW record type numbers, vector operation order, coordinates,
   styles, colors, and the two opaque binary-header fields remain unknown. In
   particular, the validated type 4/type 5 point formulas do not justify naming
