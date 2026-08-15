@@ -59,11 +59,14 @@ MAX_FIXTURE_BYTES = 1024 * 1024
 DOCUMENT_TITLE_STATE = {
     "name": "smoke-document-title",
     "box": [192, 199, 832, 221],
-    "title_sha256": "8a0158c8051d3c7a42c55cad6bbe21b65be54182d3d1da4a34c389cb41c07b03",
+    "title_sha256": "a64974abc1a1911bbc977b3fd1fdf4dcb9a5f6ddaaa83be4f10ffc5702c3f0b4",
 }
 DOCUMENT_BODY_BOX = [200, 270, 790, 390]
 LOADING_INDICATOR_BOX = [500, 420, 525, 460]
-MINIMUM_BODY_DARK_PIXELS = 16
+FORBIDDEN_LOADING_INDICATOR_SHA256 = (
+    "d52d5e2c00e5112612018d0bc79635e9c87e408b4594a65d68808e0cc353fbde"
+)
+MINIMUM_BODY_DARK_PIXELS = 256
 DOCUMENT_UI_PROFILE = {
     "name": "amipro-3.1-invented-document-lifecycle-v1",
     "screen_width": install_module.SCREEN_WIDTH,
@@ -81,7 +84,7 @@ DOCUMENT_UI_PROFILE = {
         "body_box": DOCUMENT_BODY_BOX,
         "minimum_body_dark_pixels": MINIMUM_BODY_DARK_PIXELS,
         "loading_indicator_box": LOADING_INDICATOR_BOX,
-        "loading_indicator_dark_pixels": 0,
+        "forbidden_loading_indicator_sha256": FORBIDDEN_LOADING_INDICATOR_SHA256,
     },
     "actions": [
         "dismiss-printer-warning",
@@ -406,6 +409,7 @@ def _document_state(path: Path) -> tuple[dict[str, object], bytes]:
             "body_dark_pixels": body_dark,
             "loading_indicator_box": LOADING_INDICATOR_BOX,
             "loading_indicator_dark_pixels": loading_dark,
+            "loading_indicator_sha256": hashlib.sha256(loading).hexdigest(),
         },
         payload,
     )
@@ -426,11 +430,7 @@ def _wait_document_state(
         except (OSError, OracleError):
             sleep(0.25)
             continue
-        if (
-            evidence["title_sha256"] == DOCUMENT_TITLE_STATE["title_sha256"]
-            and int(evidence["body_dark_pixels"]) >= MINIMUM_BODY_DARK_PIXELS
-            and evidence["loading_indicator_dark_pixels"] == 0
-        ):
+        if _document_is_ready(evidence):
             if mtime != seen_mtime:
                 stable += 1
                 seen_mtime = mtime
@@ -441,6 +441,15 @@ def _wait_document_state(
             seen_mtime = None
         sleep(0.25)
     raise OracleError("invented document did not reach ready state", exit_code=EXIT_BACKEND)
+
+
+def _document_is_ready(evidence: dict[str, object]) -> bool:
+    return (
+        evidence["title_sha256"] == DOCUMENT_TITLE_STATE["title_sha256"]
+        and int(evidence["body_dark_pixels"]) >= MINIMUM_BODY_DARK_PIXELS
+        and evidence["loading_indicator_sha256"]
+        != FORBIDDEN_LOADING_INDICATOR_SHA256
+    )
 
 
 def _wait_sentinel(runtime: Path, stop: threading.Event, deadline: float) -> None:
@@ -669,11 +678,7 @@ def _validate_ui_evidence(job: Path) -> dict[str, object]:
         document, _ = _document_state(job / "diagnostics" / "document-ready.png")
     except OracleError as exc:
         raise OracleError("document-ready screenshot is invalid", exit_code=EXIT_INTEGRITY) from exc
-    if (
-        document["title_sha256"] != DOCUMENT_TITLE_STATE["title_sha256"]
-        or int(document["body_dark_pixels"]) < MINIMUM_BODY_DARK_PIXELS
-        or document["loading_indicator_dark_pixels"] != 0
-    ):
+    if not _document_is_ready(document):
         raise OracleError(
             "document-ready screenshot failed its predicate",
             exit_code=EXIT_INTEGRITY,

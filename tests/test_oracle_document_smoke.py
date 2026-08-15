@@ -81,7 +81,7 @@ def _solid_screen(variant: int) -> bytes:
     return encode_rgb_png(width, height, color * width * height)
 
 
-def _document_screen() -> bytes:
+def _document_screen(*, loading_indicator: bool = False) -> bytes:
     width = install_module.SCREEN_WIDTH
     height = install_module.SCREEN_HEIGHT
     pixels = bytearray(b"\xff\xff\xff" * width * height)
@@ -94,6 +94,12 @@ def _document_screen() -> bytes:
     for index in range(smoke_module.MINIMUM_BODY_DARK_PIXELS + 4):
         offset = (body_y * width + body_x + index) * 3
         pixels[offset : offset + 3] = b"\x00\x00\x00"
+    if loading_indicator:
+        x0, y0, x1, y1 = smoke_module.LOADING_INDICATOR_BOX
+        for row in range(y0, y1):
+            for column in range(x0, x1):
+                offset = (row * width + column) * 3
+                pixels[offset : offset + 3] = b"\x00\x00\x00"
     return encode_rgb_png(width, height, bytes(pixels))
 
 
@@ -143,16 +149,16 @@ def _write_observer(diagnostics: Path, payload: bytes) -> None:
 def test_native_fixture_has_a_self_consistent_directory_trailer() -> None:
     payload, identity = smoke_module.read_text_fixture(FIXTURE)
 
-    assert len(payload) == 596
+    assert len(payload) == 4584
     assert identity == {
         "schema": smoke_module.TEXT_FIXTURE_SCHEMA,
         "profile": "invented-version-4-cp1252-text-only-v1",
         "staged_name": "SMOKE.SAM",
-        "size": 596,
-        "sha256": "22c8346b62dd3b0ad5858e752a92d4a0a1297b8dbda648c356bd5b6ab8982e49",
-        "embedded_directory_offset": 574,
+        "size": 4584,
+        "sha256": "bab52c077acf1cd67fde5fa285ffacd81febca8fc8da0e16c73a8bcf24ff0aa1",
+        "embedded_directory_offset": 4562,
     }
-    assert payload[574:] == b"[Embedded]\r\n00000574\r\n"
+    assert payload[4562:] == b"[Embedded]\r\n00004562\r\n"
 
 
 def test_fixture_validation_rejects_non_native_text_envelopes(tmp_path: Path) -> None:
@@ -206,7 +212,7 @@ def test_smoke_config_batch_and_inputs_are_media_free() -> None:
         )
 
 
-def test_document_predicate_requires_title_ink_and_no_hourglass(
+def test_document_predicate_requires_title_ink_and_rejects_known_hourglass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -225,24 +231,19 @@ def test_document_predicate_requires_title_ink_and_no_hourglass(
     assert evidence["title_sha256"] == title["title_sha256"]
     assert evidence["body_dark_pixels"] > smoke_module.MINIMUM_BODY_DARK_PIXELS
     assert evidence["loading_indicator_dark_pixels"] == 0
+    assert smoke_module._document_is_ready(evidence)
 
-    pixels = bytearray(b"\xff\xff\xff" * install_module.SCREEN_WIDTH * install_module.SCREEN_HEIGHT)
-    x0, y0, x1, y1 = smoke_module.LOADING_INDICATOR_BOX
-    for row in range(y0, y1):
-        for column in range(x0, x1):
-            offset = (row * install_module.SCREEN_WIDTH + column) * 3
-            pixels[offset : offset + 3] = b"\x00\x00\x00"
     loading = tmp_path / "loading.png"
-    loading.write_bytes(
-        encode_rgb_png(
-            install_module.SCREEN_WIDTH,
-            install_module.SCREEN_HEIGHT,
-            bytes(pixels),
-        )
-    )
+    loading.write_bytes(_document_screen(loading_indicator=True))
     loading_evidence, _ = smoke_module._document_state(loading)
-    assert loading_evidence["title_sha256"] != title["title_sha256"]
+    assert loading_evidence["title_sha256"] == title["title_sha256"]
     assert loading_evidence["loading_indicator_dark_pixels"] > 0
+    monkeypatch.setattr(
+        smoke_module,
+        "FORBIDDEN_LOADING_INDICATOR_SHA256",
+        loading_evidence["loading_indicator_sha256"],
+    )
+    assert not smoke_module._document_is_ready(loading_evidence)
 
 
 def test_document_smoke_runs_from_ready_clone_and_retains_evidence(

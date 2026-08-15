@@ -1,15 +1,15 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phase 1 complete; the Phase 2 Ami Pro launch/known-state/clean-exit gate also passed on
-2026-08-14. Exact Windows and Ami Pro media profiles, Windows Setup, Program Manager, Ami Pro
-installation, and Ami Pro lifecycle checkpoints are now content-addressed. The invented-document
-driver and native-text fixture are implemented and synthetic-tested; their first successful real
-guest run remains the next gate. Printing is still out of scope.
+Status: Phases 1 and 2 complete. Exact Windows and Ami Pro media profiles, Windows Setup, Program
+Manager, Ami Pro installation, and Ami Pro lifecycle checkpoints are content-addressed. On
+2026-08-15, Ami Pro natively saved the invented two-paragraph fixture and the production smoke
+reopened it, visibly displayed both lines, and exited cleanly. The next gate is a separately keyed
+printer installation and one-file PostScript capture.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
-Windows 3.1 media. It now has verified Windows-ready, Ami Pro install-candidate, and Ami Pro-ready
-bases, but no document-rendering result. Proprietary execution requires the user's explicit
-right-to-use affirmation.
+Windows 3.1 media. It has verified Windows-ready, Ami Pro install-candidate, and Ami Pro-ready
+bases plus a controlled native text-presence result. Exact typography, pagination, and print
+fidelity remain open. Proprietary execution requires the user's explicit right-to-use affirmation.
 
 ## Scope and legal boundary
 
@@ -429,15 +429,22 @@ The sealed runtime contains 925 files in 14 directories totaling 28,952,075 byte
 `launch-amipro-a1613ad18f59-ssfqbjiz` remains local and ignored; cache reuse was verified without
 launching the application again.
 
-The invented-document gate is now implemented. It stages only a bounded, text-only `SMOKE.SAM` in
-a disposable clone, requires a canonical version-4 envelope and self-consistent `[Embedded]`
-offset, checks the exact document title plus visible body ink and absence of the loading hourglass,
-then requires clean document/application/Windows/DOSBox-X return evidence. The corrected fixture is
-596 bytes with SHA-256
-`22c8346b62dd3b0ad5858e752a92d4a0a1297b8dbda648c356bd5b6ab8982e49`; its trailer points to
-byte 574. Synthetic tests pass, but a successful native run of this corrected fixture has not yet
-been recorded, so Phase 2 is not complete. Printing remains out of scope until the separately
-keyed printer phase.
+The invented-document gate has passed. Its checked-in fixture is the exact native Save As output
+after typing `NATIVE SMOKE DOCUMENT`, Enter, and `INVENTED CONTENT ONLY` in a blank Ami Pro
+document. It is 4,584 bytes with SHA-256
+`bab52c077acf1cd67fde5fa285ffacd81febca8fc8da0e16c73a8bcf24ff0aa1`; its trailer points to byte
+4,562. The production gate stages those bytes only as `SMOKE.SAM` in a disposable clone, checks the
+exact title, distinguishes the rendered 1,027-dark-pixel body from the 34-pixel blank intermediate
+state, rejects the retained hourglass signature, and requires clean
+document/application/Windows/DOSBox-X return evidence.
+
+Evidence job `smoke-document-cjt8ea3j` exited zero without timeout after 24.59 seconds and completed
+the state machine in 30.07 seconds. The ready screenshot hashes to
+`7cbbcdea5ebd451f287b9e3222ade59258747e7bb770e6a7c234a704d7f62b4c`; the same screenshot bytes
+were retained from an earlier direct open that timed out only because the old detector required a
+stale title hash and mistook the insertion caret for loading. Phase 2 is complete for exact native
+text presence and lifecycle. Printing, typography, layout, and pagination remain out of scope until
+the separately keyed printer phase.
 
 For a fresh local rebuild, first affirm the right to use the supplied media:
 

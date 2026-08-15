@@ -1,64 +1,708 @@
 [ver]
 	4
 [sty]
-
+	
 [files]
 [charset]
 	82
 	ANSI (Windows, IBM CP 1252)
+[revisions]
+	0
+[prn]
+	
+[port]
+	
+[lang]
+	18
+[fldnames]
+	Field1
+	Field2
+	Field3
+	Field4
+	Field5
+	Field6
+	Field7
+	Field8
+[desc]
+	
+	
+	
+	
+	
+	700225821
+	1
+	700225804
+	0
+	1
+	0
+	0
+	0
+	0
+	
+	
+	
+	
+	
+	
+	1
+[fopts]
+	0
+	1
+	0
+	0
+	
+	
+[lnopts]
+	2
+	Body Text
+	1
+[docopts]
+	5
+	2
+[GramStyle]
+	
 [tag]
 	Body Text
 	2
 	[fnt]
-		Times New Roman
+		TimesNewRomanPS
 		240
 		0
 		49152
 	[algn]
 		1
-		1
+		2
 		0
 		0
 		0
 	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
 		1
-		240
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		
+		0
+		2
 		1
 		0
 		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
 	Body Text
+	0
+	0
+[tag]
+	Body Single
+	3
+	[fnt]
+		TimesNewRomanPS
+		240
+		0
+		49152
+	[algn]
+		1
+		2
+		0
+		0
+		0
+	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		
+		0
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Body Single
+	0
+	0
+[tag]
+	Bullet
+	4
+	[fnt]
+		TimesNewRomanPS
+		240
+		0
+		49152
+	[algn]
+		1
+		2
+		0
+		288
+		288
+	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		<*0>
+		360
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Bullet
+	0
+	0
+[tag]
+	Bullet 1
+	5
+	[fnt]
+		TimesNewRomanPS
+		240
+		0
+		49152
+	[algn]
+		1
+		2
+		288
+		288
+		288
+	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		<*5>
+		0
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Bullet 1
+	0
+	0
+[tag]
+	Number List
+	6
+	[fnt]
+		TimesNewRomanPS
+		240
+		0
+		49152
+	[algn]
+		1
+		2
+		360
+		360
+		360
+	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		<*:>.
+		360
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Number List
+	0
+	0
+[tag]
+	Subhead
+	7
+	[fnt]
+		TimesNewRomanPS
+		200
+		0
+		49152
+	[algn]
+		1
+		2
+		0
+		0
+		0
+	[spc]
+		33
+		273
+		2
+		72
+		72
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		2
+		
+		0
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Subhead
 	0
 	0
 [tag]
 	Title
 	8
 	[fnt]
-		Arial
+		Arial MT
 		360
 		0
-		49153
+		16385
 	[algn]
 		4
-		1
+		2
 		0
 		0
 		0
 	[spc]
+		33
+		446
+		2
+		144
+		72
+		2
+		100
+	[brk]
+		16
+	[line]
+		8
+		0
+		2
+		0
 		1
-		360
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		1
+		
+		0
+		2
 		1
 		0
-		144
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
 	Title
 	0
 	0
+[tag]
+	Header
+	9
+	[fnt]
+		TimesNewRomanPS
+		240
+		0
+		49152
+	[algn]
+		1
+		2
+		0
+		0
+		0
+	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		
+		0
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Header
+	0
+	0
+[tag]
+	Footer
+	11
+	[fnt]
+		TimesNewRomanPS
+		240
+		0
+		49152
+	[algn]
+		1
+		2
+		0
+		0
+		0
+	[spc]
+		33
+		273
+		2
+		0
+		0
+		2
+		100
+	[brk]
+		4
+	[line]
+		8
+		0
+		2
+		0
+		1
+		1
+		1
+		10
+		10
+		2
+	[spec]
+		0
+		0
+		
+		0
+		2
+		1
+		0
+		0
+		0
+		0
+	[nfmt]
+		272
+		1
+		2
+		.
+		,
+		$
+	Footer
+	0
+	0
+[lay]
+	Standard
+	516
+	[rght]
+		16833
+		11908
+		1
+		1440
+		1440
+		2
+		1440
+		1440
+		0
+		1
+		0
+		1
+		0
+		2
+		1
+		1440
+		10465
+		12
+		1
+		720
+		1
+		1440
+		1
+		2160
+		1
+		2880
+		1
+		3600
+		1
+		4320
+		1
+		5040
+		1
+		5760
+		1
+		6480
+		1
+		7200
+		1
+		7920
+		1
+		8640
+	[hrght]
+	[lyfrm]
+		1
+		11200
+		0
+		0
+		11908
+		1440
+		0
+		1
+		3
+		1 0 0 0 0 0 0
+		0
+		0
+		1
+	[frmlay]
+		1440
+		11908
+		1
+		1440
+		72
+		2
+		792
+		1440
+		0
+		1
+		0
+		1
+		1
+		0
+		1
+		1440
+		10465
+		2
+		2
+		4680
+		3
+		9360
+	[txt]
+>
+	[frght]
+	[lyfrm]
+		1
+		13248
+		0
+		15393
+		11908
+		16833
+		0
+		1
+		3
+		1 0 0 0 0 0 0
+		0
+		0
+		2
+	[frmlay]
+		16833
+		11908
+		1
+		1440
+		792
+		2
+		15465
+		1440
+		0
+		1
+		0
+		1
+		1
+		0
+		1
+		1440
+		10465
+		2
+		2
+		4680
+		3
+		9360
+	[txt]
+>
+[elay]
+[l1]
+	0
+[pg]
+	1
+	2 0 21 1029 0 0 0 65535 65535 Standard	65535 0 0	0 0 0 0 0 0 0 65535 0 0 65535 0 0 0 0 0
 [edoc]
-@Title@Synthetic preservation sample
+NATIVE SMOKE DOCUMENT
 
-@Body Text@Plain text with <+!>bold<-!>, <+">italic<-">, <+#>underline<-#>, and literal <<markup<;>.
+INVENTED CONTENT ONLY
 
-Second paragraph with trailing text.
 >
 
 [Embedded]
-00000574
+00004562

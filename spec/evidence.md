@@ -1,6 +1,6 @@
 # Evidence and provenance ledger
 
-Status: living draft, 2026-08-14.
+Status: living draft, 2026-08-15.
 
 This ledger separates file-format facts from implementation choices. Stable claim IDs
 are cited by [`sam-format.md`](sam-format.md); detailed investigations remain in
@@ -45,7 +45,8 @@ driver, environment, fixture, and comparison method.
 | `OBS-INSTALL-31` | Local observation | Aggregate structural inspection of 13 SAM and 108 SDW files from lawfully owned Ami Pro 3.1 media; no proprietary content is committed |
 | `OBS-PRIVATE-384` | Local aggregate corpus | Structure-only aggregation over 384 private SAM files; save provenance is incomplete and output suppresses content and identifying data |
 | `STATIC-W4W-20260814` | Static executable research | Hash-gated, bounded analysis of the bundled W4W33F/W4W33T SAM reader/writer, documented in [`executable-format-re.md`](../docs/research/executable-format-re.md); the two modules are one subsystem/source and establish that converter's behavior, not necessarily native Ami Pro behavior |
-| `ORACLE-AMI31` | Controlled behavior | Reserved source family for real Ami Pro 3.1 observations made by the local oracle. No claim currently cites this source; conclusions will be scoped to the recorded environment |
+| `ORACLE-AMI31` | Controlled behavior | Source family for real Ami Pro 3.1 observations made by the local oracle; every conclusion is scoped to its recorded environment |
+| `ORACLE-AMI31-SMOKE-20260815` | Controlled behavior | Exact native Save As and two direct-open observations of an invented two-paragraph document under the locked DOSBox-X/Windows 3.1/Ami Pro 3.1 environment described below; no printing or fidelity comparison |
 | `SYNTHETIC-TESTS` | Implementation validation | Invented fixtures validating this toolkit. Not independent evidence of Ami Pro behavior |
 | `IMPL-AMIPRO-SAM` | Implementation state | Current Python parser/model/renderers. Useful for recording conformance, never a semantic source |
 
@@ -89,7 +90,9 @@ currently registered.
 | `SAM-PAGE-001` | `[lay]` plus `[rght]`/`[lft]` records describe page size and right/odd versus left/even geometry in twips | grammar: confirmed; field semantics: strong; native pagination/rendering: open | `PUB-LOTUS-GUIDES`, `PUB-KOFFICE-AMI`, `PUB-BORN-AMI`, `OBS-PRIVATE-384` | KOffice's notes label fields, but its importer hardcodes target page geometry and does not behaviorally validate them; transitions and high bits remain open |
 | `SAM-TABLE-001` | `[tbl]` fields 0/1 are row/column counts and `[data]` fields 0/1 are zero-based cell coordinates | grammar/semantics: strong; native layout/rendering: open | `STATIC-W4W-20260814`, `OBS-PRIVATE-384` | Corpus provenance prevents a confirmed promotion; many adjacent cell-style labels remain tentative/open |
 | `SAM-EMBEDDED-001` | `[Embedded]` rows index primary asset and companion/preview offset-length pairs | grammar/semantics: confirmed | `PUB-BORN-AMI`, `OBS-INSTALL-31`, `OBS-PRIVATE-384` | Direct range checks corroborate the row interpretation. KOffice ignores this structure and is not a source for the claim |
-| `SAM-EMBEDDED-POINTER-001` | In the observed version-4 corpora, a final zero-padded decimal value locates the `[Embedded]` directory | grammar/semantics: confirmed for observed files; other variants: open | `OBS-INSTALL-31`, `OBS-PRIVATE-384` | Direct byte-offset matches support decimal interpretation. Born describes an ASCII-hexadecimal locator; preserve this conflict until version/context is isolated |
+| `SAM-EMBEDDED-POINTER-001` | In the observed version-4 corpora, a final zero-padded decimal value locates the `[Embedded]` directory | grammar/semantics: confirmed for observed files; other variants: open | `OBS-INSTALL-31`, `OBS-PRIVATE-384`, `ORACLE-AMI31-SMOKE-20260815` | Direct byte-offset matches and an exact native Ami Pro 3.1 Save As output support decimal interpretation. Born describes an ASCII-hexadecimal locator; preserve this conflict for other versions/contexts |
+| `SAM-NATIVE-SAVE-001` | Ami Pro 3.1 Save As of the exact invented two-paragraph control produced a CRLF version-4 SAM with default header/layout/style records, two blank-line-delimited `[edoc]` paragraphs, a standalone `>` close, `[Embedded]`, and a terminal decimal pointer matching byte offset 4,562 | grammar/structure: confirmed for the exact fixture and environment | `ORACLE-AMI31-SMOKE-20260815` | The 4,584-byte native output is checked in as the synthetic smoke fixture. This does not establish which default records are mandatory or invariant across locales/configurations |
+| `SAM-NATIVE-OPEN-001` | Ami Pro 3.1 directly opened the exact native-saved fixture and visibly displayed the two invented paragraphs as separate lines before a clean application/Windows exit | native behavior/rendering: confirmed for text presence and lifecycle in the exact environment; typography, geometry, pagination, and print fidelity: open | `ORACLE-AMI31-SMOKE-20260815` | The same ready-screen bytes were observed in two direct opens. Screen formatting was active because no printer was configured |
 | `SAM-ACTIVE-001` | SAM documents can contain macro, DDE, OLE, dynamic-field, and external-file/path constructs | occurrence: confirmed; exact byte semantics/native execution: open | `PUB-LOTUS-GUIDES`, `PUB-BORN-AMI`, `OBS-INSTALL-31`, `OBS-PRIVATE-384` | Inert preservation is reader safety policy, not a claim about Ami Pro execution |
 | `SAM-REVISION-001` | One exact `[revisions]` value of `0` is the observed no-revisions state | occurrence: confirmed; semantics: tentative; native behavior: open | `OBS-INSTALL-31`, `OBS-PRIVATE-384` | Nonzero, duplicate, and additional-field meanings remain open |
 
@@ -109,3 +112,51 @@ When the real oracle produces a finding, add a source record containing:
 Fake-backend output can test the harness but MUST NOT appear as `ORACLE-AMI31`
 evidence. Pixel or PDF byte equality alone is not a semantic conclusion; preserve
 the raw observation and document the inference separately.
+
+### `ORACLE-AMI31-SMOKE-20260815`
+
+- **Date and backend:** 2026-08-15; real local oracle, rootless network-disabled OCI
+  image digest
+  `sha256:254f282b1c34f8e4e4eb68efa32cd8a49e02e31aa1ebe7b84bd653dcd6c8c515`,
+  built from DOSBox-X commit
+  `784240ad6d9cf3ae3f02fab819e2ed5cf5117dd4`.
+- **Guest identity:** Ami Pro-ready runtime
+  `a1613ad18f592516bef907ec04d608cf64a3bdf63ea2e2f824aa7690a273d9c0`
+  on American-English Windows 3.1; `AMIPRO.EXE` SHA-256
+  `555506d1558d61579d5c6fee8bf5fa9d960aa05a20a5d171240ac2e0ea73cbbd`.
+  No printer driver was configured, so Ami Pro explicitly used screen formatting.
+- **Invented control:** in a new blank document, type `NATIVE SMOKE DOCUMENT`, press
+  Enter, type `INVENTED CONTENT ONLY`, then use Ami Pro's Save As command with Ami Pro
+  format. The resulting 4,584-byte SAM hashes to
+  `bab52c077acf1cd67fde5fa285ffacd81febca8fc8da0e16c73a8bcf24ff0aa1`;
+  `[Embedded]` starts at byte 4,562 and the final bytes are
+  `[Embedded]\r\n00004562\r\n`. It contains invented text and generic defaults only.
+- **Procedure and raw observation:** generation job
+  `native-fixture-explore-b2ncheny` saved and cleanly closed the native document with
+  process exit zero in 39.55 seconds. The committed smoke driver then staged the exact
+  bytes as `SMOKE.SAM`, invoked Ami Pro directly, dismissed the expected no-printer
+  warning, required the document state, closed Ami Pro, recognized minimized Program
+  Manager, confirmed Exit Windows, and required the DOS return sentinel. Successful
+  evidence job `smoke-document-cjt8ea3j` has inputs digest
+  `4505f23690e74207f8477d390856297db0c75c6b7e9b395506160934bb8667a5`,
+  container exit zero without timeout in 24.59 seconds, and complete orchestration in
+  30.07 seconds.
+- **Measurements:** the full 1024x768 ready screen hashes to
+  `7cbbcdea5ebd451f287b9e3222ade59258747e7bb770e6a7c234a704d7f62b4c`.
+  Crop `[192,199,832,221]` identifies title `SMOKE.SAM` with SHA-256
+  `a64974abc1a1911bbc977b3fd1fdf4dcb9a5f6ddaaa83be4f10ffc5702c3f0b4`.
+  Crop `[200,270,790,390]` contains 1,027 dark pixels after rendering versus 34 in
+  the blank intermediate frame; the acceptance threshold is 256. A failed
+  hand-authored control showed a persistent hourglass whose `[500,420,525,460]` crop
+  hashes to
+  `d52d5e2c00e5112612018d0bc79635e9c87e408b4594a65d68808e0cc353fbde`;
+  the loaded fixture instead has an insertion caret and a different crop hash.
+- **Repetition and scope:** the same ready-screen hash occurred in two independent
+  direct opens of the native-saved bytes. The first timed out only because the then
+  current detector expected a stale title hash and required an empty caret crop; the
+  retained frames isolated and corrected that false negative. This observation
+  confirms the exact save structure, visible presence of the two lines, and clean
+  lifecycle only. Font metrics, line breaking, page geometry, pagination, PostScript,
+  PDF, raster fidelity, and general paragraph-continuation behavior remain open.
+- **Claims:** supports `SAM-EMBEDDED-POINTER-001`, `SAM-NATIVE-SAVE-001`, and
+  `SAM-NATIVE-OPEN-001`; it does not upgrade unrelated rendering claims.

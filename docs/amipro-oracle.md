@@ -7,10 +7,10 @@ conversion never execute Ami Pro or require proprietary media.
 The current milestone provides a real, bounded Windows 3.1 Setup driver, an independent
 Program Manager boot/clean-exit gate, and an exact-dialog Ami Pro 3.1 installer. These phases have
 produced content-addressed **Windows-ready**, **Ami Pro install-candidate**, and **Ami Pro-ready**
-bases. The separate launch/clean-exit gate is exercised; an invented-document smoke is still
-required. Its driver and native-text fixture are implemented and synthetic-tested, but the
-corrected fixture has not yet completed a real guest run. No real rendering result has been
-produced, and no current manifest is accepted as a fidelity baseline. See the
+bases. The separate launch/clean-exit and invented-document gates are exercised: Ami Pro natively
+saved and then twice reopened the exact invented fixture, visibly displayed both lines, and exited
+cleanly. This is controlled native text-presence evidence, not a typography or print-fidelity
+baseline; no current manifest is accepted as a fidelity baseline. See the
 [investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
@@ -229,16 +229,30 @@ If more than one Ami Pro-ready runtime exists, add `--runtime-key HASH`. The rea
 accept an arbitrary output directory: it writes evidence below the isolated oracle home and mounts
 only that disposable job. It verifies the fixture through a no-follow, mutation-detecting read and
 requires canonical CRLF, a version-4 text envelope, and a self-consistent `[Embedded]` directory
-offset before starting the guest. The checked-in fixture is 596 bytes, hashes to
-`22c8346b62dd3b0ad5858e752a92d4a0a1297b8dbda648c356bd5b6ab8982e49`, and points its trailer at
-byte 574.
+offset before starting the guest. The checked-in fixture is the exact output of Ami Pro's Save As
+command after typing the two invented lines `NATIVE SMOKE DOCUMENT` and `INVENTED CONTENT ONLY`.
+It is 4,584 bytes, hashes to
+`bab52c077acf1cd67fde5fa285ffacd81febca8fc8da0e16c73a8bcf24ff0aa1`, and points its trailer at
+byte 4,562.
 
-Success requires the exact `SMOKE.SAM` title, visible dark pixels in the expected upper document
-body, absence of the loading hourglass, an unchanged staged-source hash, clean Ami Pro and Windows
-return sentinels, valid observer evidence, and a clean bounded container exit. It produces a local
-`document-smoke-passed` result with `baseline_eligible: false`; it does not promote another base or
-print. The implementation and synthetic failure boundaries are tested, but no successful native
-run of the corrected fixture has yet been recorded.
+Success requires the exact `SMOKE.SAM` title, at least 256 dark pixels in the expected upper
+document body, rejection of the exact retained loading-hourglass crop, an unchanged staged-source
+hash, clean Ami Pro and Windows return sentinels, valid observer evidence, and a clean bounded
+container exit. The known ready state includes a text insertion caret, so readiness does not
+incorrectly require an empty center crop. It produces a local `document-smoke-passed` result with
+`baseline_eligible: false`; it does not promote another base or print.
 
-The supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup
-remains a later phase. Nothing fetches a driver, WPD, PPD, font, Windows, or Ami Pro bytes.
+The exercised production smoke on 2026-08-15 used Ami Pro-ready runtime
+`a1613ad18f592516bef907ec04d608cf64a3bdf63ea2e2f824aa7690a273d9c0` and evidence job
+`smoke-document-cjt8ea3j`. The container exited zero without timeout after 24.59 seconds; the full
+state machine completed in 30.07 seconds. Its ready screenshot hashes to
+`7cbbcdea5ebd451f287b9e3222ade59258747e7bb770e6a7c234a704d7f62b4c` and contains 1,027 dark
+pixels in the body crop, compared with 34 in the retained blank intermediate frame. The exact
+ready screenshot was independently observed in the preceding direct-open attempt, whose timeout
+was isolated to the former stale title/caret predicate. The staged document tree digest is
+`49ba5a1b93c2d96e03aa219b69f755fbc2138f05a142261e44e07fa54cc37aab`.
+
+Phase 2 is therefore complete for the deliberately narrow text-presence/lifecycle claim. The
+supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup and
+the first PostScript capture remain Phase 3. Nothing fetches a driver, WPD, PPD, font, Windows, or
+Ami Pro bytes.

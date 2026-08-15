@@ -56,12 +56,9 @@ def test_synthetic_fixture_end_to_end() -> None:
     paragraphs = [block for block in document.blocks if isinstance(block, Paragraph)]
 
     assert [paragraph.text for paragraph in paragraphs] == [
-        "Synthetic preservation sample",
-        "Plain text with bold, italic, underline, and literal <markup>.",
-        "Second paragraph with trailing text.",
+        "NATIVE SMOKE DOCUMENT",
+        "INVENTED CONTENT ONLY",
     ]
-    assert any(run.text == "bold" and run.style.bold for run in paragraphs[1].runs)
-    assert any(run.text == "italic" and run.style.italic for run in paragraphs[1].runs)
 
 
 def test_inline_formatting_and_escapes() -> None:

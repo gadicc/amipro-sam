@@ -1,6 +1,6 @@
 # Lotus Ami Pro SAM interoperability RFC
 
-Status: draft 0.1, 2026-08-14. This is an independent interoperability document,
+Status: draft 0.1, 2026-08-15. This is an independent interoperability document,
 not an official Lotus specification.
 
 The RFC describes the version-4 SAM family evidenced by this project. It favors
@@ -44,7 +44,10 @@ zero-padded decimal directory offset in the observed version-4 corpora
 ```
 
 The outer order is `SAM-CONTAINER-001`; the terminal pointer has the narrower,
-version-scoped claim `SAM-EMBEDDED-POINTER-001`.
+version-scoped claim `SAM-EMBEDDED-POINTER-001`. A controlled Ami Pro 3.1 Save As
+observation independently produced this structure and an exact decimal pointer to
+byte 4,562 (`SAM-NATIVE-SAVE-001`). That exact output does not make every default
+header or style record mandatory.
 
 A reader MUST validate all offsets, lengths, counts, and nesting before allocating or
 slicing. It MUST NOT execute macros, DDE, OLE, dynamic fields, or external paths. An
@@ -80,6 +83,12 @@ are not yet catalogued well enough to make a complete value table.
 | `[files]`, `[prn]`, `[port]`, `[book]`, `[master]`, `[recfile]` | External-file/print/book metadata | Preserve; never automatically open a document-controlled path | syntax confirmed, field semantics incomplete, `SAM-ACTIVE-001` |
 | `[revisions]` | Exact single `0` is the observed no-revisions state | Record revision state; preserve nonzero/additional values as unresolved | tentative, `SAM-REVISION-001` |
 | Other header sections | Repeating name plus indented content | Preserve raw with source location; absence from this table is not permission to discard | open |
+
+The controlled native fixture contains two invented, blank-line-delimited `[edoc]`
+paragraphs. Ami Pro 3.1 reopened it and visibly displayed both as separate lines in
+two direct observations (`SAM-NATIVE-SAVE-001`, `SAM-NATIVE-OPEN-001`). This confirms
+text presence and that exact lifecycle, not general continuation rules, typography,
+line breaking, geometry, pagination, or print fidelity.
 
 ## 4. Style records
 
