@@ -18,6 +18,11 @@ from .amipro_launch_probe import (
     OUTER_TIME_LIMIT_SECONDS as AMIPRO_LAUNCH_TIME_LIMIT_SECONDS,
 )
 from .amipro_launch_probe import launch_amipro_ready
+from .batch import (
+    DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
+    MAX_DOCUMENT_TIMEOUT_SECONDS,
+    run_real_batch,
+)
 from .compare import compare_analyses
 from .constants import (
     COMPARE_SCHEMA,
@@ -37,6 +42,7 @@ from .errors import OracleError
 from .fake import run_fake_job
 from .io import atomic_write_json, digest_json, read_json_object, sha256_file
 from .media import inventory_media
+from .native_batch import print_native_document, validate_native_batch_prerequisites
 from .paths import oracle_home, repo_root
 from .printer_install import (
     OUTER_TIME_LIMIT_SECONDS as PRINTER_INSTALL_TIME_LIMIT_SECONDS,
@@ -222,6 +228,23 @@ def build_parser() -> argparse.ArgumentParser:
     _common(batch, backend=True)
     batch.add_argument("--input", type=Path, required=True)
     batch.add_argument("--output", type=Path, required=True)
+    batch.add_argument("--runtime-key")
+    batch.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
+        help=f"per-document wall-clock deadline (maximum {MAX_DOCUMENT_TIMEOUT_SECONDS}s)",
+    )
+    batch.add_argument(
+        "--resume",
+        action="store_true",
+        help="verify the saved plan and continue incomplete or failed documents",
+    )
+    batch.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the cached runtime made from proprietary media",
+    )
     batch.set_defaults(handler=_command_batch)
 
     compare = subparsers.add_parser(
@@ -834,16 +857,63 @@ def _discover_sam_files(root: Path) -> list[Path]:
 
 
 def _command_batch(args: argparse.Namespace) -> int:
-    if args.backend != "fake":
-        raise OracleError(
-            "real batch requires a ready Phase 3 print runtime; no real oracle is available yet",
-            exit_code=EXIT_MISSING,
-        )
     sources = _discover_sam_files(args.input)
     input_root = args.input.expanduser().absolute().resolve()
     output_candidate = args.output.expanduser().absolute().resolve(strict=False)
     if output_candidate == input_root or input_root in output_candidate.parents:
         raise OracleError("batch output must be outside the input tree", exit_code=EXIT_INTEGRITY)
+    if args.backend == "real":
+        if not args.confirm_proprietary_media_rights:
+            raise OracleError(
+                "real batch requires --confirm-proprietary-media-rights",
+                exit_code=EXIT_USAGE,
+            )
+        home = oracle_home(args.oracle_home, allow_temporary=False)
+        image = _toolchain_image(home)
+        if image is None:
+            raise OracleError(
+                "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+                exit_code=EXIT_MISSING,
+            )
+        runtime_key = validate_native_batch_prerequisites(
+            home,
+            image,
+            args.runtime_key,
+        )
+
+        def worker(source: Path, guest: str, timeout: float) -> dict[str, Any]:
+            return print_native_document(
+                home,
+                image,
+                source,
+                guest,
+                timeout,
+                runtime_key=runtime_key,
+            )
+
+        result, exit_code = run_real_batch(
+            sources=sources,
+            input_root=input_root,
+            output=output_candidate,
+            worker=worker,
+            timeout_seconds=args.timeout_seconds,
+            resume=args.resume,
+        )
+        _emit(
+            args,
+            result,
+            text=(
+                f"native batch: {result['success_count']} succeeded, "
+                f"{result['failure_count']} failed or blocked -> {output_candidate}"
+            ),
+        )
+        return exit_code
+
+    if args.resume:
+        raise OracleError(
+            "--resume is currently supported only by the real backend",
+            exit_code=EXIT_USAGE,
+        )
     output = _prepare_new_directory(args.output)
     bootstrap_fake(oracle_home(args.oracle_home, allow_temporary=True))
 

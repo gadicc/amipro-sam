@@ -9,6 +9,7 @@ import stat
 import tempfile
 import threading
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
@@ -339,7 +340,13 @@ def _capture_files(capture: Path) -> list[Path]:
     return sorted(paths, key=lambda item: item.name)
 
 
-def _wait_capture_closed(job: Path, stop: threading.Event, deadline: float) -> dict[str, object]:
+def _wait_capture_closed(
+    job: Path,
+    stop: threading.Event,
+    deadline: float,
+    *,
+    maximum: int = MAX_POSTSCRIPT_BYTES,
+) -> dict[str, object]:
     capture = job / "capture"
     log = job / "diagnostics" / "container.stderr.log"
     signature: tuple[str, int, int] | None = None
@@ -355,7 +362,7 @@ def _wait_capture_closed(job: Path, stop: threading.Event, deadline: float) -> d
                     signature = current
                     stable_since = monotonic()
                 elif stable_since is not None and monotonic() - stable_since >= 3:
-                    if not 1 <= info.st_size <= MAX_POSTSCRIPT_BYTES:
+                    if not 1 <= info.st_size <= maximum:
                         raise OracleError(
                             "PostScript capture size is outside its bound",
                             exit_code=EXIT_INTEGRITY,
@@ -458,13 +465,16 @@ def _invoke_guest(
     job: Path,
     *,
     timeout_seconds: float,
+    lifecycle: Callable[
+        [PodmanInvocation, Path, threading.Event], dict[str, object]
+    ] = _drive_print_lifecycle,
 ) -> tuple[dict[str, object], dict[str, object]]:
     stop = threading.Event()
     box: dict[str, object] = {}
 
     def worker() -> None:
         try:
-            box["result"] = _drive_print_lifecycle(invocation, job, stop)
+            box["result"] = lifecycle(invocation, job, stop)
         except BaseException as exc:
             box["result"] = {
                 "schema": POSTSCRIPT_SMOKE_UI_SCHEMA,

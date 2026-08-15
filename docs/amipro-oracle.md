@@ -13,8 +13,10 @@ cleanly. The supplied Windows PostScript driver has also been installed through 
 keyed, exact-screen-state gate, producing a sealed printer-ready base. Two subsequent one-file
 print jobs produced byte-identical PostScript, PDF, text, bounding-box, and raster results. This is
 controlled native evidence for one invented fixture and exact environment, not a general
-typography or print-fidelity baseline; no current manifest is accepted as a fidelity baseline. See the
-[investigation and adversarial plan](plans/amipro-oracle-plan.md).
+typography or print-fidelity baseline. The resumable real-batch path has also completed one
+invented-document probe through its generalized page/geometry analysis. No current manifest is
+accepted as a fidelity baseline. See the [investigation and adversarial
+plan](plans/amipro-oracle-plan.md).
 
 ## Commands
 
@@ -29,7 +31,8 @@ Run from the repository root:
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
 ./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
-./scripts/amipro-oracle batch --input PATH --output PATH
+./scripts/amipro-oracle batch --input PATH --output NEW_PRIVATE_PATH \
+  --confirm-proprietary-media-rights
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
 
@@ -53,10 +56,10 @@ WIN31_MEDIA_DIR="/absolute/path/to/windows-3.1-media"
 AMIPRO_MEDIA_DIR="/absolute/path/to/Ami Pro 3.1 media"
 ```
 
-Explicit `--win31-media` and `--amipro-media` arguments take precedence. Media inventory opens files read-only,
-rejects links and special files, detects concurrent changes, and records canonical hashes. The
-current owned Ami floppy images are host-writable, which `doctor` reports; future container/guest
-mounts must still expose them read-only.
+Explicit `--win31-media` and `--amipro-media` arguments take precedence. Media inventory opens
+files read-only, rejects links and special files, detects concurrent changes, and records canonical
+hashes. The current owned Ami floppy images are host-writable, which `doctor` reports; future
+container/guest mounts must still expose them read-only.
 
 ## Fake backend for CI
 
@@ -123,8 +126,9 @@ cleanup targets that identity rather than a reusable name. Killing only the `pod
 group is not treated as sufficient container cleanup.
 
 The Windows installer, boot-probe, Ami Pro installer, launch gate, document smoke, printer
-installer, and PostScript smoke retain their state traces, generated configurations, bounded stdout/stderr,
-changed-screen archives, observer status, runtime trees, and process cleanup results. The boot
+installer, and PostScript smoke retain their state traces, generated configurations, bounded
+stdout/stderr, changed-screen archives, observer status, runtime trees, and process cleanup
+results. The boot
 gate retains the accepted Program Manager and Exit Windows frames. The Ami Pro installer retains
 all seven recognized installer states plus the post-install Program Manager and Exit Windows
 frames. The document smoke retains the exact printer-warning, document-ready, Program Manager,
@@ -136,6 +140,53 @@ jobs that back them. Troubleshooting starts with captured evidence, not manual g
 The prior failed Wine attempt has been copied, hash-verified, and retained in a local ignored
 content-addressed evidence namespace. It is not part of the oracle runtime, and no Wine prefix or
 proprietary executable was copied into source.
+
+## Private native batches
+
+The real batch command recursively discovers `.SAM` files, sorts their relative names
+deterministically, and stages only one source at a time as `DOC00001.SAM`, `DOC00002.SAM`, and so
+on. The source directory is never mounted into the guest. Every document gets a new writable copy
+of the sealed printer-ready runtime, a separate wall-clock deadline, its own UI/process/capture
+evidence job, and exactly one raw PostScript capture. Locked Ghostscript and Poppler then derive a
+private reference PDF, per-page PNGs, text, and word boxes.
+
+Before native execution, a no-follow, mutation-detecting preflight rejects macro/DDE/OLE/link
+sections, dynamic X/Z expressions, embedded OLE payloads, nonempty external stylesheet/file/book/
+master/merge metadata, and path-like printer metadata. Unknown dialogs fail closed because the
+driver requires the exact editor menu, Print dialog, Program Manager, and Exit Windows states. A
+blocked, crashed, timed-out, split-print, or invalid document is recorded and the remaining files
+continue. Exit `1` means the batch completed with at least one such per-file result; it does not
+discard successful PDFs.
+
+For an ignored private corpus such as `mydocs`, choose a new output directory:
+
+```console
+./scripts/amipro-oracle batch \
+  --input mydocs \
+  --output .amipro-oracle/private-batches/mydocs-20260815 \
+  --timeout-seconds 180 \
+  --confirm-proprietary-media-rights
+```
+
+If the command is interrupted, or some documents fail transiently, repeat the exact command with
+`--resume`. Successful results are hash-verified and skipped; incomplete and failed documents get
+new numbered attempts while previous failure evidence is retained:
+
+```console
+./scripts/amipro-oracle batch \
+  --input mydocs \
+  --output .amipro-oracle/private-batches/mydocs-20260815 \
+  --timeout-seconds 180 \
+  --resume \
+  --confirm-proprietary-media-rights
+```
+
+`plan.json` and `name-map.json` map private relative source names to DOS-safe names.
+`reference-pdf/DOC00001.pdf` and its siblings are the convenient PDF collection; `batch.json` is
+the atomic progress/summary journal. All of these files contain or identify private material and
+must remain ignored and local. The PDFs can embed fonts from the proprietary guest environment;
+neither they nor the PNGs are cleared for redistribution, and every result remains
+`baseline_eligible: false`.
 
 ## Windows bootstrap, boot gate, and Ami Pro install
 

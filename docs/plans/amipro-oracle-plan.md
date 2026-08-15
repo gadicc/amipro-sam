@@ -330,7 +330,8 @@ The public surface is:
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
 ./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
-./scripts/amipro-oracle batch --input PATH --output PATH
+./scripts/amipro-oracle batch --input PATH --output NEW_PRIVATE_PATH \
+  --confirm-proprietary-media-rights
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
 
@@ -381,10 +382,15 @@ diagnostics. Host absolute source paths are omitted by default.
 
 ### Phase 4: unattended batch
 
-- Add deterministic 8.3 staging/name maps, per-file disposable state, resumability, dialog/crash
-  classification, continue/fail policy, and per-file deadlines.
-- Test collisions, hostile names, corrupt/macro-bearing files, partial captures, hangs, disk-full,
-  and interruption/resume. Real private documents remain opt-in and local.
+- **Implemented and exercised for one invented input:** deterministic 8.3 staging/name maps,
+  per-file disposable state, hash-verified resumability, exact-state dialog/crash classification,
+  continue/fail policy, per-file deadlines, and variable-page PostScript/PDF/PNG/text/box analysis.
+- Static preflight rejects active and external-content surfaces before Ami Pro sees a document.
+  Tests cover case collisions, active sections/OLE/external paths, tampered resume artifacts,
+  per-file continuation, retained retry attempts, and interruption/resume. The live invented probe
+  also exercised a failed first attempt followed by successful resume and no-op cache reuse.
+- Real private documents remain opt-in, ignored, local, and baseline-ineligible. A full private
+  corpus run is an operational follow-up, not evidence that may be committed.
 
 ### Phase 5: converter integration
 
@@ -483,6 +489,24 @@ artifacts remain ignored/local and both jobs are `baseline_eligible: false`. Pha
 establishes reproducible output for this exact fixture, application, driver, printer model, and
 toolchain only; it does not establish general SAM pagination or typography fidelity.
 
+The generalized Phase 4 worker was then exercised with the same invented source under the DOS-safe
+name `DOC00001.SAM`. Its first attempt deliberately encountered the sandbox's unavailable rootless
+Podman provider and was retained as failure evidence; `--resume` created a second disposable
+attempt and completed successfully. Evidence job `batch-document-uhl_oodg` traversed
+`created -> staged -> guest-invoked -> printed -> guest-returned -> analyzed -> complete`. Its
+one-page private PDF is 5,740 bytes with SHA-256
+`f8ed587f2403908fd644a3e80fed36d38618948e9699345acd5e25a92ea475c3`; the 144-DPI raster is
+1190x1684. The batch result and job manifest hashes were independently rechecked, and a subsequent
+resume skipped the verified success without starting a guest container. This proves the
+generalized batch, retry, and resume path for one invented document only. It is not evidence about
+any private corpus document or a redistributable reference artifact.
+
+The final current-worker probe, `batch-document-_fotx3u8`, completed in 67.55 seconds and produced
+the same 5,740-byte PDF hash. It additionally verified the success-only cleanup policy: the
+disposable 29 MB guest runtime was absent after validation while the PS/PDF/PNG/text/UI/log
+evidence and manifest remained. Failed native jobs still retain their disposable runtimes for
+diagnosis.
+
 For a fresh local rebuild, first affirm the right to use the supplied media:
 
 ```console
@@ -502,6 +526,8 @@ media through the repository. Then run:
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
 ./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
+./scripts/amipro-oracle batch --input PATH --output NEW_PRIVATE_PATH \
+  --confirm-proprietary-media-rights
 ```
 
 The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed
