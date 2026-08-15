@@ -159,6 +159,45 @@ blocked, crashed, timed-out, split-print, or invalid document is recorded and th
 continue. Exit `1` means the batch completed with at least one such per-file result; it does not
 discard successful PDFs.
 
+The preflight also inventories the sealed runtime's bounded `WIN.INI` `[fonts]` registrations and
+`[FontSubstitutes]` aliases without loading font payloads. It extracts bounded family references
+from style `[fnt]` records and inline `<:f...>` commands independently of the production converter.
+Each private plan, job result, and native evidence manifest records the requested families and one
+of these classifications:
+
+- `installed`: the family matches a registered Windows family or face;
+- `explicit-alias`: `WIN.INI` declares a substitute whose target is installed or enumerated;
+- `printer-device`: the selected printer profile explicitly enumerates the family; or
+- `native-substitution-unresolved`: the sealed inventory cannot prove how Ami Pro, Windows GDI, or
+  PSCRIPT will resolve it.
+
+The current QMS profile does not yet enumerate its resident device-font list through a trusted
+interface, so an otherwise available printer font may conservatively remain unresolved. By
+default, the oracle still runs such a document and marks its font fidelity
+`degraded-or-unknown`; this preserves the native environment's actual substitution behavior.
+`pdffonts.txt` remains available for inspection, but an unnamed Type 3 output font cannot be
+reliably mapped back to a requested SAM family.
+
+Use strict font preflight when silent substitution is unacceptable:
+
+```console
+./scripts/amipro-oracle batch \
+  --input mydocs \
+  --output .amipro-oracle/private-batches/mydocs-strict-20260815 \
+  --require-installed-fonts \
+  --confirm-proprietary-media-rights
+```
+
+Strict mode blocks a document before native execution if any family is unresolved or the bounded
+font scan is incomplete. Installed fonts, verified explicit aliases, and enumerated printer-device
+fonts are accepted. The policy and font-environment digest are part of `plan.json`, so `--resume`
+cannot silently switch policies or runtimes.
+
+This addition advances the private real-batch plan, result, document, failure, native-audit, and
+native-document schemas to version 2. A version-1 batch remains valid retained evidence, but it
+cannot be resumed by the version-2 coordinator; choose a new output directory so old evidence is
+not silently reinterpreted or overwritten.
+
 For an ignored private corpus such as `mydocs`, choose a new output directory:
 
 ```console

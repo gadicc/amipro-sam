@@ -18,6 +18,7 @@ from .batch import NATIVE_SAM_AUDIT_SCHEMA, _read_bounded_file, read_and_audit_s
 from .config import DOSBOX_PROFILE, dosbox_config
 from .constants import ANALYSIS_SCHEMA, EXIT_BACKEND, EXIT_INTEGRITY, JOB_SCHEMA
 from .errors import OracleError
+from .font_audit import font_environment_from_runtime, font_fidelity_degraded
 from .io import atomic_write, atomic_write_json, digest_json, read_json_object, sha256_file
 from .oci import BindMount, PodmanInvocation, build_podman_invocation
 from .raster import decode_png
@@ -34,8 +35,8 @@ from .windows_bootstrap import (
     _validate_observer_evidence,
 )
 
-NATIVE_DOCUMENT_INPUT_SCHEMA = "amipro-oracle-native-document-input-v1"
-NATIVE_DOCUMENT_RESULT_SCHEMA = "amipro-oracle-native-document-result-v1"
+NATIVE_DOCUMENT_INPUT_SCHEMA = "amipro-oracle-native-document-input-v2"
+NATIVE_DOCUMENT_RESULT_SCHEMA = "amipro-oracle-native-document-result-v2"
 NATIVE_DOCUMENT_UI_SCHEMA = "amipro-oracle-native-document-ui-v1"
 NATIVE_POSTSCRIPT_SCHEMA = "amipro-oracle-native-postscript-v1"
 
@@ -101,14 +102,32 @@ def validate_native_batch_prerequisites(
     home: Path,
     image_record: dict[str, Any],
     runtime_key: str | None,
-) -> str:
+) -> tuple[str, dict[str, object]]:
     """Fail before creating a large batch if its global runtime is unavailable."""
     _require_verified_image(image_record)
-    _root, ready, _inputs, _evidence = smoke_module._select_printer_runtime(
+    root, ready, _inputs, _evidence = smoke_module._select_printer_runtime(
         home,
         runtime_key,
     )
-    return str(ready["runtime_key"])
+    return str(ready["runtime_key"]), _font_environment(root, ready)
+
+
+def _font_environment(root: Path, ready: dict[str, Any]) -> dict[str, object]:
+    identity = ready.get("printer_identity")
+    if not isinstance(identity, dict):
+        raise OracleError("printer runtime lacks its font identity", exit_code=EXIT_INTEGRITY)
+    profile = ready.get("printer_profile")
+    model = identity.get("model")
+    if not isinstance(profile, str) or not isinstance(model, str):
+        raise OracleError("printer runtime font identity is invalid", exit_code=EXIT_INTEGRITY)
+    return font_environment_from_runtime(
+        root / "pristine-c",
+        runtime_key=str(ready["runtime_key"]),
+        sealed_tree_digest=str(ready["sealed_tree_digest"]),
+        printer_profile=profile,
+        printer_model=model,
+        printer_identity_digest=digest_json(identity),
+    )
 
 
 def native_document_config() -> str:
@@ -254,8 +273,8 @@ def _drive_native_lifecycle(
                     stop=stop,
                     deadline=min(deadline, monotonic() + EDITOR_RECONFIRM_SECONDS),
                 )
-            except OracleError:
-                raise exc
+            except OracleError as state_error:
+                raise exc from state_error
             continue
         actions.append(
             {
@@ -732,12 +751,17 @@ def print_native_document(
     runtime_key: str | None = None,
 ) -> dict[str, Any]:
     started = monotonic()
-    payload, audit = read_and_audit_source(source, guest_name=guest_name)
     _require_verified_image(image_record)
     _ensure_private_directories(home)
     source_root, ready, _ready_inputs, _ready_evidence = smoke_module._select_printer_runtime(
         home,
         runtime_key,
+    )
+    font_environment = _font_environment(source_root, ready)
+    payload, audit = read_and_audit_source(
+        source,
+        guest_name=guest_name,
+        font_environment=font_environment,
     )
     inputs = _native_inputs(ready, audit, image_record, timeout_seconds=timeout_seconds)
     parent_key = str(ready["runtime_key"])
@@ -745,6 +769,11 @@ def print_native_document(
         source_root, checked_ready, _checked_inputs, _checked_evidence = (
             smoke_module._select_printer_runtime(home, parent_key)
         )
+        if _font_environment(source_root, checked_ready) != font_environment:
+            raise OracleError(
+                "printer font environment changed after planning",
+                exit_code=EXIT_INTEGRITY,
+            )
         if _native_inputs(
             checked_ready,
             audit,
@@ -942,6 +971,11 @@ def print_native_document(
                     "private native reference output; not baseline eligible",
                     "review font embedding before any publication",
                     "disposable guest runtime removed after successful validation",
+                    *(
+                        ["source font fidelity is degraded or unresolved in this runtime"]
+                        if font_fidelity_degraded(audit.get("font_resolution"))
+                        else []
+                    ),
                 ],
             }
             atomic_write_json(job / "job.json", manifest)
@@ -950,6 +984,7 @@ def print_native_document(
                 "job_manifest_sha256": sha256_file(job / "job.json"),
                 "pdf_path": str(job / "output" / "document.pdf"),
                 "page_count": analysis["page_count"],
+                "font_resolution": audit["font_resolution"],
             }
         except BaseException as exc:
             attached = getattr(exc, "process_result", None)

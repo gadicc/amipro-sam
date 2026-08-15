@@ -36,7 +36,10 @@ def _ready() -> dict[str, object]:
         "printer_profile": native_module.smoke_module.printer_module.PRINTER_PROFILE["name"],
         "printer_tree_digest": "synthetic-tree",
         "sealed_tree_digest": "2" * 64,
-        "printer_identity": {"profile": "synthetic-printer"},
+        "printer_identity": {
+            "profile": "synthetic-printer",
+            "model": "Invented PostScript Printer",
+        },
     }
 
 
@@ -49,6 +52,10 @@ def _write_source(root: Path, name: str, payload: bytes | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(_sam() if payload is None else payload)
     return path
+
+
+def _font_resolution(guest: str) -> dict[str, object]:
+    return batch_module.audit_native_sam(_sam(), guest_name=guest)["font_resolution"]
 
 
 def test_native_preflight_is_fail_closed_for_active_and_external_content() -> None:
@@ -125,6 +132,7 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
             "job_manifest_sha256": "a" * 64,
             "pdf_path": str(pdf),
             "page_count": 1,
+            "font_resolution": _font_resolution(guest),
         }
 
     summary, exit_code = batch_module.run_real_batch(
@@ -164,6 +172,7 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
             "job_manifest_sha256": "b" * 64,
             "pdf_path": str(pdf),
             "page_count": 2,
+            "font_resolution": _font_resolution(guest),
         }
 
     resumed, resumed_exit = batch_module.run_real_batch(
@@ -216,6 +225,7 @@ def test_batch_status_finds_the_active_read_only_observer_screen(
         "index": 1,
         "guest": "DOC00001.SAM",
         "preflight": "ready",
+        "font_fidelity": "no-explicit-font-families",
         "evidence_job": evidence.name,
         "active": True,
         "screen_path": str(screen.absolute()),
@@ -241,11 +251,13 @@ def test_batch_coordinator_lock_rejects_a_second_runner(tmp_path: Path) -> None:
     locks.chmod(0o700)
     output = tmp_path / "private-output"
 
-    with batch_module.batch_coordinator_lock(home, output):
-        with pytest.raises(OracleError, match="another coordinator") as caught:
-            with batch_module.batch_coordinator_lock(home, output):
-                pytest.fail("a second coordinator acquired the same output lock")
-        assert caught.value.exit_code == EXIT_BACKEND
+    with (
+        pytest.raises(OracleError, match="another coordinator") as caught,
+        batch_module.batch_coordinator_lock(home, output),
+        batch_module.batch_coordinator_lock(home, output),
+    ):
+        pytest.fail("a second coordinator acquired the same output lock")
+    assert caught.value.exit_code == EXIT_BACKEND
 
 
 def test_resume_rejects_tampered_pdf_path_and_records_interrupt(tmp_path: Path) -> None:
@@ -261,6 +273,7 @@ def test_resume_rejects_tampered_pdf_path_and_records_interrupt(tmp_path: Path) 
             "job_manifest_sha256": "c" * 64,
             "pdf_path": str(pdf),
             "page_count": 1,
+            "font_resolution": _font_resolution(_guest),
         }
 
     batch_module.run_real_batch(
@@ -446,6 +459,14 @@ def test_native_document_worker_retains_a_verifiable_job(
     runtime = parent / "pristine-c"
     runtime.mkdir(parents=True)
     (runtime / "base.dat").write_bytes(b"synthetic runtime")
+    (runtime / "AMIPRO").mkdir()
+    (runtime / "WINDOWS" / "SYSTEM").mkdir(parents=True)
+    (runtime / "WINDOWS" / "SYSTEM" / "ARIAL.FOT").write_bytes(b"invented wrapper")
+    (runtime / "WINDOWS" / "SYSTEM" / "ARIAL.TTF").write_bytes(b"invented font")
+    (runtime / "WINDOWS" / "WIN.INI").write_text(
+        "[fonts]\r\nArial (TrueType)=ARIAL.FOT\r\n",
+        encoding="latin-1",
+    )
     source = _write_source(tmp_path, "source.sam")
     ready = _ready()
 
@@ -565,7 +586,10 @@ def test_real_batch_cli_requires_rights_and_dispatches(
     monkeypatch.setattr(
         cli_module,
         "validate_native_batch_prerequisites",
-        lambda _home, _image, runtime_key: runtime_key or "e" * 64,
+        lambda _home, _image, runtime_key: (
+            runtime_key or "e" * 64,
+            {"schema": "invented-font-environment"},
+        ),
     )
     observed: dict[str, object] = {}
 
@@ -588,6 +612,7 @@ def test_real_batch_cli_requires_rights_and_dispatches(
             "status": "success",
             "success_count": 1,
             "failure_count": 0,
+            "font_warning_count": 0,
         }, 0
 
     monkeypatch.setattr(cli_module, "run_real_batch", run)
@@ -619,6 +644,7 @@ def test_real_batch_cli_requires_rights_and_dispatches(
                 "--timeout-seconds",
                 "45",
                 "--progress",
+                "--require-installed-fonts",
                 "--confirm-proprietary-media-rights",
                 "--json",
             ]
@@ -632,3 +658,5 @@ def test_real_batch_cli_requires_rights_and_dispatches(
     assert observed["timeout_seconds"] == 45
     assert observed["resume"] is False
     assert callable(observed["progress"])
+    assert observed["require_installed_fonts"] is True
+    assert observed["font_environment"] == {"schema": "invented-font-environment"}

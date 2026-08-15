@@ -6,22 +6,28 @@ import hashlib
 import os
 import re
 import stat
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterator
+from typing import Any
 
 from .constants import EXIT_BACKEND, EXIT_DIFFERENT, EXIT_INTEGRITY
 from .errors import OracleError
+from .font_audit import (
+    classify_document_fonts,
+    font_fidelity_degraded,
+    font_policy,
+    font_policy_blocks,
+)
 from .io import atomic_write, atomic_write_json, digest_json, read_json_object, sha256_file
 
-BATCH_PLAN_SCHEMA = "amipro-oracle-real-batch-plan-v1"
-BATCH_RESULT_SCHEMA = "amipro-oracle-real-batch-v1"
+BATCH_PLAN_SCHEMA = "amipro-oracle-real-batch-plan-v2"
+BATCH_RESULT_SCHEMA = "amipro-oracle-real-batch-v2"
 BATCH_PROGRESS_SCHEMA = "amipro-oracle-real-batch-progress-v1"
 BATCH_STATUS_SCHEMA = "amipro-oracle-real-batch-status-v1"
-BATCH_DOCUMENT_SCHEMA = "amipro-oracle-real-batch-document-v1"
-BATCH_FAILURE_SCHEMA = "amipro-oracle-real-batch-failure-v1"
-NATIVE_SAM_AUDIT_SCHEMA = "amipro-oracle-native-sam-audit-v1"
+BATCH_DOCUMENT_SCHEMA = "amipro-oracle-real-batch-document-v2"
+BATCH_FAILURE_SCHEMA = "amipro-oracle-real-batch-failure-v2"
+NATIVE_SAM_AUDIT_SCHEMA = "amipro-oracle-native-sam-audit-v2"
 
 MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_PDF_BYTES = 64 * 1024 * 1024
@@ -162,7 +168,12 @@ def _section_payloads(payload: bytes) -> dict[str, list[bytes]]:
     return sections
 
 
-def audit_native_sam(payload: bytes, *, guest_name: str) -> dict[str, object]:
+def audit_native_sam(
+    payload: bytes,
+    *,
+    guest_name: str,
+    font_environment: dict[str, object] | None = None,
+) -> dict[str, object]:
     if _STAGED_NAME.fullmatch(guest_name) is None:
         raise OracleError("invalid DOS-safe batch name", exit_code=EXIT_INTEGRITY)
     if not 1 <= len(payload) <= MAX_DOCUMENT_BYTES:
@@ -202,6 +213,7 @@ def audit_native_sam(payload: bytes, *, guest_name: str) -> dict[str, object]:
         "guest_name": guest_name,
         "section_count": sum(len(values) for values in sections.values()),
         "embedded_extensions": extensions,
+        "font_resolution": classify_document_fonts(payload, font_environment),
         "policies": {
             "active_sections": "rejected",
             "ole_payloads": "rejected",
@@ -213,9 +225,18 @@ def audit_native_sam(payload: bytes, *, guest_name: str) -> dict[str, object]:
     }
 
 
-def read_and_audit_source(path: Path, *, guest_name: str) -> tuple[bytes, dict[str, object]]:
+def read_and_audit_source(
+    path: Path,
+    *,
+    guest_name: str,
+    font_environment: dict[str, object] | None = None,
+) -> tuple[bytes, dict[str, object]]:
     payload = _read_bounded_source(path)
-    return payload, audit_native_sam(payload, guest_name=guest_name)
+    return payload, audit_native_sam(
+        payload,
+        guest_name=guest_name,
+        font_environment=font_environment,
+    )
 
 
 def _relative_source(source: Path, root: Path) -> str:
@@ -226,9 +247,20 @@ def _relative_source(source: Path, root: Path) -> str:
     return relative
 
 
-def build_batch_plan(sources: list[Path], input_root: Path) -> dict[str, Any]:
+def build_batch_plan(
+    sources: list[Path],
+    input_root: Path,
+    *,
+    font_environment: dict[str, object] | None = None,
+    require_installed_fonts: bool = False,
+) -> dict[str, Any]:
     if not 1 <= len(sources) <= MAX_BATCH_DOCUMENTS:
         raise OracleError("batch document count is outside its bound", exit_code=EXIT_INTEGRITY)
+    if require_installed_fonts and font_environment is None:
+        raise OracleError(
+            "strict font preflight requires a sealed runtime font inventory",
+            exit_code=EXIT_INTEGRITY,
+        )
     records: list[dict[str, object]] = []
     for index, source in enumerate(sources, start=1):
         guest = staged_name(index)
@@ -252,7 +284,11 @@ def build_batch_plan(sources: list[Path], input_root: Path) -> dict[str, Any]:
             "source_sha256": hashlib.sha256(payload).hexdigest(),
         }
         try:
-            audit = audit_native_sam(payload, guest_name=guest)
+            audit = audit_native_sam(
+                payload,
+                guest_name=guest,
+                font_environment=font_environment,
+            )
         except OracleError as exc:
             records.append(
                 {
@@ -266,6 +302,27 @@ def build_batch_plan(sources: list[Path], input_root: Path) -> dict[str, Any]:
                 }
             )
         else:
+            if font_policy_blocks(
+                audit.get("font_resolution"),
+                require_installed_fonts=require_installed_fonts,
+            ):
+                records.append(
+                    {
+                        "index": index,
+                        "source": relative,
+                        "guest": guest,
+                        **identity,
+                        "preflight": "blocked",
+                        "audit": audit,
+                        "font_resolution": audit["font_resolution"],
+                        "error": (
+                            "strict font preflight could not resolve every requested family "
+                            "against the sealed runtime inventory"
+                        ),
+                        "exit_code": EXIT_INTEGRITY,
+                    }
+                )
+                continue
             records.append(
                 {
                     "index": index,
@@ -274,6 +331,7 @@ def build_batch_plan(sources: list[Path], input_root: Path) -> dict[str, Any]:
                     "preflight": "ready",
                     **identity,
                     "audit": audit,
+                    "font_resolution": audit["font_resolution"],
                 }
             )
     pdf_names: set[str] = set()
@@ -288,6 +346,8 @@ def build_batch_plan(sources: list[Path], input_root: Path) -> dict[str, Any]:
     identity = {
         "schema": BATCH_PLAN_SCHEMA,
         "document_count": len(records),
+        "font_environment": font_environment,
+        "font_policy": font_policy(require_installed_fonts=require_installed_fonts),
         "records": records,
     }
     return {**identity, "plan_digest": digest_json(identity)}
@@ -373,6 +433,9 @@ def _batch_summary(
 ) -> dict[str, Any]:
     successes = sum(item.get("status") == "success" for item in jobs)
     failures = sum(item.get("status") in {"failure", "blocked"} for item in jobs)
+    font_warnings = sum(
+        font_fidelity_degraded(item.get("font_resolution")) for item in jobs
+    )
     pending = int(plan["document_count"]) - len(jobs)
     if interrupted:
         status = "interrupted"
@@ -391,7 +454,9 @@ def _batch_summary(
         "document_count": plan["document_count"],
         "success_count": successes,
         "failure_count": failures,
+        "font_warning_count": font_warnings,
         "pending_count": pending,
+        "font_policy": plan["font_policy"],
         "jobs": jobs,
     }
 
@@ -450,6 +515,8 @@ def _read_saved_plan(output: Path) -> dict[str, Any]:
     identity = {
         "schema": plan.get("schema"),
         "document_count": count,
+        "font_environment": plan.get("font_environment"),
+        "font_policy": plan.get("font_policy"),
         "records": records,
     }
     if (
@@ -519,7 +586,14 @@ def _read_batch_journal(output: Path, plan: dict[str, Any]) -> dict[str, Any] | 
             isinstance(item, dict) and item.get("status") in {"failure", "blocked"}
             for item in jobs
         )
+        or journal.get("font_warning_count")
+        != sum(
+            isinstance(item, dict)
+            and font_fidelity_degraded(item.get("font_resolution"))
+            for item in jobs
+        )
         or journal.get("pending_count") != count - len(jobs)
+        or journal.get("font_policy") != plan.get("font_policy")
     ):
         raise OracleError("batch journal failed integrity checks", exit_code=EXIT_INTEGRITY)
     return journal
@@ -603,6 +677,11 @@ def read_batch_status(output: Path, home: Path) -> dict[str, object]:
             "index": record["index"],
             "guest": record["guest"],
             "preflight": record["preflight"],
+            "font_fidelity": (
+                record.get("font_resolution", {}).get("fidelity")
+                if isinstance(record.get("font_resolution"), dict)
+                else None
+            ),
         }
         evidence = _matching_evidence_job(home, record)
         if evidence is not None:
@@ -659,6 +738,7 @@ def _validated_resume_result(
         or result.get("source") != record.get("source")
         or result.get("guest") != record.get("guest")
         or result.get("source_sha256") != record.get("source_sha256")
+        or result.get("font_resolution") != record.get("font_resolution")
         or not isinstance(result.get("job_manifest_sha256"), str)
         or _SHA256.fullmatch(result["job_manifest_sha256"]) is None
         or not isinstance(result.get("evidence_job"), str)
@@ -709,6 +789,7 @@ def _validated_blocked_result(
         "source_size": record.get("source_size"),
         "source_sha256": record.get("source_sha256"),
         "guest": record["guest"],
+        "font_resolution": record.get("font_resolution"),
         "error": record["error"],
         "exit_code": record["exit_code"],
     }
@@ -739,17 +820,24 @@ def run_real_batch(
     timeout_seconds: float = DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     resume: bool = False,
     progress: Callable[[dict[str, object]], None] | None = None,
+    font_environment: dict[str, object] | None = None,
+    require_installed_fonts: bool = False,
 ) -> tuple[dict[str, Any], int]:
     if (
         isinstance(timeout_seconds, bool)
-        or not isinstance(timeout_seconds, (int, float))
+        or not isinstance(timeout_seconds, int | float)
         or not 1 <= timeout_seconds <= MAX_DOCUMENT_TIMEOUT_SECONDS
     ):
         raise OracleError(
             f"batch document timeout must be between 1 and {MAX_DOCUMENT_TIMEOUT_SECONDS} seconds",
             exit_code=EXIT_INTEGRITY,
         )
-    plan = build_batch_plan(sources, input_root)
+    plan = build_batch_plan(
+        sources,
+        input_root,
+        font_environment=font_environment,
+        require_installed_fonts=require_installed_fonts,
+    )
     if resume:
         _validate_output_root(output)
         plan_path = output / "plan.json"
@@ -830,6 +918,7 @@ def run_real_batch(
                     "source_size": record.get("source_size"),
                     "source_sha256": record.get("source_sha256"),
                     "guest": record["guest"],
+                    "font_resolution": record.get("font_resolution"),
                     "error": record["error"],
                     "exit_code": record["exit_code"],
                 }
@@ -862,6 +951,7 @@ def run_real_batch(
                 _payload, current_audit = read_and_audit_source(
                     source,
                     guest_name=str(record["guest"]),
+                    font_environment=font_environment,
                 )
                 if current_audit != record["audit"]:
                     raise OracleError(
@@ -879,6 +969,7 @@ def run_real_batch(
                     or _SHA256.fullmatch(native["job_manifest_sha256"]) is None
                     or type(native.get("page_count")) is not int
                     or not 1 <= native["page_count"] <= 128
+                    or native.get("font_resolution") != record.get("font_resolution")
                 ):
                     raise OracleError(
                         "native batch worker returned invalid evidence",
@@ -912,6 +1003,7 @@ def run_real_batch(
                     "source_size": record["source_size"],
                     "source_sha256": record["source_sha256"],
                     "guest": record["guest"],
+                    "font_resolution": record.get("font_resolution"),
                     "evidence_job": evidence_job,
                     "job_manifest_sha256": native.get("job_manifest_sha256"),
                     "pdf": pdf,
@@ -931,6 +1023,7 @@ def run_real_batch(
                     "source": record["source"],
                     "source_sha256": record.get("source_sha256"),
                     "guest": record["guest"],
+                    "font_resolution": record.get("font_resolution"),
                     "error": _safe_failure_message(exc),
                     "exit_code": exit_code,
                 }

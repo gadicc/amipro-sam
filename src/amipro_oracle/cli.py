@@ -46,14 +46,14 @@ from .io import atomic_write_json, digest_json, read_json_object, sha256_file
 from .media import inventory_media
 from .native_batch import print_native_document, validate_native_batch_prerequisites
 from .paths import oracle_home, repo_root
-from .printer_install import (
-    OUTER_TIME_LIMIT_SECONDS as PRINTER_INSTALL_TIME_LIMIT_SECONDS,
-)
-from .printer_install import install_printer_ready
 from .postscript_smoke import (
     OUTER_TIME_LIMIT_SECONDS as POSTSCRIPT_SMOKE_TIME_LIMIT_SECONDS,
 )
 from .postscript_smoke import print_smoke
+from .printer_install import (
+    OUTER_TIME_LIMIT_SECONDS as PRINTER_INSTALL_TIME_LIMIT_SECONDS,
+)
+from .printer_install import install_printer_ready
 from .runtime import bootstrap_fake
 from .toolchain import probe_recorded_image, probe_toolchain
 from .windows_boot_probe import OUTER_TIME_LIMIT_SECONDS, boot_windows_ready
@@ -246,6 +246,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--progress",
         action="store_true",
         help="emit privacy-safe per-document progress lines to stderr",
+    )
+    batch.add_argument(
+        "--require-installed-fonts",
+        action="store_true",
+        help=(
+            "block documents whose requested fonts are not installed, explicitly aliased, "
+            "or enumerated as printer-device fonts"
+        ),
     )
     batch.add_argument(
         "--confirm-proprietary-media-rights",
@@ -895,7 +903,7 @@ def _command_batch(args: argparse.Namespace) -> int:
                 "build the locked OCI image with ./scripts/build-oracle-toolchain first",
                 exit_code=EXIT_MISSING,
             )
-        runtime_key = validate_native_batch_prerequisites(
+        runtime_key, font_environment = validate_native_batch_prerequisites(
             home,
             image,
             args.runtime_key,
@@ -937,13 +945,16 @@ def _command_batch(args: argparse.Namespace) -> int:
                 timeout_seconds=args.timeout_seconds,
                 resume=args.resume,
                 progress=progress if args.progress else None,
+                font_environment=font_environment,
+                require_installed_fonts=args.require_installed_fonts,
             )
         _emit(
             args,
             result,
             text=(
                 f"native batch: {result['success_count']} succeeded, "
-                f"{result['failure_count']} failed or blocked -> {output_candidate}"
+                f"{result['failure_count']} failed or blocked, "
+                f"{result['font_warning_count']} with font warnings -> {output_candidate}"
             ),
         )
         return exit_code
@@ -956,6 +967,11 @@ def _command_batch(args: argparse.Namespace) -> int:
     if args.resume:
         raise OracleError(
             "--resume is currently supported only by the real backend",
+            exit_code=EXIT_USAGE,
+        )
+    if args.require_installed_fonts:
+        raise OracleError(
+            "--require-installed-fonts is supported only by the real backend",
             exit_code=EXIT_USAGE,
         )
     output = _prepare_new_directory(args.output)
