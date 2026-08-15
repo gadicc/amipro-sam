@@ -9,7 +9,7 @@ import pytest
 from amipro_oracle import batch as batch_module
 from amipro_oracle import cli as cli_module
 from amipro_oracle import native_batch as native_module
-from amipro_oracle.constants import EXIT_DIFFERENT, EXIT_INTEGRITY
+from amipro_oracle.constants import EXIT_BACKEND, EXIT_DIFFERENT, EXIT_INTEGRITY
 from amipro_oracle.errors import OracleError
 from amipro_oracle.io import atomic_write_json, read_json_object
 
@@ -231,6 +231,20 @@ def test_batch_status_finds_the_active_read_only_observer_screen(
         == 0
     )
     assert capsys.readouterr().out.strip() == str(screen.absolute())
+
+
+def test_batch_coordinator_lock_rejects_a_second_runner(tmp_path: Path) -> None:
+    home = tmp_path / "oracle"
+    locks = home / "locks"
+    locks.mkdir(parents=True, mode=0o700)
+    locks.chmod(0o700)
+    output = tmp_path / "private-output"
+
+    with batch_module.batch_coordinator_lock(home, output):
+        with pytest.raises(OracleError, match="another coordinator") as caught:
+            with batch_module.batch_coordinator_lock(home, output):
+                pytest.fail("a second coordinator acquired the same output lock")
+        assert caught.value.exit_code == EXIT_BACKEND
 
 
 def test_resume_rejects_tampered_pdf_path_and_records_interrupt(tmp_path: Path) -> None:
@@ -473,6 +487,8 @@ def test_real_batch_cli_requires_rights_and_dispatches(
     _write_source(source_root, "a.sam")
     output = tmp_path / "output"
     home = tmp_path / "oracle"
+    (home / "locks").mkdir(parents=True, mode=0o700)
+    (home / "locks").chmod(0o700)
     monkeypatch.setattr(cli_module, "oracle_home", lambda *_args, **_kwargs: home)
     monkeypatch.setattr(cli_module, "_toolchain_image", lambda _home: {"image": True})
     monkeypatch.setattr(

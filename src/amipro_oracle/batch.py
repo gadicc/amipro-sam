@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import errno
+import fcntl
 import hashlib
 import os
 import re
 import stat
+from contextlib import contextmanager
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterator
 
 from .constants import EXIT_BACKEND, EXIT_DIFFERENT, EXIT_INTEGRITY
 from .errors import OracleError
@@ -38,6 +41,58 @@ _PRINTER_SECTIONS = frozenset({"prn", "port"})
 _ACTIVE_EMBEDDED_EXTENSIONS = frozenset({".ole"})
 _PATH_SYNTAX = re.compile(rb"(?:[A-Za-z]:[\\/]|\\\\|/|\.\.|[a-z]+://)", re.I)
 _DYNAMIC_EXPRESSION = re.compile(rb"<:[XZ](?:~)?")
+
+
+@contextmanager
+def batch_coordinator_lock(home: Path, output: Path) -> Iterator[None]:
+    locks = home / "locks"
+    if (
+        locks.is_symlink()
+        or not locks.is_dir()
+        or stat.S_IMODE(locks.stat().st_mode) & 0o077
+    ):
+        raise OracleError(
+            "oracle lock directory is missing or unsafe",
+            exit_code=EXIT_INTEGRITY,
+        )
+    identity = hashlib.sha256(str(output.absolute()).encode("utf-8")).hexdigest()
+    path = locks / f"batch-{identity}.lock"
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise OracleError(
+            "cannot open the private batch coordinator lock",
+            exit_code=EXIT_INTEGRITY,
+        ) from exc
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise OracleError(
+                "private batch coordinator lock is unsafe",
+                exit_code=EXIT_INTEGRITY,
+            )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                raise OracleError(
+                    "this batch output is already being processed by another coordinator",
+                    exit_code=EXIT_BACKEND,
+                ) from exc
+            raise
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def staged_name(index: int) -> str:

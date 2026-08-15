@@ -21,6 +21,7 @@ from .amipro_launch_probe import launch_amipro_ready
 from .batch import (
     DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     MAX_DOCUMENT_TIMEOUT_SECONDS,
+    batch_coordinator_lock,
     read_batch_status,
     run_real_batch,
 )
@@ -927,15 +928,16 @@ def _command_batch(args: argparse.Namespace) -> int:
                 flush=True,
             )
 
-        result, exit_code = run_real_batch(
-            sources=sources,
-            input_root=input_root,
-            output=output_candidate,
-            worker=worker,
-            timeout_seconds=args.timeout_seconds,
-            resume=args.resume,
-            progress=progress if args.progress else None,
-        )
+        with batch_coordinator_lock(home, output_candidate):
+            result, exit_code = run_real_batch(
+                sources=sources,
+                input_root=input_root,
+                output=output_candidate,
+                worker=worker,
+                timeout_seconds=args.timeout_seconds,
+                resume=args.resume,
+                progress=progress if args.progress else None,
+            )
         _emit(
             args,
             result,
