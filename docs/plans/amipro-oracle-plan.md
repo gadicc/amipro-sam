@@ -385,6 +385,9 @@ diagnostics. Host absolute source paths are omitted by default.
 - **Implemented and exercised for one invented input:** deterministic 8.3 staging/name maps,
   per-file disposable state, hash-verified resumability, exact-state dialog/crash classification,
   continue/fail policy, per-file deadlines, and variable-page PostScript/PDF/PNG/text/box analysis.
+- Guest staging remains 8.3-safe, while private host-side PDFs preserve each source's relative path
+  and basename with only the extension changed; output collisions and unsafe parent paths fail
+  closed.
 - Static preflight rejects active and external-content surfaces before Ami Pro sees a document.
   Tests cover case collisions, active sections/OLE/external paths, tampered resume artifacts,
   per-file continuation, retained retry attempts, and interruption/resume. The live invented probe

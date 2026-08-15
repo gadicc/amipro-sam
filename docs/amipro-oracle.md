@@ -181,11 +181,12 @@ new numbered attempts while previous failure evidence is retained:
   --confirm-proprietary-media-rights
 ```
 
-`plan.json` and `name-map.json` map private relative source names to DOS-safe names.
-`reference-pdf/DOC00001.pdf` and its siblings are the convenient PDF collection; `batch.json` is
-the atomic progress/summary journal. All of these files contain or identify private material and
-must remain ignored and local. The PDFs can embed fonts from the proprietary guest environment;
-neither they nor the PNGs are cleared for redistribution, and every result remains
+`plan.json` and `name-map.json` map private relative source names to DOS-safe guest names. Host-side
+PDFs preserve the source's relative directories and basename while changing only `.SAM` to `.pdf`;
+for example, `letters/Example.SAM` becomes `reference-pdf/letters/Example.pdf`. `batch.json` is the
+atomic progress/summary journal. All of these files contain or identify private material and must
+remain ignored and local. The PDFs can embed fonts from the proprietary guest environment; neither
+they nor the PNGs are cleared for redistribution, and every result remains
 `baseline_eligible: false`.
 
 ## Windows bootstrap, boot gate, and Ami Pro install

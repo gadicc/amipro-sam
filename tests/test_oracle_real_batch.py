@@ -87,6 +87,20 @@ def test_batch_plan_is_deterministic_and_hashes_blocked_sources(tmp_path: Path) 
     assert first["records"][1]["source_sha256"] == hashlib.sha256(
         blocked_payload
     ).hexdigest()
+    assert batch_module._name_map(first)["records"] == [
+        {
+            "index": 1,
+            "source": "a.sam",
+            "guest": "DOC00001.SAM",
+            "pdf": "reference-pdf/a.pdf",
+        },
+        {
+            "index": 2,
+            "source": "nested/b.sam",
+            "guest": "DOC00002.SAM",
+            "pdf": "reference-pdf/nested/b.pdf",
+        },
+    ]
 
 
 def test_real_batch_continues_then_resumes_without_repeating_success(
@@ -124,6 +138,7 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
     assert calls == ["DOC00001.SAM", "DOC00002.SAM"]
     first_failure = output / "jobs/00002/attempts/0001/failure.json"
     assert first_failure.is_file()
+    assert (output / "reference-pdf/a.pdf").is_file()
 
     calls.clear()
 
@@ -151,6 +166,7 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
     assert calls == ["DOC00002.SAM"]
     assert first_failure.is_file()
     assert (output / "jobs/00002/attempts/0002/result.json").is_file()
+    assert (output / "reference-pdf/b.pdf").is_file()
     assert not (output / "jobs/00002/failure.json").exists()
 
 
@@ -201,6 +217,36 @@ def test_resume_rejects_tampered_pdf_path_and_records_interrupt(tmp_path: Path) 
             worker=interrupt,
         )
     assert read_json_object(interrupted_output / "batch.json")["status"] == "interrupted"
+
+
+def test_reference_pdf_paths_preserve_names_without_following_parent_links(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    reference = output / "reference-pdf"
+    reference.mkdir(parents=True, mode=0o700)
+    record = {"source": "Letters/Original Name.SAM"}
+
+    relative, path = batch_module._reference_pdf_path(
+        output,
+        record,
+        create_parents=True,
+    )
+    assert relative == "reference-pdf/Letters/Original Name.pdf"
+    assert path == reference / "Letters" / "Original Name.pdf"
+    assert (reference / "Letters").stat().st_mode & 0o077 == 0
+
+    (reference / "Letters").rmdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (reference / "Letters").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OracleError, match="parent is unsafe"):
+        batch_module._reference_pdf_path(
+            output,
+            record,
+            create_parents=True,
+        )
+    assert not (outside / "Original Name.pdf").exists()
 
 
 def _postscript(guest: str, pages: int) -> bytes:

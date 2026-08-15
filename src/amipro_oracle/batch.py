@@ -219,6 +219,15 @@ def build_batch_plan(sources: list[Path], input_root: Path) -> dict[str, Any]:
                     "audit": audit,
                 }
             )
+    pdf_names: set[str] = set()
+    for record in records:
+        candidate = _reference_pdf_relative(record).casefold()
+        if candidate in pdf_names:
+            raise OracleError(
+                "batch sources collide after changing the extension to PDF",
+                exit_code=EXIT_INTEGRITY,
+            )
+        pdf_names.add(candidate)
     identity = {
         "schema": BATCH_PLAN_SCHEMA,
         "document_count": len(records),
@@ -249,11 +258,47 @@ def _name_map(plan: dict[str, Any]) -> dict[str, object]:
                 "index": item["index"],
                 "source": item["source"],
                 "guest": item["guest"],
-                "pdf": f"reference-pdf/{str(item['guest'])[:-4]}.pdf",
+                "pdf": _reference_pdf_relative(item),
             }
             for item in plan["records"]
         ],
     }
+
+
+def _reference_pdf_relative(record: dict[str, object]) -> str:
+    source = record.get("source")
+    if not isinstance(source, str) or not source.casefold().endswith(".sam"):
+        raise OracleError("invalid source name for reference PDF", exit_code=EXIT_INTEGRITY)
+    pure = PurePosixPath(source)
+    if pure.is_absolute() or not pure.parts or any(part in {"", ".", ".."} for part in pure.parts):
+        raise OracleError("unsafe source name for reference PDF", exit_code=EXIT_INTEGRITY)
+    filename = pure.name[:-4] + ".pdf"
+    return PurePosixPath("reference-pdf", *pure.parts[:-1], filename).as_posix()
+
+
+def _reference_pdf_path(
+    output: Path,
+    record: dict[str, object],
+    *,
+    create_parents: bool,
+) -> tuple[str, Path]:
+    relative = _reference_pdf_relative(record)
+    pure = PurePosixPath(relative)
+    current = output
+    for part in pure.parent.parts:
+        current /= part
+        if not current.exists() and not current.is_symlink() and create_parents:
+            current.mkdir(mode=0o700)
+        if (
+            current.is_symlink()
+            or not current.is_dir()
+            or current.stat().st_mode & 0o077
+        ):
+            raise OracleError(
+                "reference PDF parent is unsafe",
+                exit_code=EXIT_INTEGRITY,
+            )
+    return relative, output / relative
 
 
 def _safe_failure_message(exc: BaseException) -> str:
@@ -306,10 +351,13 @@ def _validated_resume_result(
     except (OSError, ValueError) as exc:
         raise OracleError("invalid batch resume result", exit_code=EXIT_INTEGRITY) from exc
     pdf_record = result.get("pdf")
-    expected_pdf_path = f"reference-pdf/{str(record['guest'])[:-4]}.pdf"
+    expected_pdf_path, pdf = _reference_pdf_path(
+        output,
+        record,
+        create_parents=False,
+    )
     pdf_path = pdf_record.get("path") if isinstance(pdf_record, dict) else None
     pure_pdf = PurePosixPath(pdf_path) if isinstance(pdf_path, str) else None
-    pdf = output / expected_pdf_path
     if (
         result.get("schema") != BATCH_DOCUMENT_SCHEMA
         or result.get("status") != "success"
@@ -517,8 +565,11 @@ def run_real_batch(
                     maximum=MAX_REFERENCE_PDF_BYTES,
                     label="native batch PDF",
                 )
-                pdf_relative = f"reference-pdf/{str(record['guest'])[:-4]}.pdf"
-                pdf_output = output / pdf_relative
+                pdf_relative, pdf_output = _reference_pdf_path(
+                    output,
+                    record,
+                    create_parents=True,
+                )
                 atomic_write(pdf_output, pdf_payload)
                 pdf = {
                     "path": pdf_relative,
