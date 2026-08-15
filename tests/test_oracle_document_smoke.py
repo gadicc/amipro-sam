@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -244,6 +245,32 @@ def test_document_predicate_requires_title_ink_and_rejects_known_hourglass(
         loading_evidence["loading_indicator_sha256"],
     )
     assert not smoke_module._document_is_ready(loading_evidence)
+
+
+def test_document_wait_accepts_an_unchanged_ready_observer_frame(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _document_screen()
+    title = _state_for_payload(
+        tmp_path,
+        payload,
+        name="document-title",
+        box=list(smoke_module.DOCUMENT_TITLE_STATE["box"]),
+    )
+    monkeypatch.setattr(smoke_module, "DOCUMENT_TITLE_STATE", title)
+    monkeypatch.setattr(smoke_module, "sleep", lambda _seconds: None)
+    screen = tmp_path / "screen-last.png"
+    screen.write_bytes(payload)
+
+    evidence, observed = smoke_module._wait_document_state(
+        screen,
+        stop=threading.Event(),
+        deadline=smoke_module.monotonic() + 30,
+    )
+
+    assert observed == payload
+    assert evidence["title_sha256"] == title["title_sha256"]
 
 
 def test_document_smoke_runs_from_ready_clone_and_retains_evidence(

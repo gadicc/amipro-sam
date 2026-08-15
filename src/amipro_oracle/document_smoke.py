@@ -421,24 +421,26 @@ def _wait_document_state(
     stop: threading.Event,
     deadline: float,
 ) -> tuple[dict[str, object], bytes]:
-    seen_mtime: int | None = None
+    seen_payload_sha256: str | None = None
     stable = 0
     while monotonic() < deadline and not stop.is_set():
         try:
             evidence, payload = _document_state(screen)
-            mtime = screen.stat().st_mtime_ns
         except (OSError, OracleError):
             sleep(0.25)
             continue
         if _document_is_ready(evidence):
-            if mtime != seen_mtime:
+            payload_sha256 = hashlib.sha256(payload).hexdigest()
+            if payload_sha256 == seen_payload_sha256:
                 stable += 1
-                seen_mtime = mtime
+            else:
+                stable = 1
+                seen_payload_sha256 = payload_sha256
             if stable >= 2:
                 return evidence, payload
         else:
             stable = 0
-            seen_mtime = None
+            seen_payload_sha256 = None
         sleep(0.25)
     raise OracleError("invented document did not reach ready state", exit_code=EXIT_BACKEND)
 
