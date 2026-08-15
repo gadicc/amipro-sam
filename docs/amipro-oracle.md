@@ -9,8 +9,10 @@ Program Manager boot/clean-exit gate, and an exact-dialog Ami Pro 3.1 installer.
 produced content-addressed **Windows-ready**, **Ami Pro install-candidate**, and **Ami Pro-ready**
 bases. The separate launch/clean-exit and invented-document gates are exercised: Ami Pro natively
 saved and then twice reopened the exact invented fixture, visibly displayed both lines, and exited
-cleanly. This is controlled native text-presence evidence, not a typography or print-fidelity
-baseline; no current manifest is accepted as a fidelity baseline. See the
+cleanly. The supplied Windows PostScript driver has also been installed through a separately
+keyed, exact-screen-state gate, producing a sealed printer-ready base. This is controlled native
+text-presence and environment evidence, not a typography or print-fidelity baseline; no current
+manifest is accepted as a fidelity baseline. See the
 [investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
@@ -24,6 +26,7 @@ Run from the repository root:
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
+./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
@@ -117,15 +120,16 @@ has a unique name and cidfile. Host UI actions first verify that exact CID and i
 cleanup targets that identity rather than a reusable name. Killing only the `podman run` process
 group is not treated as sufficient container cleanup.
 
-The Windows installer, boot-probe, Ami Pro installer, launch gate, and document smoke retain their
-state traces, generated configurations, bounded stdout/stderr, changed-screen archives, observer
-status, runtime trees, and process cleanup results. The boot gate retains the accepted Program
-Manager and Exit Windows frames. The Ami Pro installer retains all seven recognized installer
-states plus the post-install Program Manager and Exit Windows frames. The document smoke retains
-the exact printer-warning, document-ready, Program Manager, and Exit Windows frames. Stable
-checkpoint manifests exclude volatile job paths/timing; returned results name the ignored
-evidence jobs that back them. Troubleshooting starts with captured evidence, not manual guest
-inspection.
+The Windows installer, boot-probe, Ami Pro installer, launch gate, document smoke, and printer
+installer retain their state traces, generated configurations, bounded stdout/stderr,
+changed-screen archives, observer status, runtime trees, and process cleanup results. The boot
+gate retains the accepted Program Manager and Exit Windows frames. The Ami Pro installer retains
+all seven recognized installer states plus the post-install Program Manager and Exit Windows
+frames. The document smoke retains the exact printer-warning, document-ready, Program Manager,
+and Exit Windows frames. The printer phase retains the empty control panel, direct-to-port toggle,
+model selection, source prompt, installed model, Program Manager, and Exit Windows frames. Stable
+checkpoint manifests exclude volatile job paths/timing; returned results name the ignored evidence
+jobs that back them. Troubleshooting starts with captured evidence, not manual guest inspection.
 
 The prior failed Wine attempt has been copied, hash-verified, and retained in a local ignored
 content-addressed evidence namespace. It is not part of the oracle runtime, and no Wine prefix or
@@ -252,7 +256,34 @@ ready screenshot was independently observed in the preceding direct-open attempt
 was isolated to the former stale title/caret predicate. The staged document tree digest is
 `49ba5a1b93c2d96e03aa219b69f755fbc2138f05a142261e44e07fa54cc37aab`.
 
-Phase 2 is therefore complete for the deliberately narrow text-presence/lifecycle claim. The
-supplied Windows set contains `PSCRIPT.DRV` and a built-in PostScript model, but printer setup and
-the first PostScript capture remain Phase 3. Nothing fetches a driver, WPD, PPD, font, Windows, or
+Phase 2 is therefore complete for the deliberately narrow text-presence/lifecycle claim.
+
+Install the supplied Windows PostScript driver into a separately keyed disposable clone:
+
+```console
+./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
+```
+
+If more than one Ami Pro-ready runtime exists, add `--runtime-key HASH`. The phase mounts the
+verified flattened Windows media read-only, opens Control Panel's Printers applet, disables Print
+Manager for direct LPT capture, selects the built-in `QMS ColorScript 100` model, supplies `S:\` as
+the driver source, and requires seven exact UI states plus a clean Windows/DOS return. It then
+hashes the installed driver/help/test files and checks the exact `WIN.INI` and `CONTROL.INI`
+settings before sealing a printer-ready runtime. No external PPD or WPD is used.
+
+The exercised run on 2026-08-15 promoted Ami Pro-ready parent
+`a1613ad18f592516bef907ec04d608cf64a3bdf63ea2e2f824aa7690a273d9c0` to printer-ready runtime
+`215b2afac79849baca3b07098180ccc6d3274545eae99f26db89126086767fe2`. The container exited zero
+without timeout after 32.91 seconds; validation and atomic promotion completed in 49.70 seconds.
+The sealed tree contains 928 files in 14 directories totaling 29,311,654 bytes. Installed
+`PSCRIPT.DRV` hashes to
+`469a11a947b98716b5aba63e170754c2b1f055ce7e03101c6748c1b1a97ac25d`; the selected device is
+`QMS ColorScript 100,pscript,LPT1:`, and `spooler=no` locks direct-to-port behavior. Evidence job
+`install-printer-215b2afac798-emlvqt3q` remains local and ignored. A second invocation revalidated
+the cache and all acceptance evidence without starting the guest.
+
+The fixed printer-profile portion of Phase 3 is complete. The next gate prints the invented SAM,
+requires exactly one valid raw PostScript capture, and then derives the locked PDF/PNG/analysis
+artifacts. Paper geometry, orientation, Ctrl-D behavior, typography, pagination, and print fidelity
+remain open until that capture is measured. Nothing fetches a driver, WPD, PPD, font, Windows, or
 Ami Pro bytes.

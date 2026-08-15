@@ -1,10 +1,10 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phases 1 and 2 complete. Exact Windows and Ami Pro media profiles, Windows Setup, Program
-Manager, Ami Pro installation, and Ami Pro lifecycle checkpoints are content-addressed. On
-2026-08-15, Ami Pro natively saved the invented two-paragraph fixture and the production smoke
-reopened it, visibly displayed both lines, and exited cleanly. The next gate is a separately keyed
-printer installation and one-file PostScript capture.
+Status: Phases 1 and 2 complete; Phase 3 printer installation complete. Exact Windows and Ami Pro
+media profiles, Windows Setup, Program Manager, Ami Pro installation/lifecycle, and the QMS
+ColorScript 100 direct-to-LPT1 printer checkpoint are content-addressed. On 2026-08-15, Ami Pro
+natively saved the invented two-paragraph fixture and the production smoke reopened it, visibly
+displayed both lines, and exited cleanly. The next gate is a one-file PostScript capture.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
 Windows 3.1 media. It has verified Windows-ready, Ami Pro install-candidate, and Ami Pro-ready
@@ -19,12 +19,12 @@ must never contain Windows, Ami Pro, printer-driver, PPD, font, help, template, 
 or installation-media bytes. Proprietary inputs and derived runtime state stay in a local,
 Git-ignored, content-addressed cache.
 
-The oracle will not fetch proprietary media. `bootstrap` accepts Windows media only through
-`--win31-media PATH` or `WIN31_MEDIA_DIR`; a later printer-driver gate may require an additional
-user-supplied, lawfully owned path if the Windows media does not contain a suitable PostScript
-driver. Original images are opened read-only, mounted read-only at the OCI boundary, and mounted
-with DOSBox-X read-only options where applicable. The current Ami floppy files have host mode
-`0666`, so host permissions alone are not a safety boundary.
+The oracle will not fetch proprietary media. `bootstrap` and `install-printer` accept Windows media
+only through `--win31-media PATH` or `WIN31_MEDIA_DIR`. The supplied media contains the selected
+PostScript driver and built-in model, so no additional driver path is needed. Original images are
+opened read-only, mounted read-only at the OCI boundary, and mounted with DOSBox-X read-only options
+where applicable. The current Ami floppy files have host mode `0666`, so host permissions alone
+are not a safety boundary.
 
 ## Evidence inventory
 
@@ -326,6 +326,7 @@ The public surface is:
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
+./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
@@ -365,7 +366,9 @@ diagnostics. Host absolute source paths are omitted by default.
 
 ### Phase 3: one-file PostScript oracle
 
-- Install and hash the fixed user-supplied printer profile.
+- Install and hash the fixed user-supplied printer profile. **Complete:** QMS ColorScript 100,
+  `PSCRIPT.DRV`, `LPT1:`, and direct-to-port `spooler=no` are sealed in printer-ready runtime
+  `215b2afac79849baca3b07098180ccc6d3274545eae99f26db89126086767fe2`.
 - Capture valid PostScript verbatim, detect bounded completion, derive PDF/PNG/analysis, and write a
   complete job manifest plus self-comparison report.
 - Repeat the same job to quantify nondeterminism before accepting a baseline.
@@ -443,8 +446,20 @@ the state machine in 30.07 seconds. The ready screenshot hashes to
 `7cbbcdea5ebd451f287b9e3222ade59258747e7bb770e6a7c234a704d7f62b4c`; the same screenshot bytes
 were retained from an earlier direct open that timed out only because the old detector required a
 stale title hash and mistook the insertion caret for loading. Phase 2 is complete for exact native
-text presence and lifecycle. Printing, typography, layout, and pagination remain out of scope until
-the separately keyed printer phase.
+text presence and lifecycle. Print output, typography, layout, and pagination remain open until the
+first controlled PostScript capture is measured.
+
+The separately keyed printer-install gate has now passed. It used the verified flattened Windows
+source read-only, disabled Print Manager, selected the built-in QMS ColorScript 100 model, supplied
+the source path, and matched seven exact screen states through clean Windows exit. Evidence job
+`install-printer-215b2afac798-emlvqt3q` exited zero without timeout after 32.91 seconds and reached
+the atomically committed state in 49.70 seconds. Printer-ready runtime
+`215b2afac79849baca3b07098180ccc6d3274545eae99f26db89126086767fe2` contains 928 files in 14
+directories totaling 29,311,654 bytes. It records `spooler=no`, device
+`QMS ColorScript 100,pscript,LPT1:`, and exact installed driver hash
+`469a11a947b98716b5aba63e170754c2b1f055ce7e03101c6748c1b1a97ac25d`. A second invocation
+revalidated the runtime and its backing UI evidence without executing the guest. This proves the
+printer environment, not any document's print output; the first raw PostScript capture is next.
 
 For a fresh local rebuild, first affirm the right to use the supplied media:
 
@@ -463,6 +478,7 @@ media through the repository. Then run:
 ./scripts/amipro-oracle install-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
+./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
 ```
 
 The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed

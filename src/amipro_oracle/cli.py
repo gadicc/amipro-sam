@@ -38,6 +38,10 @@ from .fake import run_fake_job
 from .io import atomic_write_json, digest_json, read_json_object, sha256_file
 from .media import inventory_media
 from .paths import oracle_home, repo_root
+from .printer_install import (
+    OUTER_TIME_LIMIT_SECONDS as PRINTER_INSTALL_TIME_LIMIT_SECONDS,
+)
+from .printer_install import install_printer_ready
 from .runtime import bootstrap_fake
 from .toolchain import probe_recorded_image, probe_toolchain
 from .windows_boot_probe import OUTER_TIME_LIMIT_SECONDS, boot_windows_ready
@@ -159,6 +163,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="affirm your right to use the cached runtime made from proprietary media",
     )
     smoke.set_defaults(handler=_command_smoke)
+
+    install_printer = subparsers.add_parser(
+        "install-printer",
+        help="install and lock the Windows PostScript printer profile",
+    )
+    _common(install_printer, backend=False)
+    install_printer.add_argument("--win31-media", type=Path)
+    install_printer.add_argument("--runtime-key")
+    install_printer.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=PRINTER_INSTALL_TIME_LIMIT_SECONDS,
+        help=(
+            "outer wall-clock deadline "
+            f"(maximum {PRINTER_INSTALL_TIME_LIMIT_SECONDS}s)"
+        ),
+    )
+    install_printer.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the supplied local proprietary media",
+    )
+    install_printer.set_defaults(handler=_command_install_printer)
 
     batch = subparsers.add_parser("batch", help="process a directory of SAM files")
     _common(batch, backend=True)
@@ -666,6 +693,45 @@ def _command_smoke(args: argparse.Namespace) -> int:
         text=(
             f"invented-document smoke passed: {result['evidence_job']}\n"
             "Next: configure the pinned PostScript printer and prove one print capture."
+        ),
+    )
+    return EXIT_OK
+
+
+def _command_install_printer(args: argparse.Namespace) -> int:
+    if not args.confirm_proprietary_media_rights:
+        raise OracleError(
+            "the real printer install requires --confirm-proprietary-media-rights",
+            exit_code=EXIT_USAGE,
+        )
+    media_path = _configured_media(args.win31_media, "WIN31_MEDIA_DIR")
+    if media_path is None:
+        raise OracleError(
+            "Windows 3.1 media is required: pass --win31-media PATH or set WIN31_MEDIA_DIR",
+            exit_code=EXIT_MISSING,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+            exit_code=EXIT_MISSING,
+        )
+    media = inventory_media(media_path, kind="windows-3.1")
+    result = install_printer_ready(
+        home,
+        media_path,
+        media,
+        image,
+        runtime_key=args.runtime_key,
+        timeout_seconds=args.timeout_seconds,
+    )
+    _emit(
+        args,
+        result,
+        text=(
+            f"PostScript printer runtime ready: {result['runtime_key']}\n"
+            "Next: print one invented SAM and validate the captured PostScript."
         ),
     )
     return EXIT_OK
