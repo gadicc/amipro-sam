@@ -90,6 +90,14 @@ two direct observations (`SAM-NATIVE-SAVE-001`, `SAM-NATIVE-OPEN-001`). This con
 text presence and that exact lifecycle, not general continuation rules, typography,
 line breaking, geometry, pagination, or print fidelity.
 
+Under the separately locked Windows 3.1 PSCRIPT 3.5/QMS ColorScript 100 profile,
+Ami Pro 3.1 also printed that exact fixture twice as the same one-page A4 PostScript
+stream. Locked analysis recovered the two lines, six stable word boxes, and identical
+144-DPI rasters (`SAM-NATIVE-PRINT-001`). This confirms only that fixture and
+environment. It does not make the fixture's default layout records universally
+mandatory, establish general pagination or typeface metrics, or validate this
+project's converter output.
+
 ## 4. Style records
 
 `[tag]` names a style. The top-level envelope also carries a shortcut, the style to

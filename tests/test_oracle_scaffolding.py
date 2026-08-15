@@ -7,6 +7,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -736,6 +737,31 @@ def test_oci_invocation_is_rootless_networkless_and_mount_bounded(tmp_path: Path
     )
     assert list(document.command).count("--mount") == 1
 
+    analysis = build_podman_invocation(
+        record,
+        container_name="amipro-oracle-test-analysis",
+        oracle_root=oracle,
+        job_root=job,
+        control_root=control,
+        phase="document",
+        mounts=[BindMount(job, "/oracle/job", read_only=False)],
+        dosbox_arguments=["-dSAFER", "/oracle/job/document.ps"],
+        entrypoint="/usr/bin/gs",
+    )
+    assert "--entrypoint=/usr/bin/gs" in analysis.command
+    with pytest.raises(OracleError, match="entrypoint"):
+        build_podman_invocation(
+            record,
+            container_name="amipro-oracle-test-shell",
+            oracle_root=oracle,
+            job_root=job,
+            control_root=control,
+            phase="document",
+            mounts=[BindMount(job, "/oracle/job", read_only=False)],
+            dosbox_arguments=[],
+            entrypoint="/bin/sh",
+        )
+
     with pytest.raises(OracleError, match="must not expose"):
         build_podman_invocation(
             record,
@@ -1030,6 +1056,44 @@ def test_bounded_process_captures_output_and_raises_stable_timeout(
     assert process_result["command"][0] == sys.executable
     assert timeout_stdout.is_file()
     assert timeout_stderr.is_file()
+
+
+def test_bounded_process_flushes_small_output_before_process_exit(
+    tmp_path: Path,
+) -> None:
+    stdout = tmp_path / "streaming.stdout"
+    stderr = tmp_path / "streaming.stderr"
+    finished: dict[str, object] = {}
+
+    def run() -> None:
+        finished["result"] = run_bounded(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys,time; "
+                    "sys.stderr.write('LPT file closed\\n'); sys.stderr.flush(); "
+                    "time.sleep(1)"
+                ),
+            ],
+            stdout_path=stdout,
+            stderr_path=stderr,
+            timeout_seconds=3,
+        )
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        if stderr.exists() and b"LPT file closed" in stderr.read_bytes():
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("bounded stderr was not visible while the process was running")
+    assert worker.is_alive()
+    worker.join(timeout=3)
+    assert not worker.is_alive()
+    assert finished["result"]["exit_code"] == 0
 
 
 def test_bounded_process_truncates_logs_and_enforces_writable_tree_quota(

@@ -47,6 +47,7 @@ driver, environment, fixture, and comparison method.
 | `STATIC-W4W-20260814` | Static executable research | Hash-gated, bounded analysis of the bundled W4W33F/W4W33T SAM reader/writer, documented in [`executable-format-re.md`](../docs/research/executable-format-re.md); the two modules are one subsystem/source and establish that converter's behavior, not necessarily native Ami Pro behavior |
 | `ORACLE-AMI31` | Controlled behavior | Source family for real Ami Pro 3.1 observations made by the local oracle; every conclusion is scoped to its recorded environment |
 | `ORACLE-AMI31-SMOKE-20260815` | Controlled behavior | Exact native Save As and two direct-open observations of an invented two-paragraph document under the locked DOSBox-X/Windows 3.1/Ami Pro 3.1 environment described below; no printing or fidelity comparison |
+| `ORACLE-AMI31-PRINT-20260815` | Controlled behavior | Two native prints of the exact invented fixture through the locked Windows 3.1 PSCRIPT/QMS ColorScript 100 profile, with byte-identical raw PostScript and independently locked PDF/text/geometry/raster analysis described below |
 | `SYNTHETIC-TESTS` | Implementation validation | Invented fixtures validating this toolkit. Not independent evidence of Ami Pro behavior |
 | `IMPL-AMIPRO-SAM` | Implementation state | Current Python parser/model/renderers. Useful for recording conformance, never a semantic source |
 
@@ -93,6 +94,7 @@ currently registered.
 | `SAM-EMBEDDED-POINTER-001` | In the observed version-4 corpora, a final zero-padded decimal value locates the `[Embedded]` directory | grammar/semantics: confirmed for observed files; other variants: open | `OBS-INSTALL-31`, `OBS-PRIVATE-384`, `ORACLE-AMI31-SMOKE-20260815` | Direct byte-offset matches and an exact native Ami Pro 3.1 Save As output support decimal interpretation. Born describes an ASCII-hexadecimal locator; preserve this conflict for other versions/contexts |
 | `SAM-NATIVE-SAVE-001` | Ami Pro 3.1 Save As of the exact invented two-paragraph control produced a CRLF version-4 SAM with default header/layout/style records, two blank-line-delimited `[edoc]` paragraphs, a standalone `>` close, `[Embedded]`, and a terminal decimal pointer matching byte offset 4,562 | grammar/structure: confirmed for the exact fixture and environment | `ORACLE-AMI31-SMOKE-20260815` | The 4,584-byte native output is checked in as the synthetic smoke fixture. This does not establish which default records are mandatory or invariant across locales/configurations |
 | `SAM-NATIVE-OPEN-001` | Ami Pro 3.1 directly opened the exact native-saved fixture and visibly displayed the two invented paragraphs as separate lines before a clean application/Windows exit | native behavior/rendering: confirmed for text presence and lifecycle in the exact environment; typography, geometry, pagination, and print fidelity: open | `ORACLE-AMI31-SMOKE-20260815` | The same ready-screen bytes were observed in two direct opens. Screen formatting was active because no printer was configured |
+| `SAM-NATIVE-PRINT-001` | Ami Pro 3.1 printed the exact native-saved fixture as one A4 PostScript page containing the two invented lines under the locked PSCRIPT 3.5/QMS ColorScript 100 profile | native behavior/rendering: confirmed for this fixture, page count, text, and exact environment | `ORACLE-AMI31-PRINT-20260815` | Two executions produced byte-identical raw PostScript and identical normalized text, word boxes, and raster. This does not establish general SAM pagination, layout-field semantics, typeface identity, or converter fidelity |
 | `SAM-ACTIVE-001` | SAM documents can contain macro, DDE, OLE, dynamic-field, and external-file/path constructs | occurrence: confirmed; exact byte semantics/native execution: open | `PUB-LOTUS-GUIDES`, `PUB-BORN-AMI`, `OBS-INSTALL-31`, `OBS-PRIVATE-384` | Inert preservation is reader safety policy, not a claim about Ami Pro execution |
 | `SAM-REVISION-001` | One exact `[revisions]` value of `0` is the observed no-revisions state | occurrence: confirmed; semantics: tentative; native behavior: open | `OBS-INSTALL-31`, `OBS-PRIVATE-384` | Nonzero, duplicate, and additional-field meanings remain open |
 
@@ -160,3 +162,52 @@ the raw observation and document the inference separately.
   PDF, raster fidelity, and general paragraph-continuation behavior remain open.
 - **Claims:** supports `SAM-EMBEDDED-POINTER-001`, `SAM-NATIVE-SAVE-001`, and
   `SAM-NATIVE-OPEN-001`; it does not upgrade unrelated rendering claims.
+
+### `ORACLE-AMI31-PRINT-20260815`
+
+- **Date and backend:** 2026-08-15; real local oracle using the same rootless,
+  network-disabled OCI image and DOSBox-X commit recorded by
+  `ORACLE-AMI31-SMOKE-20260815`. Pinned analysis tools are Ghostscript 10.00.0 and
+  Poppler 22.12.0.
+- **Guest identity:** printer-ready runtime
+  `215b2afac79849baca3b07098180ccc6d3274545eae99f26db89126086767fe2`,
+  derived from the recorded Ami Pro-ready runtime. It uses Windows 3.1
+  `PSCRIPT.DRV` SHA-256
+  `469a11a947b98716b5aba63e170754c2b1f055ce7e03101c6748c1b1a97ac25d`,
+  built-in model `QMS ColorScript 100`, `LPT1:`, and direct-to-port
+  `spooler=no`.
+- **Invented control:** the exact 4,584-byte `SMOKE.SAM` fixture recorded above,
+  SHA-256
+  `bab52c077acf1cd67fde5fa285ffacd81febca8fc8da0e16c73a8bcf24ff0aa1`.
+  No document or configuration bytes changed between repetitions; the controlled
+  action was native printing through the fixed profile.
+- **Procedure and raw observation:** jobs `print-smoke-_0zj4tp0` and
+  `print-smoke-4lvjarl9` each opened the fixture, matched its ready state, invoked
+  Print, accepted the fixed dialog, observed the DOSBox-X LPT-close event and one
+  stable capture, then cleanly closed Ami Pro and Windows. Guest processes exited
+  zero without timeout in 33.04 and 34.19 seconds. Both raw streams are 18,881 bytes
+  with SHA-256
+  `dc5c6049ade704787095728b6966ccac3047e7f2fe4429bb134e28255c77f8d9`.
+  They contain one leading and one trailing Ctrl-D; removing only those boundary
+  bytes yields an 18,879-byte derivative with SHA-256
+  `8d94694fbdc481197e714686d0766c224c249beea12ee69e6421b05538d5bcf6`.
+- **Measurements:** the raw stream identifies DSC 3.0, creator `Windows PSCRIPT`,
+  title `Ami Pro - SMOKE.SAM`, one page, and bounding box `14 91 582 782`.
+  Locked Ghostscript produced a 5,737-byte PDF with SHA-256
+  `bceffa6abd18e3ee0f8a27dcafbdb801fc3b41c3cbce4fce8718d54fe3bc47c9`.
+  It has one unrotated A4 page at 595x842 points. Poppler extracted exactly
+  `NATIVE SMOKE DOCUMENT\nINVENTED CONTENT ONLY`, six word boxes, and a 144-DPI
+  1190x1684 raster with SHA-256
+  `14c3ecd69fd6b5fc2801d5caff936d1b0e48c2d0c301c2db4daf714eac2ab553`.
+  The PDF reports one embedded unnamed Type 3 font with custom encoding and no
+  Unicode map.
+- **Repetition, comparison, and scope:** raw and sanitized PostScript, PDF, extracted
+  text, six word boxes, and PNG are byte-for-byte or value-for-value identical across
+  the two jobs. Formal comparison found no issues, zero differing raster pixels, and
+  RMSE 0. Both jobs remain `baseline_eligible: false`; PS/PDF/PNG artifacts stay local
+  because the embedded font may be proprietary. The observation establishes the
+  exact fixture's page count, printed text, and measured output only. It does not
+  establish general page-layout semantics, line breaking, font identity, or fidelity
+  of the Python converter.
+- **Claims:** supports `SAM-NATIVE-PRINT-001`; it does not upgrade unrelated layout,
+  style, or pagination claims.

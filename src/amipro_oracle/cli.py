@@ -42,6 +42,10 @@ from .printer_install import (
     OUTER_TIME_LIMIT_SECONDS as PRINTER_INSTALL_TIME_LIMIT_SECONDS,
 )
 from .printer_install import install_printer_ready
+from .postscript_smoke import (
+    OUTER_TIME_LIMIT_SECONDS as POSTSCRIPT_SMOKE_TIME_LIMIT_SECONDS,
+)
+from .postscript_smoke import print_smoke
 from .runtime import bootstrap_fake
 from .toolchain import probe_recorded_image, probe_toolchain
 from .windows_boot_probe import OUTER_TIME_LIMIT_SECONDS, boot_windows_ready
@@ -186,6 +190,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="affirm your right to use the supplied local proprietary media",
     )
     install_printer.set_defaults(handler=_command_install_printer)
+
+    print_smoke_parser = subparsers.add_parser(
+        "print-smoke",
+        help="print one invented SAM and derive PostScript/PDF/PNG analysis",
+    )
+    _common(print_smoke_parser, backend=False)
+    print_smoke_parser.add_argument(
+        "--input",
+        type=Path,
+        help="invented SAM fixture; defaults to repository fixture",
+    )
+    print_smoke_parser.add_argument("--runtime-key")
+    print_smoke_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=POSTSCRIPT_SMOKE_TIME_LIMIT_SECONDS,
+        help=(
+            "outer wall-clock deadline "
+            f"(maximum {POSTSCRIPT_SMOKE_TIME_LIMIT_SECONDS}s)"
+        ),
+    )
+    print_smoke_parser.add_argument(
+        "--confirm-proprietary-media-rights",
+        action="store_true",
+        help="affirm your right to use the cached runtime made from proprietary media",
+    )
+    print_smoke_parser.set_defaults(handler=_command_print_smoke)
 
     batch = subparsers.add_parser("batch", help="process a directory of SAM files")
     _common(batch, backend=True)
@@ -732,6 +763,38 @@ def _command_install_printer(args: argparse.Namespace) -> int:
         text=(
             f"PostScript printer runtime ready: {result['runtime_key']}\n"
             "Next: print one invented SAM and validate the captured PostScript."
+        ),
+    )
+    return EXIT_OK
+
+
+def _command_print_smoke(args: argparse.Namespace) -> int:
+    if not args.confirm_proprietary_media_rights:
+        raise OracleError(
+            "the real PostScript smoke requires --confirm-proprietary-media-rights",
+            exit_code=EXIT_USAGE,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    image = _toolchain_image(home)
+    if image is None:
+        raise OracleError(
+            "build the locked OCI image with ./scripts/build-oracle-toolchain first",
+            exit_code=EXIT_MISSING,
+        )
+    fixture = args.input or (repo_root() / "tests" / "fixtures" / "synthetic-basic.sam")
+    result = print_smoke(
+        home,
+        image,
+        fixture,
+        runtime_key=args.runtime_key,
+        timeout_seconds=args.timeout_seconds,
+    )
+    _emit(
+        args,
+        result,
+        text=(
+            f"one-file PostScript smoke passed: {result['evidence_job']}\n"
+            "Next: repeat print-smoke and compare both jobs to quantify nondeterminism."
         ),
     )
     return EXIT_OK

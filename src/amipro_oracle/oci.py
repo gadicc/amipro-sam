@@ -17,6 +17,15 @@ from .process import run_bounded
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _INSTANCE = re.compile(r"amipro-oracle-[a-z0-9][a-z0-9-]{0,62}\Z")
+_ANALYSIS_ENTRYPOINTS = frozenset(
+    {
+        "/usr/bin/gs",
+        "/usr/bin/pdfinfo",
+        "/usr/bin/pdffonts",
+        "/usr/bin/pdftocairo",
+        "/usr/bin/pdftotext",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,7 @@ def build_podman_invocation(
     phase: str,
     mounts: list[BindMount],
     dosbox_arguments: list[str],
+    entrypoint: str | None = None,
 ) -> PodmanInvocation:
     if image_record.get("schema") != "amipro-oracle-image-v1":
         raise OracleError("invalid OCI image record schema", exit_code=EXIT_INTEGRITY)
@@ -109,6 +119,8 @@ def build_podman_invocation(
         )
     if not mounts:
         raise OracleError("OCI invocation requires explicit mounts", exit_code=EXIT_INTEGRITY)
+    if entrypoint is not None and entrypoint not in _ANALYSIS_ENTRYPOINTS:
+        raise OracleError("unsupported OCI analysis entrypoint", exit_code=EXIT_INTEGRITY)
 
     mount_arguments = [_mount_argument(mount) for mount in mounts]
     destinations = [mount.destination for mount in mounts]
@@ -210,6 +222,8 @@ def build_podman_invocation(
     ]
     for argument in mount_arguments:
         command.extend(("--mount", argument))
+    if entrypoint is not None:
+        command.append(f"--entrypoint={entrypoint}")
     command.append(f"{image}@{digest}")
     command.extend(dosbox_arguments)
     return PodmanInvocation(tuple(command), container_name, cidfile, resolved_job)

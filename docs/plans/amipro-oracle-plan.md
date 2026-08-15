@@ -1,10 +1,12 @@
 # Ami Pro 3.1 rendering oracle plan
 
-Status: Phases 1 and 2 complete; Phase 3 printer installation complete. Exact Windows and Ami Pro
+Status: Phases 1 through 3 complete. Exact Windows and Ami Pro
 media profiles, Windows Setup, Program Manager, Ami Pro installation/lifecycle, and the QMS
 ColorScript 100 direct-to-LPT1 printer checkpoint are content-addressed. On 2026-08-15, Ami Pro
 natively saved the invented two-paragraph fixture and the production smoke reopened it, visibly
-displayed both lines, and exited cleanly. The next gate is a one-file PostScript capture.
+displayed both lines, and exited cleanly. Two one-file print jobs then produced identical raw
+PostScript, derived PDF, normalized text/geometry, and raster output. Phase 4 unattended batch
+orchestration is next.
 
 This plan defines a phased, local-only rendering oracle for lawfully supplied Ami Pro and
 Windows 3.1 media. It has verified Windows-ready, Ami Pro install-candidate, and Ami Pro-ready
@@ -327,6 +329,7 @@ The public surface is:
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
+./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
@@ -370,8 +373,11 @@ diagnostics. Host absolute source paths are omitted by default.
   `PSCRIPT.DRV`, `LPT1:`, and direct-to-port `spooler=no` are sealed in printer-ready runtime
   `215b2afac79849baca3b07098180ccc6d3274545eae99f26db89126086767fe2`.
 - Capture valid PostScript verbatim, detect bounded completion, derive PDF/PNG/analysis, and write a
-  complete job manifest plus self-comparison report.
-- Repeat the same job to quantify nondeterminism before accepting a baseline.
+  complete job manifest plus self-comparison report. **Complete:** two real jobs retained exactly
+  one capture each and produced verified real manifests.
+- Repeat the same job to quantify nondeterminism before accepting a baseline. **Complete for the
+  exact invented fixture:** normalized comparison found no text, geometry, or raster difference;
+  artifacts remain local and baseline-ineligible because an unnamed Type 3 font is embedded.
 
 ### Phase 4: unattended batch
 
@@ -446,8 +452,8 @@ the state machine in 30.07 seconds. The ready screenshot hashes to
 `7cbbcdea5ebd451f287b9e3222ade59258747e7bb770e6a7c234a704d7f62b4c`; the same screenshot bytes
 were retained from an earlier direct open that timed out only because the old detector required a
 stale title hash and mistook the insertion caret for loading. Phase 2 is complete for exact native
-text presence and lifecycle. Print output, typography, layout, and pagination remain open until the
-first controlled PostScript capture is measured.
+text presence and lifecycle. That screen-formatting gate alone establishes no print output,
+typography, layout, or pagination behavior; the separate controlled print result follows below.
 
 The separately keyed printer-install gate has now passed. It used the verified flattened Windows
 source read-only, disabled Print Manager, selected the built-in QMS ColorScript 100 model, supplied
@@ -459,7 +465,23 @@ directories totaling 29,311,654 bytes. It records `spooler=no`, device
 `QMS ColorScript 100,pscript,LPT1:`, and exact installed driver hash
 `469a11a947b98716b5aba63e170754c2b1f055ce7e03101c6748c1b1a97ac25d`. A second invocation
 revalidated the runtime and its backing UI evidence without executing the guest. This proves the
-printer environment, not any document's print output; the first raw PostScript capture is next.
+printer environment, not any document's print output.
+
+The one-file PostScript gate has also passed twice. Evidence jobs `print-smoke-_0zj4tp0` and
+`print-smoke-4lvjarl9` each opened the exact invented fixture from a disposable clone, accepted the
+fixed Print dialog, observed LPT closure, retained exactly one capture, and exited Ami Pro,
+Windows, and DOSBox-X cleanly. Total orchestration took 72.19 and 73.52 seconds; the guest portions
+took 33.04 and 34.19 seconds. Both raw captures are byte-identical: 18,881 bytes, SHA-256
+`dc5c6049ade704787095728b6966ccac3047e7f2fe4429bb134e28255c77f8d9`. Each has one leading and
+one trailing Ctrl-D. The separately hashed 18,879-byte derivative is also identical, SHA-256
+`8d94694fbdc481197e714686d0766c224c249beea12ee69e6421b05538d5bcf6`.
+
+The locked analysis path produced byte-identical one-page A4 PDFs and 144-DPI PNGs. Extracted text
+is exactly the two invented lines, the six word boxes are identical, and formal comparison reports
+zero differing pixels and RMSE 0. The PDF embeds an unnamed Type 3 font, so raw and derived
+artifacts remain ignored/local and both jobs are `baseline_eligible: false`. Phase 3 therefore
+establishes reproducible output for this exact fixture, application, driver, printer model, and
+toolchain only; it does not establish general SAM pagination or typography fidelity.
 
 For a fresh local rebuild, first affirm the right to use the supplied media:
 
@@ -479,6 +501,7 @@ media through the repository. Then run:
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
+./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
 ```
 
 The first production probe exposed DOS 8.3 truncation of `BOOT.START` to `BOOT.STA`; it failed

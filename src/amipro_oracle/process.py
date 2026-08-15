@@ -39,19 +39,23 @@ def _drain_bounded(
     try:
         with path.open("wb") as handle:
             while True:
-                chunk = stream.read(_READ_BYTES)  # type: ignore[attr-defined]
+                chunk = os.read(stream.fileno(), _READ_BYTES)  # type: ignore[attr-defined]
                 if not chunk:
                     break
                 total += len(chunk)
+                wrote = False
                 if head_written < head_limit:
                     selected = chunk[: head_limit - head_written]
                     handle.write(selected)
                     head_written += len(selected)
                     chunk = chunk[len(selected) :]
+                    wrote = bool(selected)
                 if chunk:
                     tail.extend(chunk)
                     if len(tail) > tail_limit:
                         del tail[: len(tail) - tail_limit]
+                if wrote:
+                    handle.flush()
             omitted = max(0, total - head_written - len(tail))
             if omitted:
                 marker = (

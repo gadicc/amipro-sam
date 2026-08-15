@@ -10,9 +10,10 @@ produced content-addressed **Windows-ready**, **Ami Pro install-candidate**, and
 bases. The separate launch/clean-exit and invented-document gates are exercised: Ami Pro natively
 saved and then twice reopened the exact invented fixture, visibly displayed both lines, and exited
 cleanly. The supplied Windows PostScript driver has also been installed through a separately
-keyed, exact-screen-state gate, producing a sealed printer-ready base. This is controlled native
-text-presence and environment evidence, not a typography or print-fidelity baseline; no current
-manifest is accepted as a fidelity baseline. See the
+keyed, exact-screen-state gate, producing a sealed printer-ready base. Two subsequent one-file
+print jobs produced byte-identical PostScript, PDF, text, bounding-box, and raster results. This is
+controlled native evidence for one invented fixture and exact environment, not a general
+typography or print-fidelity baseline; no current manifest is accepted as a fidelity baseline. See the
 [investigation and adversarial plan](plans/amipro-oracle-plan.md).
 
 ## Commands
@@ -27,6 +28,7 @@ Run from the repository root:
 ./scripts/amipro-oracle launch-amipro --confirm-proprietary-media-rights
 ./scripts/amipro-oracle smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle install-printer --confirm-proprietary-media-rights
+./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
@@ -120,8 +122,8 @@ has a unique name and cidfile. Host UI actions first verify that exact CID and i
 cleanup targets that identity rather than a reusable name. Killing only the `podman run` process
 group is not treated as sufficient container cleanup.
 
-The Windows installer, boot-probe, Ami Pro installer, launch gate, document smoke, and printer
-installer retain their state traces, generated configurations, bounded stdout/stderr,
+The Windows installer, boot-probe, Ami Pro installer, launch gate, document smoke, printer
+installer, and PostScript smoke retain their state traces, generated configurations, bounded stdout/stderr,
 changed-screen archives, observer status, runtime trees, and process cleanup results. The boot
 gate retains the accepted Program Manager and Exit Windows frames. The Ami Pro installer retains
 all seven recognized installer states plus the post-install Program Manager and Exit Windows
@@ -282,8 +284,35 @@ The sealed tree contains 928 files in 14 directories totaling 29,311,654 bytes. 
 `install-printer-215b2afac798-emlvqt3q` remains local and ignored. A second invocation revalidated
 the cache and all acceptance evidence without starting the guest.
 
-The fixed printer-profile portion of Phase 3 is complete. The next gate prints the invented SAM,
-requires exactly one valid raw PostScript capture, and then derives the locked PDF/PNG/analysis
-artifacts. Paper geometry, orientation, Ctrl-D behavior, typography, pagination, and print fidelity
-remain open until that capture is measured. Nothing fetches a driver, WPD, PPD, font, Windows, or
-Ami Pro bytes.
+Run the one-file native print gate from the sealed printer-ready runtime:
+
+```console
+./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
+```
+
+If more than one printer-ready runtime exists, add `--runtime-key HASH`. The guest opens the exact
+invented fixture, requires its known ready state, invokes Ami Pro's Print dialog, accepts the fixed
+printer defaults, waits for both the DOSBox-X LPT-close event and stable capture bytes, and then
+closes Ami Pro and Windows. Exactly one capture is required. The raw stream is preserved; a
+separately hashed derivative removes only one leading and one trailing Ctrl-D before bounded
+Ghostscript and Poppler analysis in fresh network-disabled OCI invocations.
+
+Two production jobs on 2026-08-15, `print-smoke-_0zj4tp0` and
+`print-smoke-4lvjarl9`, used printer-ready runtime
+`215b2afac79849baca3b07098180ccc6d3274545eae99f26db89126086767fe2`.
+They produced byte-identical 18,881-byte raw PostScript with SHA-256
+`dc5c6049ade704787095728b6966ccac3047e7f2fe4429bb134e28255c77f8d9`, including boundary
+Ctrl-D bytes, and byte-identical 18,879-byte sanitized PostScript with SHA-256
+`8d94694fbdc481197e714686d0766c224c249beea12ee69e6421b05538d5bcf6`.
+The stream is DSC 3.0 from `Windows PSCRIPT`, declares one page and bounding box
+`14 91 582 782`, and names `Ami Pro - SMOKE.SAM`.
+
+Pinned Ghostscript 10.00.0 produced the same 5,737-byte PDF in both runs, SHA-256
+`bceffa6abd18e3ee0f8a27dcafbdb801fc3b41c3cbce4fce8718d54fe3bc47c9`.
+It is one unrotated A4 page (595x842 points). Poppler extracted the exact two invented lines and
+six word boxes; its 144-DPI raster is 1190x1684 and hashes to
+`14c3ecd69fd6b5fc2801d5caff936d1b0e48c2d0c301c2db4daf714eac2ab553`.
+Formal `compare` returned equal with zero differing pixels and RMSE 0. The PDF contains an embedded,
+unnamed Type 3 font, so all PS/PDF/PNG artifacts remain ignored and local. Both manifests say
+`baseline_eligible: false`; Phase 3 establishes this exact controlled observation, not a
+redistributable golden file or general typography/layout fidelity.
