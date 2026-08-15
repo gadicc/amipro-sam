@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -349,6 +350,8 @@ def test_native_batch_config_and_variable_postscript_validation() -> None:
     batch = native_module.native_document_batch("DOC00042.SAM")
     assert r"C:\PRTSMK.BAT" in config
     assert b"C:\\ORACLE\\DOC00042.SAM" in batch
+    assert native_module.NATIVE_DOCUMENT_PROFILE["print_dialog_attempts"] == 3
+    assert native_module.NATIVE_DOCUMENT_PROFILE["print_dialog_attempt_seconds"] == 5.0
 
     raw = _postscript("DOC00042.SAM", 2)
     sanitized, identity = native_module.validate_native_postscript(
@@ -364,6 +367,74 @@ def test_native_batch_config_and_variable_postscript_validation() -> None:
             raw.replace(b"%%Page: 2 2", b"%%Page: 2 3"),
             guest_name="DOC00042.SAM",
         )
+
+
+def test_native_document_driver_retries_a_lost_print_shortcut(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = tmp_path / "job"
+    (job / "diagnostics").mkdir(parents=True)
+    captures: list[str] = []
+    keys: list[str] = []
+    print_attempts = 0
+
+    def capture(
+        _job: Path,
+        state: dict[str, object],
+        _filename: str,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        nonlocal print_attempts
+        name = str(state["name"])
+        captures.append(name)
+        if name == "amipro-print-dialog":
+            print_attempts += 1
+            if print_attempts == 1:
+                raise OracleError("synthetic lost shortcut")
+        return {"name": name}
+
+    def execute(
+        _invocation: object,
+        command: tuple[str, ...],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        if command[:2] == ("xdotool", "search"):
+            return {"exit_code": 0, "stdout": "123\n"}
+        assert command[:2] == ("xdotool", "key")
+        keys.append(command[-1])
+        return {"exit_code": 0, "stdout": ""}
+
+    monkeypatch.setattr(native_module.smoke_module, "_wait_sentinel", lambda *_args: None)
+    monkeypatch.setattr(native_module.smoke_module, "_capture_exact_state", capture)
+    monkeypatch.setattr(native_module.smoke_module, "exec_podman_checked", execute)
+    monkeypatch.setattr(
+        native_module.smoke_module,
+        "_wait_capture_closed",
+        lambda *_args, **_kwargs: {
+            "path": "invented.prt",
+            "size": 100,
+            "stable_seconds": 3,
+            "lpt_close_observed": True,
+        },
+    )
+    monkeypatch.setattr(
+        native_module.install_module,
+        "_wait_installer_state",
+        lambda *_args, **_kwargs: ({"name": "amipro-editor-menu"}, b""),
+    )
+
+    result = native_module._drive_native_lifecycle(
+        object(),
+        job,
+        threading.Event(),
+        timeout_seconds=45,
+    )
+
+    assert result["status"] == "success"
+    assert result["actions"][0]["attempt_count"] == 2
+    assert keys[:3] == ["ctrl+p", "ctrl+p", "Return"]
+    assert captures.count("amipro-print-dialog") == 2
 
 
 def test_native_document_worker_retains_a_verifiable_job(

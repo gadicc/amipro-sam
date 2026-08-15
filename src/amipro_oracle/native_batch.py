@@ -45,6 +45,9 @@ MAX_TEXT_BYTES = 16 * 1024 * 1024
 MAX_BBOX_BYTES = 32 * 1024 * 1024
 MAX_WORD_BOXES = 500_000
 RASTER_DPI = 144
+PRINT_DIALOG_ATTEMPTS = 3
+PRINT_DIALOG_ATTEMPT_SECONDS = 5.0
+EDITOR_RECONFIRM_SECONDS = 2.0
 
 EDITOR_MENU_STATE = {
     "name": "amipro-editor-menu",
@@ -58,6 +61,8 @@ NATIVE_DOCUMENT_PROFILE = {
     "autolock": False,
     "stable_samples": 2,
     "poll_seconds": 0.25,
+    "print_dialog_attempts": PRINT_DIALOG_ATTEMPTS,
+    "print_dialog_attempt_seconds": PRINT_DIALOG_ATTEMPT_SECONDS,
     "states": [
         EDITOR_MENU_STATE,
         smoke_module.PRINT_DIALOG_STATE,
@@ -215,7 +220,7 @@ def _drive_native_lifecycle(
     window = windows[0]
     actions: list[dict[str, object]] = []
 
-    def press(action: str, key: str) -> None:
+    def send_key(action: str, key: str) -> dict[str, object]:
         result = smoke_module.exec_podman_checked(
             invocation,
             ("xdotool", "key", "--window", window, key),
@@ -223,16 +228,48 @@ def _drive_native_lifecycle(
         )
         if result["exit_code"] != 0:
             raise OracleError(f"cannot perform UI action: {action}", exit_code=EXIT_BACKEND)
-        actions.append({"action": action, "key": key, "exit_code": 0})
+        return {"action": action, "key": key, "exit_code": 0}
 
-    press("open-print-dialog", "ctrl+p")
-    dialog = smoke_module._capture_exact_state(
-        job,
-        smoke_module.PRINT_DIALOG_STATE,
-        "print-dialog.png",
-        stop=stop,
-        deadline=deadline,
-    )
+    def press(action: str, key: str) -> None:
+        actions.append(send_key(action, key))
+
+    dialog: dict[str, object] | None = None
+    last_dialog_error: OracleError | None = None
+    for attempt in range(1, PRINT_DIALOG_ATTEMPTS + 1):
+        send_key("open-print-dialog", "ctrl+p")
+        try:
+            dialog = smoke_module._capture_exact_state(
+                job,
+                smoke_module.PRINT_DIALOG_STATE,
+                "print-dialog.png",
+                stop=stop,
+                deadline=min(deadline, monotonic() + PRINT_DIALOG_ATTEMPT_SECONDS),
+            )
+        except OracleError as exc:
+            last_dialog_error = exc
+            try:
+                install_module._wait_installer_state(
+                    job / "diagnostics" / "screen-last.png",
+                    EDITOR_MENU_STATE,
+                    stop=stop,
+                    deadline=min(deadline, monotonic() + EDITOR_RECONFIRM_SECONDS),
+                )
+            except OracleError:
+                raise exc
+            continue
+        actions.append(
+            {
+                "action": "open-print-dialog",
+                "key": "ctrl+p",
+                "exit_code": 0,
+                "attempt_count": attempt,
+            }
+        )
+        break
+    if dialog is None:
+        if last_dialog_error is None:
+            raise OracleError("print dialog retry failed", exit_code=EXIT_BACKEND)
+        raise last_dialog_error
     press("confirm-default-print", "Return")
     capture = smoke_module._wait_capture_closed(
         job,
