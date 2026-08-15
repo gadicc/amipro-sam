@@ -61,8 +61,9 @@ RASTER_DPI = 144
 
 PRINT_DIALOG_STATE = {
     "name": "amipro-print-dialog",
-    "box": [323, 282, 703, 310],
-    "title_sha256": "e02836236bd3777b29b67e1361b3e793e9fb78b53204c8005bb519fdd1a81af7",
+    # Exclude the dialog's one-pixel outer border: it can contain document pixels.
+    "box": [323, 283, 703, 310],
+    "title_sha256": "b0357f1478f331967d808b552322f497a8aff80945631df904829b7312d129fa",
 }
 EXPECTED_BOUNDING_BOX = [14, 91, 582, 782]
 EXPECTED_TEXT = "NATIVE SMOKE DOCUMENT\nINVENTED CONTENT ONLY"

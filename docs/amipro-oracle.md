@@ -33,6 +33,7 @@ Run from the repository root:
 ./scripts/amipro-oracle print-smoke --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch --input PATH --output NEW_PRIVATE_PATH \
   --confirm-proprietary-media-rights
+./scripts/amipro-oracle batch-status --output PRIVATE_BATCH_PATH
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
 
@@ -165,8 +166,37 @@ For an ignored private corpus such as `mydocs`, choose a new output directory:
   --input mydocs \
   --output .amipro-oracle/private-batches/mydocs-20260815 \
   --timeout-seconds 180 \
+  --progress \
   --confirm-proprietary-media-rights
 ```
+
+`--progress` writes privacy-safe per-document lifecycle lines to stderr, using only the stable
+guest identifiers such as `DOC00001.SAM`; final JSON remains clean on stdout when `--json` is also
+used. The atomic `progress.json` and `batch.json` journals are written before the first document
+finishes and after every transition. Inspect an existing run, including one started without
+`--progress`, from another terminal:
+
+```console
+./scripts/amipro-oracle batch-status \
+  --output .amipro-oracle/private-batches/mydocs-20260815
+
+watch -n 2 './scripts/amipro-oracle batch-status \
+  --output .amipro-oracle/private-batches/mydocs-20260815'
+```
+
+The isolated observer continually replaces a read-only screenshot of the active DOSBox-X display.
+On a host with `feh`, open that frame with automatic reload enabled:
+
+```console
+screen_path=$(./scripts/amipro-oracle batch-status \
+  --output .amipro-oracle/private-batches/mydocs-20260815 \
+  --screen-path)
+feh --reload 1 "$screen_path"
+```
+
+Rerun those two commands when the batch advances to a new document, because every document has a
+separate evidence job. This is intentionally visual-only: attaching a keyboard/mouse or the host X
+socket would alter the experiment and weaken the container boundary.
 
 If the command is interrupted, or some documents fail transiently, repeat the exact command with
 `--resume`. Successful results are hash-verified and skipped; incomplete and failed documents get
@@ -184,9 +214,10 @@ new numbered attempts while previous failure evidence is retained:
 `plan.json` and `name-map.json` map private relative source names to DOS-safe guest names. Host-side
 PDFs preserve the source's relative directories and basename while changing only `.SAM` to `.pdf`;
 for example, `letters/Example.SAM` becomes `reference-pdf/letters/Example.pdf`. `batch.json` is the
-atomic progress/summary journal. All of these files contain or identify private material and must
-remain ignored and local. The PDFs can embed fonts from the proprietary guest environment; neither
-they nor the PNGs are cleared for redistribution, and every result remains
+atomic result journal, while `progress.json` records the latest privacy-safe lifecycle event. All
+of these files contain or identify private material and must remain ignored and local. The PDFs can
+embed fonts from the proprietary guest environment; neither they nor the PNGs are cleared for
+redistribution, and every result remains
 `baseline_eligible: false`.
 
 ## Windows bootstrap, boot gate, and Ami Pro install

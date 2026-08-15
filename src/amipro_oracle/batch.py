@@ -14,6 +14,8 @@ from .io import atomic_write, atomic_write_json, digest_json, read_json_object, 
 
 BATCH_PLAN_SCHEMA = "amipro-oracle-real-batch-plan-v1"
 BATCH_RESULT_SCHEMA = "amipro-oracle-real-batch-v1"
+BATCH_PROGRESS_SCHEMA = "amipro-oracle-real-batch-progress-v1"
+BATCH_STATUS_SCHEMA = "amipro-oracle-real-batch-status-v1"
 BATCH_DOCUMENT_SCHEMA = "amipro-oracle-real-batch-document-v1"
 BATCH_FAILURE_SCHEMA = "amipro-oracle-real-batch-failure-v1"
 NATIVE_SAM_AUDIT_SCHEMA = "amipro-oracle-native-sam-audit-v1"
@@ -312,12 +314,15 @@ def _batch_summary(
     jobs: list[dict[str, object]],
     *,
     interrupted: bool = False,
+    running: bool = False,
 ) -> dict[str, Any]:
     successes = sum(item.get("status") == "success" for item in jobs)
     failures = sum(item.get("status") in {"failure", "blocked"} for item in jobs)
     pending = int(plan["document_count"]) - len(jobs)
-    if interrupted or pending:
+    if interrupted:
         status = "interrupted"
+    elif pending:
+        status = "running" if running else "interrupted"
     elif failures:
         status = "complete-with-failures"
     else:
@@ -333,6 +338,238 @@ def _batch_summary(
         "failure_count": failures,
         "pending_count": pending,
         "jobs": jobs,
+    }
+
+
+def _progress_payload(
+    plan: dict[str, Any],
+    jobs: list[dict[str, object]],
+    *,
+    event: str,
+    record: dict[str, object] | None = None,
+) -> dict[str, object]:
+    successes = sum(item.get("status") == "success" for item in jobs)
+    failures = sum(item.get("status") in {"failure", "blocked"} for item in jobs)
+    document = None
+    if record is not None:
+        document = {"index": record["index"], "guest": record["guest"]}
+    return {
+        "schema": BATCH_PROGRESS_SCHEMA,
+        "event": event,
+        "plan_digest": plan["plan_digest"],
+        "document_count": plan["document_count"],
+        "completed_count": len(jobs),
+        "success_count": successes,
+        "failure_count": failures,
+        "pending_count": int(plan["document_count"]) - len(jobs),
+        "document": document,
+    }
+
+
+def _publish_progress(
+    output: Path,
+    plan: dict[str, Any],
+    jobs: list[dict[str, object]],
+    *,
+    event: str,
+    record: dict[str, object] | None = None,
+    callback: Callable[[dict[str, object]], None] | None = None,
+) -> None:
+    progress = _progress_payload(plan, jobs, event=event, record=record)
+    atomic_write_json(output / "progress.json", progress)
+    if callback is not None:
+        callback(progress)
+
+
+def _read_saved_plan(output: Path) -> dict[str, Any]:
+    _validate_output_root(output)
+    plan_path = output / "plan.json"
+    if plan_path.is_symlink() or not plan_path.is_file():
+        raise OracleError("batch plan is missing", exit_code=EXIT_INTEGRITY)
+    try:
+        plan = read_json_object(plan_path)
+    except (OSError, ValueError) as exc:
+        raise OracleError("batch plan is invalid", exit_code=EXIT_INTEGRITY) from exc
+    count = plan.get("document_count")
+    records = plan.get("records")
+    identity = {
+        "schema": plan.get("schema"),
+        "document_count": count,
+        "records": records,
+    }
+    if (
+        plan.get("schema") != BATCH_PLAN_SCHEMA
+        or type(count) is not int
+        or not 1 <= count <= MAX_BATCH_DOCUMENTS
+        or not isinstance(records, list)
+        or len(records) != count
+        or plan.get("plan_digest") != digest_json(identity)
+    ):
+        raise OracleError("batch plan failed integrity checks", exit_code=EXIT_INTEGRITY)
+    for expected_index, record in enumerate(records, start=1):
+        if not isinstance(record, dict):
+            raise OracleError("batch plan record is invalid", exit_code=EXIT_INTEGRITY)
+        source = record.get("source")
+        pure = PurePosixPath(source) if isinstance(source, str) else None
+        source_hash = record.get("source_sha256")
+        if (
+            record.get("index") != expected_index
+            or record.get("guest") != staged_name(expected_index)
+            or pure is None
+            or pure.is_absolute()
+            or not pure.parts
+            or any(part in {"", ".", ".."} for part in pure.parts)
+            or record.get("preflight") not in {"ready", "blocked"}
+            or (record.get("preflight") == "ready" and source_hash is None)
+            or (
+                source_hash is not None
+                and (not isinstance(source_hash, str) or _SHA256.fullmatch(source_hash) is None)
+            )
+        ):
+            raise OracleError("batch plan record failed integrity checks", exit_code=EXIT_INTEGRITY)
+    return plan
+
+
+def _read_batch_journal(output: Path, plan: dict[str, Any]) -> dict[str, Any] | None:
+    path = output / "batch.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise OracleError("batch journal is unsafe", exit_code=EXIT_INTEGRITY)
+    try:
+        journal = read_json_object(path)
+    except (OSError, ValueError) as exc:
+        raise OracleError("batch journal is invalid", exit_code=EXIT_INTEGRITY) from exc
+    jobs = journal.get("jobs")
+    count = int(plan["document_count"])
+    if (
+        journal.get("schema") != BATCH_RESULT_SCHEMA
+        or journal.get("backend") != "real"
+        or journal.get("baseline_eligible") is not False
+        or journal.get("plan_digest") != plan["plan_digest"]
+        or journal.get("document_count") != count
+        or not isinstance(jobs, list)
+        or len(jobs) > count
+        or any(
+            not isinstance(item, dict)
+            or item.get("status") not in {"success", "failure", "blocked"}
+            for item in jobs
+        )
+        or journal.get("status")
+        not in {"running", "interrupted", "complete-with-failures", "success"}
+        or journal.get("success_count")
+        != sum(isinstance(item, dict) and item.get("status") == "success" for item in jobs)
+        or journal.get("failure_count")
+        != sum(
+            isinstance(item, dict) and item.get("status") in {"failure", "blocked"}
+            for item in jobs
+        )
+        or journal.get("pending_count") != count - len(jobs)
+    ):
+        raise OracleError("batch journal failed integrity checks", exit_code=EXIT_INTEGRITY)
+    return journal
+
+
+def _matching_evidence_job(
+    home: Path,
+    record: dict[str, object],
+) -> dict[str, object] | None:
+    jobs_root = home / "jobs"
+    if jobs_root.is_symlink() or not jobs_root.is_dir():
+        return None
+    matches: list[tuple[int, Path, dict[str, Any]]] = []
+    scanned = 0
+    try:
+        for child in jobs_root.iterdir():
+            if not child.name.startswith("batch-document-"):
+                continue
+            scanned += 1
+            if scanned > 10_000:
+                raise OracleError(
+                    "oracle evidence job count is outside its bound",
+                    exit_code=EXIT_INTEGRITY,
+                )
+            if child.is_symlink() or not child.is_dir():
+                continue
+            inputs_path = child / "inputs.json"
+            if inputs_path.is_symlink() or not inputs_path.is_file():
+                continue
+            try:
+                inputs = read_json_object(inputs_path)
+                source = inputs.get("source")
+                modified = child.stat().st_mtime_ns
+            except (OSError, ValueError):
+                continue
+            if (
+                isinstance(source, dict)
+                and source.get("guest_name") == record.get("guest")
+                and source.get("sha256") == record.get("source_sha256")
+            ):
+                matches.append((modified, child, inputs))
+    except OSError as exc:
+        raise OracleError("cannot inspect oracle evidence jobs", exit_code=EXIT_INTEGRITY) from exc
+    if not matches:
+        return None
+    _modified, job, _inputs = max(matches, key=lambda item: (item[0], item[1].name))
+    completed = (job / "job.json").is_file() or (job / "failure.json").is_file()
+    screen = job / "diagnostics" / "screen-last.png"
+    screen_path: str | None = None
+    screen_size: int | None = None
+    screen_mtime_ns: int | None = None
+    try:
+        if not screen.is_symlink() and screen.is_file():
+            info = screen.stat()
+            screen_path = str(screen.absolute())
+            screen_size = info.st_size
+            screen_mtime_ns = info.st_mtime_ns
+    except FileNotFoundError:
+        # The observer atomically replaces this file while status is sampled.
+        pass
+    return {
+        "evidence_job": job.name,
+        "active": not completed,
+        "screen_path": screen_path,
+        "screen_size": screen_size,
+        "screen_mtime_ns": screen_mtime_ns,
+    }
+
+
+def read_batch_status(output: Path, home: Path) -> dict[str, object]:
+    output = output.expanduser().absolute()
+    plan = _read_saved_plan(output)
+    journal = _read_batch_journal(output, plan)
+    completed = len(journal["jobs"]) if journal is not None else 0
+    count = int(plan["document_count"])
+    current: dict[str, object] | None = None
+    evidence: dict[str, object] | None = None
+    if completed < count:
+        record = plan["records"][completed]
+        current = {
+            "index": record["index"],
+            "guest": record["guest"],
+            "preflight": record["preflight"],
+        }
+        evidence = _matching_evidence_job(home, record)
+        if evidence is not None:
+            current.update(evidence)
+    successes = int(journal["success_count"]) if journal is not None else 0
+    failures = int(journal["failure_count"]) if journal is not None else 0
+    if evidence is not None and evidence["active"]:
+        status = "running"
+    elif journal is None:
+        status = "starting"
+    else:
+        status = journal["status"]
+    return {
+        "schema": BATCH_STATUS_SCHEMA,
+        "status": status,
+        "document_count": count,
+        "completed_count": completed,
+        "success_count": successes,
+        "failure_count": failures,
+        "pending_count": count - completed,
+        "current": current,
+        "journal_exists": journal is not None,
     }
 
 
@@ -446,6 +683,7 @@ def run_real_batch(
     worker: Callable[[Path, str, float], dict[str, Any]],
     timeout_seconds: float = DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     resume: bool = False,
+    progress: Callable[[dict[str, object]], None] | None = None,
 ) -> tuple[dict[str, Any], int]:
     if (
         isinstance(timeout_seconds, bool)
@@ -493,6 +731,8 @@ def run_real_batch(
         atomic_write_json(output / "plan.json", plan)
         atomic_write_json(output / "name-map.json", _name_map(plan))
     jobs: list[dict[str, object]] = []
+    atomic_write_json(output / "batch.json", _batch_summary(plan, jobs, running=True))
+    _publish_progress(output, plan, jobs, event="batch-started", callback=progress)
     try:
         for record in plan["records"]:
             previous = _validated_resume_result(output, record) if resume else None
@@ -500,7 +740,18 @@ def run_real_batch(
                 previous = _validated_blocked_result(output, record)
             if previous is not None:
                 jobs.append(previous)
-                atomic_write_json(output / "batch.json", _batch_summary(plan, jobs))
+                atomic_write_json(
+                    output / "batch.json",
+                    _batch_summary(plan, jobs, running=True),
+                )
+                _publish_progress(
+                    output,
+                    plan,
+                    jobs,
+                    event="document-reused",
+                    record=record,
+                    callback=progress,
+                )
                 continue
             index = int(record["index"])
             job_root = output / "jobs" / f"{index:05d}"
@@ -530,9 +781,28 @@ def run_real_batch(
                 atomic_write_json(attempt_root / "failure.json", failure)
                 atomic_write_json(job_root / "failure.json", failure)
                 jobs.append(failure)
-                atomic_write_json(output / "batch.json", _batch_summary(plan, jobs))
+                atomic_write_json(
+                    output / "batch.json",
+                    _batch_summary(plan, jobs, running=True),
+                )
+                _publish_progress(
+                    output,
+                    plan,
+                    jobs,
+                    event="document-blocked",
+                    record=record,
+                    callback=progress,
+                )
                 continue
             source = input_root / str(record["source"])
+            _publish_progress(
+                output,
+                plan,
+                jobs,
+                event="document-started",
+                record=record,
+                callback=progress,
+            )
             try:
                 _payload, current_audit = read_and_audit_source(
                     source,
@@ -612,10 +882,33 @@ def run_real_batch(
                 atomic_write_json(attempt_root / "failure.json", failure)
                 atomic_write_json(job_root / "failure.json", failure)
                 jobs.append(failure)
-            atomic_write_json(output / "batch.json", _batch_summary(plan, jobs))
+            atomic_write_json(
+                output / "batch.json",
+                _batch_summary(plan, jobs, running=True),
+            )
+            _publish_progress(
+                output,
+                plan,
+                jobs,
+                event=(
+                    "document-success"
+                    if jobs[-1].get("status") == "success"
+                    else "document-failure"
+                ),
+                record=record,
+                callback=progress,
+            )
     except BaseException:
         atomic_write_json(output / "batch.json", _batch_summary(plan, jobs, interrupted=True))
+        _publish_progress(
+            output,
+            plan,
+            jobs,
+            event="batch-interrupted",
+            callback=progress,
+        )
         raise
     summary = _batch_summary(plan, jobs)
     atomic_write_json(output / "batch.json", summary)
+    _publish_progress(output, plan, jobs, event="batch-complete", callback=progress)
     return summary, EXIT_DIFFERENT if summary["failure_count"] else 0

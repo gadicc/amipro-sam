@@ -74,6 +74,11 @@ def test_postscript_config_batch_and_inputs_are_pinned() -> None:
     assert batch.endswith(b"\r\n")
     assert b"AMIPRO.EXE C:\\ORACLE\\SMOKE.SAM" in batch
     assert inputs["analysis_profile"] == print_module.ANALYSIS_PROFILE
+    assert print_module.PRINT_DIALOG_STATE == {
+        "name": "amipro-print-dialog",
+        "box": [323, 283, 703, 310],
+        "title_sha256": "b0357f1478f331967d808b552322f497a8aff80945631df904829b7312d129fa",
+    }
 
     changed = print_module.postscript_smoke_inputs(
         _ready(),

@@ -21,6 +21,7 @@ from .amipro_launch_probe import launch_amipro_ready
 from .batch import (
     DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     MAX_DOCUMENT_TIMEOUT_SECONDS,
+    read_batch_status,
     run_real_batch,
 )
 from .compare import compare_analyses
@@ -241,11 +242,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="verify the saved plan and continue incomplete or failed documents",
     )
     batch.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit privacy-safe per-document progress lines to stderr",
+    )
+    batch.add_argument(
         "--confirm-proprietary-media-rights",
         action="store_true",
         help="affirm your right to use the cached runtime made from proprietary media",
     )
     batch.set_defaults(handler=_command_batch)
+
+    batch_status = subparsers.add_parser(
+        "batch-status",
+        help="inspect a private native batch without changing it",
+    )
+    _common(batch_status, backend=False)
+    batch_status.add_argument("--output", type=Path, required=True)
+    batch_status.add_argument(
+        "--screen-path",
+        action="store_true",
+        help="print only the current read-only observer screenshot path",
+    )
+    batch_status.set_defaults(handler=_command_batch_status)
 
     compare = subparsers.add_parser(
         "compare", help="compare normalized page, text, box, and raster measurements"
@@ -891,6 +910,23 @@ def _command_batch(args: argparse.Namespace) -> int:
                 runtime_key=runtime_key,
             )
 
+        def progress(event: dict[str, object]) -> None:
+            document = event.get("document")
+            label = "batch"
+            if isinstance(document, dict):
+                label = (
+                    f"[{document.get('index')}/{event['document_count']}] "
+                    f"{document.get('guest')}"
+                )
+            print(
+                f"{label}: {str(event['event']).replace('-', ' ')}; "
+                f"{event['completed_count']} complete, "
+                f"{event['success_count']} succeeded, "
+                f"{event['failure_count']} failed or blocked",
+                file=sys.stderr,
+                flush=True,
+            )
+
         result, exit_code = run_real_batch(
             sources=sources,
             input_root=input_root,
@@ -898,6 +934,7 @@ def _command_batch(args: argparse.Namespace) -> int:
             worker=worker,
             timeout_seconds=args.timeout_seconds,
             resume=args.resume,
+            progress=progress if args.progress else None,
         )
         _emit(
             args,
@@ -909,6 +946,11 @@ def _command_batch(args: argparse.Namespace) -> int:
         )
         return exit_code
 
+    if args.progress:
+        raise OracleError(
+            "--progress is currently supported only by the real backend",
+            exit_code=EXIT_USAGE,
+        )
     if args.resume:
         raise OracleError(
             "--resume is currently supported only by the real backend",
@@ -987,6 +1029,44 @@ def _command_batch(args: argparse.Namespace) -> int:
         text=f"fake batch: {len(sources) - failures} succeeded, {failures} failed -> {output}",
     )
     return EXIT_DIFFERENT if failures else EXIT_OK
+
+
+def _command_batch_status(args: argparse.Namespace) -> int:
+    if args.screen_path and args.json:
+        raise OracleError(
+            "--screen-path and --json cannot be combined",
+            exit_code=EXIT_USAGE,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+    result = read_batch_status(args.output, home)
+    current = result.get("current")
+    if args.screen_path:
+        screen = current.get("screen_path") if isinstance(current, dict) else None
+        if not isinstance(screen, str):
+            raise OracleError(
+                "the current batch document has no observer screenshot yet",
+                exit_code=EXIT_MISSING,
+            )
+        print(screen)
+        return EXIT_OK
+    current_text = ""
+    if isinstance(current, dict):
+        current_text = (
+            f"; current {current['index']}/{result['document_count']} "
+            f"{current['guest']}"
+        )
+        if isinstance(current.get("screen_path"), str):
+            current_text += f"; screen {current['screen_path']}"
+    _emit(
+        args,
+        result,
+        text=(
+            f"native batch {result['status']}: {result['completed_count']}/"
+            f"{result['document_count']} complete, {result['success_count']} succeeded, "
+            f"{result['failure_count']} failed or blocked{current_text}"
+        ),
+    )
+    return EXIT_OK
 
 
 def _command_compare(args: argparse.Namespace) -> int:

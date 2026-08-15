@@ -110,6 +110,7 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
     sources = [_write_source(root, "a.sam"), _write_source(root, "b.sam")]
     output = tmp_path / "private-output"
     calls: list[str] = []
+    progress: list[dict[str, object]] = []
 
     def first_worker(source: Path, guest: str, timeout: float) -> dict[str, object]:
         assert timeout == 45
@@ -131,11 +132,22 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
         output=output,
         worker=first_worker,
         timeout_seconds=45,
+        progress=progress.append,
     )
     assert exit_code == EXIT_DIFFERENT
     assert summary["success_count"] == 1
     assert summary["failure_count"] == 1
     assert calls == ["DOC00001.SAM", "DOC00002.SAM"]
+    assert [item["event"] for item in progress] == [
+        "batch-started",
+        "document-started",
+        "document-success",
+        "document-started",
+        "document-failure",
+        "batch-complete",
+    ]
+    assert progress[-1]["completed_count"] == 2
+    assert read_json_object(output / "progress.json") == progress[-1]
     first_failure = output / "jobs/00002/attempts/0001/failure.json"
     assert first_failure.is_file()
     assert (output / "reference-pdf/a.pdf").is_file()
@@ -168,6 +180,57 @@ def test_real_batch_continues_then_resumes_without_repeating_success(
     assert (output / "jobs/00002/attempts/0002/result.json").is_file()
     assert (output / "reference-pdf/b.pdf").is_file()
     assert not (output / "jobs/00002/failure.json").exists()
+
+
+def test_batch_status_finds_the_active_read_only_observer_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "private-input"
+    source = _write_source(root, "private-name.sam")
+    plan = batch_module.build_batch_plan([source], root)
+    output = tmp_path / "private-output"
+    output.mkdir(mode=0o700)
+    output.chmod(0o700)
+    for name in ("jobs", "reference-pdf"):
+        (output / name).mkdir(mode=0o700)
+        (output / name).chmod(0o700)
+    atomic_write_json(output / "plan.json", plan)
+    atomic_write_json(output / "name-map.json", batch_module._name_map(plan))
+
+    home = tmp_path / "oracle"
+    evidence = home / "jobs" / "batch-document-active_1"
+    diagnostics = evidence / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    audit = plan["records"][0]["audit"]
+    atomic_write_json(evidence / "inputs.json", {"source": audit})
+    screen = diagnostics / "screen-last.png"
+    screen.write_bytes(b"invented observer frame")
+
+    status = batch_module.read_batch_status(output, home)
+    assert status["status"] == "running"
+    assert status["completed_count"] == 0
+    assert status["current"] == {
+        "index": 1,
+        "guest": "DOC00001.SAM",
+        "preflight": "ready",
+        "evidence_job": evidence.name,
+        "active": True,
+        "screen_path": str(screen.absolute()),
+        "screen_size": len(b"invented observer frame"),
+        "screen_mtime_ns": screen.stat().st_mtime_ns,
+    }
+    assert "private-name" not in json.dumps(status)
+
+    monkeypatch.setattr(cli_module, "oracle_home", lambda *_args, **_kwargs: home)
+    assert (
+        cli_module.main(
+            ["batch-status", "--output", str(output), "--screen-path"]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out.strip() == str(screen.absolute())
 
 
 def test_resume_rejects_tampered_pdf_path_and_records_interrupt(tmp_path: Path) -> None:
@@ -421,6 +484,18 @@ def test_real_batch_cli_requires_rights_and_dispatches(
 
     def run(**kwargs: object) -> tuple[dict[str, object], int]:
         observed.update(kwargs)
+        callback = kwargs.get("progress")
+        if callable(callback):
+            callback(
+                {
+                    "event": "document-success",
+                    "document_count": 1,
+                    "completed_count": 1,
+                    "success_count": 1,
+                    "failure_count": 0,
+                    "document": {"index": 1, "guest": "DOC00001.SAM"},
+                }
+            )
         return {
             "schema": batch_module.BATCH_RESULT_SCHEMA,
             "status": "success",
@@ -456,13 +531,17 @@ def test_real_batch_cli_requires_rights_and_dispatches(
                 "d" * 64,
                 "--timeout-seconds",
                 "45",
+                "--progress",
                 "--confirm-proprietary-media-rights",
                 "--json",
             ]
         )
         == 0
     )
-    result = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
     assert result["success_count"] == 1
+    assert "DOC00001.SAM: document success" in captured.err
     assert observed["timeout_seconds"] == 45
     assert observed["resume"] is False
+    assert callable(observed["progress"])
