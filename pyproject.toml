@@ -30,6 +30,7 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
 ]
+oracle-analysis = ["Pillow==12.3.0"]
 
 [project.scripts]
 amipro-sam = "amipro_sam.cli:main"

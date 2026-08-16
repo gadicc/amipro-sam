@@ -54,6 +54,7 @@ from .printer_install import (
     OUTER_TIME_LIMIT_SECONDS as PRINTER_INSTALL_TIME_LIMIT_SECONDS,
 )
 from .printer_install import install_printer_ready
+from .private_corpus import run_private_corpus_comparison
 from .runtime import bootstrap_fake
 from .toolchain import probe_recorded_image, probe_toolchain
 from .windows_boot_probe import OUTER_TIME_LIMIT_SECONDS, boot_windows_ready
@@ -274,6 +275,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="print only the current read-only observer screenshot path",
     )
     batch_status.set_defaults(handler=_command_batch_status)
+
+    corpus_compare = subparsers.add_parser(
+        "corpus-compare",
+        help="compare a verified private native batch with fresh converter PDFs",
+    )
+    _common(corpus_compare, backend=False)
+    corpus_compare.add_argument("--native-batch", type=Path, required=True)
+    corpus_compare.add_argument("--source-corpus", type=Path, required=True)
+    corpus_compare.add_argument("--output", type=Path, required=True)
+    corpus_compare.add_argument("--expected-successes", type=int, required=True)
+    corpus_compare.add_argument("--expected-failures", type=int, required=True)
+    corpus_compare.add_argument(
+        "--converter-timeout-seconds",
+        type=float,
+        default=60.0,
+        help="per-document converter deadline (maximum 300 seconds)",
+    )
+    corpus_compare.add_argument("--resume", action="store_true")
+    corpus_compare.add_argument(
+        "--workers",
+        type=int,
+        choices=range(1, 5),
+        default=2,
+        help="bounded parallel document workers (1-4; default 2)",
+    )
+    corpus_compare.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit privacy-safe aggregate progress to stderr",
+    )
+    corpus_compare.add_argument("--bbox-tolerance", type=float, default=0.5)
+    corpus_compare.add_argument("--raster-rmse", type=float, default=0.01)
+    corpus_compare.add_argument("--pixel-threshold", type=float, default=0.05)
+    corpus_compare.add_argument("--max-different-ratio", type=float, default=0.001)
+    corpus_compare.add_argument(
+        "--confirm-private-corpus",
+        action="store_true",
+        help="affirm that inputs and all detailed output must remain local and ignored",
+    )
+    corpus_compare.set_defaults(handler=_command_corpus_compare)
 
     compare = subparsers.add_parser(
         "compare", help="compare normalized page, text, box, and raster measurements"
@@ -1082,6 +1123,57 @@ def _command_batch_status(args: argparse.Namespace) -> int:
             f"native batch {result['status']}: {result['completed_count']}/"
             f"{result['document_count']} complete, {result['success_count']} succeeded, "
             f"{result['failure_count']} failed or blocked{current_text}"
+        ),
+    )
+    return EXIT_OK
+
+
+def _command_corpus_compare(args: argparse.Namespace) -> int:
+    if not args.confirm_private_corpus:
+        raise OracleError(
+            "private corpus comparison requires --confirm-private-corpus",
+            exit_code=EXIT_USAGE,
+        )
+    home = oracle_home(args.oracle_home, allow_temporary=False)
+
+    def progress(event: dict[str, object]) -> None:
+        print(
+            f"private comparison: {event['completed']}/{event['selected']} complete; "
+            f"{event['compared']} compared, "
+            f"{event['conversion_failures']} conversion failures, "
+            f"{event['analysis_failures']} analysis failures",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    with batch_coordinator_lock(home, args.output.expanduser().absolute()):
+        result = run_private_corpus_comparison(
+            home=home,
+            repo_root=repo_root(),
+            batch_root=args.native_batch,
+            source_root=args.source_corpus,
+            output=args.output,
+            expected_successes=args.expected_successes,
+            expected_failures=args.expected_failures,
+            converter_timeout_seconds=args.converter_timeout_seconds,
+            workers=args.workers,
+            resume=args.resume,
+            progress=progress if args.progress else None,
+            bbox_tolerance=args.bbox_tolerance,
+            raster_rmse=args.raster_rmse,
+            pixel_threshold=args.pixel_threshold,
+            max_different_ratio=args.max_different_ratio,
+        )
+    outcomes = result["differential_outcomes"]
+    assert isinstance(outcomes, dict)
+    _emit(
+        args,
+        result,
+        text=(
+            f"private comparison complete: {outcomes['compared']} compared, "
+            f"{outcomes['different_under_thresholds']} different, "
+            f"{outcomes['conversion_failures']} conversion failures, "
+            f"{outcomes['analysis_failures']} analysis failures"
         ),
     )
     return EXIT_OK

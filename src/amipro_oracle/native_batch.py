@@ -478,7 +478,12 @@ def _pdfinfo(payload: bytes, *, guest_name: str, pages: int) -> dict[str, str]:
     return required
 
 
-def _bbox_pages(path: Path, expected_pages: int) -> list[dict[str, object]]:
+def _bbox_pages(
+    path: Path,
+    expected_pages: int,
+    *,
+    allow_bounded_off_page: bool = False,
+) -> list[dict[str, object]]:
     smoke_module._bounded_regular(path, "bounding-box XML", MAX_BBOX_BYTES)
     try:
         root = ET.fromstring(path.read_bytes())
@@ -521,11 +526,16 @@ def _bbox_pages(path: Path, expected_pages: int) -> list[dict[str, object]]:
             except (KeyError, ValueError) as exc:
                 raise OracleError("word bounding box is invalid", exit_code=EXIT_INTEGRITY) from exc
             x0, y0, x1, y1 = coordinates
-            if (
-                any(not math.isfinite(value) for value in coordinates)
-                or not 0 <= x0 < x1 <= width
-                or not 0 <= y0 < y1 <= height
-            ):
+            coordinates_valid = all(math.isfinite(value) for value in coordinates)
+            if allow_bounded_off_page:
+                coordinates_valid = coordinates_valid and (
+                    -10_000 <= x0 < x1 <= 10_000 and -10_000 <= y0 < y1 <= 10_000
+                )
+            else:
+                coordinates_valid = coordinates_valid and (
+                    0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height
+                )
+            if not coordinates_valid:
                 raise OracleError("word bounding box is outside its page", exit_code=EXIT_INTEGRITY)
             boxes.append(
                 {
@@ -704,7 +714,7 @@ def _derive_outputs(
 def _artifacts(job: Path) -> list[dict[str, object]]:
     paths: list[tuple[Path, str]] = []
     for path in sorted((job / "output").iterdir(), key=lambda item: item.name):
-        paths.append((path, "derived-output"))
+        paths.append((path, "analysis" if path.name == "analysis.json" else "derived-output"))
     for relative in (
         "ui-driver.json",
         "dosbox-x.conf",

@@ -34,6 +34,13 @@ Run from the repository root:
 ./scripts/amipro-oracle batch --input PATH --output NEW_PRIVATE_PATH \
   --confirm-proprietary-media-rights
 ./scripts/amipro-oracle batch-status --output PRIVATE_BATCH_PATH
+./scripts/amipro-oracle corpus-compare \
+  --native-batch PRIVATE_BATCH_PATH \
+  --source-corpus PRIVATE_SOURCE_CORPUS \
+  --output .amipro-oracle/private-comparisons/NEW_RUN \
+  --expected-successes EXPECTED_SUCCESS_COUNT \
+  --expected-failures EXPECTED_FAILURE_OR_BLOCK_COUNT \
+  --confirm-private-corpus
 ./scripts/amipro-oracle compare --expected PATH --actual PATH
 ```
 
@@ -41,7 +48,7 @@ Add `--json` after the subcommand for machine-readable output. Exit statuses are
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | success or equal comparison |
+| 0 | successful job/discovery run, or equal direct comparison |
 | 1 | job failure or comparison difference |
 | 2 | invalid invocation |
 | 3 | missing media or prerequisite |
@@ -262,6 +269,82 @@ of these files contain or identify private material and must remain ignored and 
 embed fonts from the proprietary guest environment; neither they nor the PNGs are cleared for
 redistribution, and every result remains
 `baseline_eligible: false`.
+
+## Private corpus differential analysis
+
+`corpus-compare` starts discovery from a completed real native batch without changing converter
+behavior. It accepts retained version-1 batches and current version-2 batches. Before invoking the
+converter, it verifies the plan digest, completed journal and requested outcome counts; the exact
+source-corpus inventory and every recorded source hash that exists; each successful reference-PDF
+size and hash; each per-document batch result; and the evidence-job manifest, complete artifact
+inventory, analysis profile, raster inventory, source identity, and locked-toolchain identity. A
+failed or blocked native job is recorded separately and never prevents selection of a verified
+success.
+
+The command requires a new directory below the ignored
+`.amipro-oracle/private-comparisons/` namespace. It generates each converter PDF in a bounded
+subprocess with a per-document deadline, output cap, entry cap, and writable-tree cap. It then uses
+the same locked Poppler version and 144-DPI profile recorded by the native batch to measure page
+count and size, normalized text hashes, word bounding boxes, and page rasters. The existing oracle
+analysis loader, artifact verifier, comparison tolerances, and raster-difference implementation are
+reused. Native and converter PDF hashes are never compared with one another. Hash equality is used
+only inside each provenance chain to prove that a source, reference copy, evidence artifact, or
+fresh converter artifact did not change.
+
+Install the pinned host-side raster accelerator before running this phase:
+
+```console
+python -m pip install -e '.[oracle-analysis]'
+```
+
+The run manifest records the exact Pillow version and a digest of the measurement implementation.
+The accelerated histogram calculation is tested against the bounded standard-library decoder for
+identical RMSE and thresholded-pixel results. `--workers` is bounded to 1–4 and defaults to 2; it
+changes throughput only and is intentionally not part of the measurement identity.
+
+Detailed results, converter PDFs, extracted private text, bounding-box XML, rasters, and tool logs
+stay below the ignored run directory. `run.json` intentionally contains private input locations;
+`documents/` contains one stable internal workspace per selected success; and
+`native-failures.json` retains the separate failed/blocked inventory. `--resume` verifies the full
+run identity and every reusable converter artifact before skipping completed work.
+
+Only `aggregate.json` is privacy-safe to read outside that workspace. It is constructed from an
+explicit allowlist of counts and technical mismatch classes, contains no document text, paths,
+filenames, document identifiers, personal identifiers, timestamps, hashes, or raw error messages,
+and suppresses every class observed in fewer than five documents. Suppressed classes contribute
+only a class count and total occurrence count. Frequent classes include corpus frequency, issue
+impact scope, and ranked suggestions for invented one-variable native fixtures. The aggregate
+builder performs a fail-closed structural privacy audit before writing the file; this does not make
+the private run publishable or turn corpus correlations into format evidence.
+
+Use privacy-safe progress reporting and resume after interruption:
+
+```console
+./scripts/amipro-oracle corpus-compare \
+  --native-batch PRIVATE_BATCH_PATH \
+  --source-corpus PRIVATE_SOURCE_CORPUS \
+  --output .amipro-oracle/private-comparisons/NEW_RUN \
+  --expected-successes EXPECTED_SUCCESS_COUNT \
+  --expected-failures EXPECTED_FAILURE_OR_BLOCK_COUNT \
+  --workers 4 \
+  --progress \
+  --confirm-private-corpus
+
+./scripts/amipro-oracle corpus-compare \
+  --native-batch PRIVATE_BATCH_PATH \
+  --source-corpus PRIVATE_SOURCE_CORPUS \
+  --output .amipro-oracle/private-comparisons/NEW_RUN \
+  --expected-successes EXPECTED_SUCCESS_COUNT \
+  --expected-failures EXPECTED_FAILURE_OR_BLOCK_COUNT \
+  --resume \
+  --progress \
+  --confirm-private-corpus
+```
+
+The aggregate is a fixture-selection aid, not evidence that a SAM field causes a visible behavior.
+Only subsequent invented, controlled native observations may establish such a claim, and those
+observations must follow the specification evidence workflow before parser, model, renderer, or
+specification behavior changes.
 
 ## Windows bootstrap, boot gate, and Ami Pro install
 

@@ -154,9 +154,18 @@ def raster_difference(
     actual: Path,
     *,
     pixel_threshold: float,
+    backend: str = "stdlib",
 ) -> dict[str, object]:
     if not math.isfinite(pixel_threshold) or not 0 <= pixel_threshold <= 1:
         raise ValueError("pixel threshold must be between zero and one")
+    if backend == "pillow":
+        return _pillow_raster_difference(
+            expected,
+            actual,
+            pixel_threshold=pixel_threshold,
+        )
+    if backend != "stdlib":
+        raise ValueError(f"unsupported raster difference backend: {backend}")
     expected_width, expected_height, expected_pixels = decode_png(expected)
     actual_width, actual_height, actual_pixels = decode_png(actual)
     if (expected_width, expected_height) != (actual_width, actual_height):
@@ -185,6 +194,103 @@ def raster_difference(
         "dimensions_equal": True,
         "expected_dimensions": [expected_width, expected_height],
         "actual_dimensions": [actual_width, actual_height],
+        "rmse": round(math.sqrt(squared / (pixels * 3)) / 255, 9),
+        "different_pixel_ratio": round(different / pixels, 9),
+    }
+
+
+def _validated_png_dimensions(path: Path) -> tuple[int, int]:
+    size = path.stat().st_size
+    if not 1 <= size <= MAX_PNG_BYTES:
+        raise ValueError(f"PNG exceeds the {MAX_PNG_BYTES} byte limit: {path}")
+    data = path.read_bytes()
+    if not data.startswith(PNG_SIGNATURE):
+        raise ValueError(f"not a PNG file: {path}")
+    offset = len(PNG_SIGNATURE)
+    width = height = bit_depth = color_type = interlace = None
+    saw_data = False
+    saw_end = False
+    while offset < len(data):
+        if offset + 12 > len(data):
+            raise ValueError(f"truncated PNG chunk: {path}")
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        kind = data[offset + 4 : offset + 8]
+        end = offset + 12 + length
+        if end > len(data):
+            raise ValueError(f"truncated PNG payload: {path}")
+        payload = data[offset + 8 : offset + 8 + length]
+        checksum = struct.unpack(">I", data[offset + 8 + length : end])[0]
+        if binascii.crc32(kind + payload) != checksum:
+            raise ValueError(f"PNG CRC mismatch in {kind!r}: {path}")
+        if kind == b"IHDR":
+            if len(payload) != 13 or width is not None:
+                raise ValueError(f"invalid PNG header: {path}")
+            width, height, bit_depth, color_type, compression, filtering, interlace = (
+                struct.unpack(">IIBBBBB", payload)
+            )
+            if compression != 0 or filtering != 0:
+                raise ValueError(f"unsupported PNG compression/filter method: {path}")
+        elif kind == b"IDAT":
+            saw_data = True
+        elif kind == b"IEND":
+            saw_end = True
+            break
+        offset = end
+    if not saw_data or not saw_end or width is None or height is None:
+        raise ValueError(f"incomplete PNG: {path}")
+    if width <= 0 or height <= 0 or width * height > MAX_RASTER_PIXELS:
+        raise ValueError(f"unsafe PNG dimensions {width}x{height}: {path}")
+    if bit_depth != 8 or color_type not in {0, 2, 4, 6} or interlace != 0:
+        raise ValueError(
+            f"unsupported PNG format (depth={bit_depth}, color={color_type}, "
+            f"interlace={interlace}): {path}"
+        )
+    return width, height
+
+
+def _pillow_raster_difference(
+    expected: Path,
+    actual: Path,
+    *,
+    pixel_threshold: float,
+) -> dict[str, object]:
+    try:
+        from PIL import Image, ImageChops
+    except ImportError as exc:  # pragma: no cover - exercised by deployment environments
+        raise ValueError("Pillow is required for accelerated raster comparison") from exc
+
+    expected_dimensions = _validated_png_dimensions(expected)
+    actual_dimensions = _validated_png_dimensions(actual)
+    if expected_dimensions != actual_dimensions:
+        return {
+            "dimensions_equal": False,
+            "expected_dimensions": list(expected_dimensions),
+            "actual_dimensions": list(actual_dimensions),
+            "rmse": None,
+            "different_pixel_ratio": 1.0,
+        }
+    with Image.open(expected) as expected_image, Image.open(actual) as actual_image:
+        expected_rgb = expected_image.convert("RGB")
+        actual_rgb = actual_image.convert("RGB")
+        expected_rgb.load()
+        actual_rgb.load()
+        difference = ImageChops.difference(expected_rgb, actual_rgb)
+        histogram = difference.histogram()
+        squared = sum(
+            count * value * value
+            for channel in range(3)
+            for value, count in enumerate(histogram[channel * 256 : (channel + 1) * 256])
+        )
+        red, green, blue = difference.split()
+        maximum = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+        maximum_histogram = maximum.histogram()
+    pixels = expected_dimensions[0] * expected_dimensions[1]
+    cutoff = math.floor(pixel_threshold * 255)
+    different = sum(maximum_histogram[cutoff + 1 :])
+    return {
+        "dimensions_equal": True,
+        "expected_dimensions": list(expected_dimensions),
+        "actual_dimensions": list(actual_dimensions),
         "rmse": round(math.sqrt(squared / (pixels * 3)) / 255, 9),
         "different_pixel_ratio": round(different / pixels, 9),
     }

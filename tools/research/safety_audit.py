@@ -44,7 +44,7 @@ OPEN_FONT_ALLOWLIST = {
 
 SYNTHETIC_SAM_ALLOWLIST = {
     "tests/fixtures/synthetic-basic.sam": (
-        "5b2a9df523ce36a7b79e2b5a1071b6a5df768531357f8e33b62ec2ec33679b52"
+        "bab52c077acf1cd67fde5fa285ffacd81febca8fc8da0e16c73a8bcf24ff0aa1"
     )
 }
 

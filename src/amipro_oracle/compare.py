@@ -84,7 +84,13 @@ def load_analysis(path: Path) -> tuple[dict[str, Any], _AnalysisSource]:
         verified = _verify_job_artifacts(candidate, value)
         analysis_path = _relative_file(candidate.parent, value.get("analysis_path"))
         analysis_artifact = verified.get(analysis_path)
-        if analysis_artifact is None or analysis_artifact.get("kind") != "analysis":
+        if analysis_artifact is None or analysis_artifact.get("kind") not in {
+            "analysis",
+            # Retained native-document v1/v2 jobs classified every file below
+            # output/ as derived output.  The manifest's analysis_path and the
+            # analysis schema still identify this artifact unambiguously.
+            "derived-output",
+        }:
             raise ValueError(
                 f"job analysis is absent from its verified artifact inventory: {candidate}"
             )
@@ -116,6 +122,8 @@ def _normalize_text(value: object, policy: str) -> str:
     normalized = value.replace("\r\n", "\n").replace("\r", "\n")
     if policy == "exact":
         return normalized
+    if policy == "pdftotext-page-text-trailing-newlines-trimmed":
+        return normalized.rstrip("\n")
     if policy == "collapse":
         return re.sub(r"\s+", " ", normalized).strip()
     raise ValueError(f"unsupported whitespace policy: {policy}")
@@ -179,6 +187,7 @@ def compare_analyses(
     raster_rmse: float = 0.01,
     pixel_threshold: float = 0.05,
     max_different_ratio: float = 0.001,
+    raster_backend: str = "stdlib",
 ) -> dict[str, object]:
     tolerances = {
         "bbox tolerance": _finite_number(bbox_tolerance, "bbox tolerance"),
@@ -304,6 +313,7 @@ def compare_analyses(
                 expected_raster_path,
                 actual_raster_path,
                 pixel_threshold=pixel_threshold,
+                backend=raster_backend,
             )
             report["page"] = page_number
             raster_reports.append(report)
@@ -332,6 +342,7 @@ def compare_analyses(
             "raster_rmse": raster_rmse,
             "pixel_threshold": pixel_threshold,
             "max_different_pixel_ratio": max_different_ratio,
+            "raster_backend": raster_backend,
         },
         "issues": issues,
         "rasters": raster_reports,

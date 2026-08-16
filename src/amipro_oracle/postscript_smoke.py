@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
 import shutil
 import stat
@@ -31,8 +30,13 @@ from .constants import (
 )
 from .errors import OracleError
 from .io import atomic_write, atomic_write_json, digest_json, read_json_object, sha256_file
-from .oci import BindMount, PodmanInvocation, build_podman_invocation, exec_podman_checked
-from .oci import run_podman_bounded
+from .oci import (
+    BindMount,
+    PodmanInvocation,
+    build_podman_invocation,
+    exec_podman_checked,
+    run_podman_bounded,
+)
 from .raster import decode_png
 from .state import StateMachine
 from .windows_bootstrap import (
@@ -697,7 +701,9 @@ def _run_tool(
         raise OracleError("invalid analysis tool name", exit_code=EXIT_INTEGRITY)
     output = job / "output"
     control = home / "control" / job.name / name
-    control.mkdir(mode=0o700, parents=True)
+    control.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if control.is_symlink() or not control.is_dir() or control.stat().st_mode & 0o077:
+        raise OracleError("analysis tool control directory is unsafe", exit_code=EXIT_INTEGRITY)
     suffix = re.sub(r"[^a-z0-9]", "", job.name[-8:].casefold())
     invocation = build_podman_invocation(
         image_record,

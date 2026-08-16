@@ -164,13 +164,16 @@ def build_podman_invocation(
             exit_code=EXIT_INTEGRITY,
         )
     resolved_control = control_root.expanduser().resolve(strict=True)
-    jobs_root = resolved_oracle / "jobs"
+    job_namespaces = (
+        resolved_oracle / "jobs",
+        resolved_oracle / "private-comparisons",
+    )
     controls_root = resolved_oracle / "control"
-    if jobs_root not in resolved_job.parents or (
+    if not any(namespace in resolved_job.parents for namespace in job_namespaces) or (
         resolved_control != controls_root and controls_root not in resolved_control.parents
     ):
         raise OracleError(
-            "job/control roots must stay below the dedicated oracle jobs/control directories",
+            "job/control roots must stay below a private oracle job namespace and control",
             exit_code=EXIT_INTEGRITY,
         )
     if (
@@ -314,8 +317,7 @@ def exec_podman_checked(
             exec_command,
             check=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=timeout_seconds,
         )
