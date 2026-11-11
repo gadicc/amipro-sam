@@ -171,7 +171,8 @@ amipro-sam convert document.sam --format pdf --strict --output document.pdf
 also report `lossy_files`, loss categories, and severity counts. Bytes confined to
 a validated indexed binary range do not become text-decoding losses.
 
-Use `--encoding` only when a document's charset declaration is absent or wrong:
+Use `--encoding` only when a document's charset declaration is absent or wrong.
+It also selects the code page for `</x>` and `<\x>` character escapes:
 
 ```console
 amipro-sam convert document.sam --encoding cp1250 --format text

@@ -14,6 +14,7 @@ facsimile.
 |---|---|---|---|
 | Version 4 header and CP1252 declaration | Supported | N/A | N/A |
 | Version 3 header | Tolerated, not corpus-verified | N/A | N/A |
+| Character escapes `</x>`/`<\x>` | Decoded in the document code page (declared or `--encoding`) in body, frame, table, header/footer text, style names, `[desc]`, `[frmname]`, and `[fnt]` families; undefined bytes kept as surrogates (`escape-byte-undefined`, content loss); non-single-byte encodings fall back to CP1252 (`escape-codepage-fallback`, semantic loss); diagnostic counts are decoder consumptions; escapes inside inline commands such as `<:f...>` are not yet decoded | Supported; surrogates render as U+FFFD | Supported; surrogates are backslash-escaped |
 | Paragraph text and anchored-object order | Supported | Supported | Supported |
 | Named paragraph styles | Character/paragraph subset plus exact shortcut/following-style envelope; raw behavioral flags retained | Reflowed; unimplemented spacing/all-indent semantics remain diagnostics, not body paragraphs | Simplified |
 | Bold, italic, underline, strike | Supported | Supported | Best effort |

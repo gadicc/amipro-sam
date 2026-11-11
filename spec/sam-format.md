@@ -134,8 +134,19 @@ Named paragraph styles use `@Style Name@`; `@@` is a literal at sign.
 | `<[>` | `[` | `SAM-ESCAPE-001` |
 | `@@` | `@` | `SAM-ESCAPE-001` |
 | `</R>` | apostrophe | `SAM-ESCAPE-001` |
-| `</x>` | byte derived from `x + 0x40` | `SAM-ESCAPE-001`; preserve undecodable results |
-| `<\x>` | byte derived from `x OR 0x80` | `SAM-ESCAPE-001`; preserve undecodable results |
+| `</x>` | byte `x + 0x40`, decoded in the document code page | `SAM-ESCAPE-001`, `SAM-ESCAPE-002`; preserve undecodable results |
+| `<\x>` | byte `x OR 0x80`, decoded in the document code page | `SAM-ESCAPE-001`, `SAM-ESCAPE-002`; preserve undecodable results |
+| `</x>`/`<\x>` with non-ASCII `x` | not an escape; an unsupported command | reader policy |
+
+Reader policy for escaped bytes (`SAM-ESCAPE-002`). The document code page is the
+selected decoding encoding, including an explicit override. A byte undefined in that
+code page is preserved as the surrogate U+DC00 + byte and reported once per document
+as `escape-byte-undefined` (content loss). When the selected encoding is not a
+single-byte code page (UTF-8/16/32, double-byte Asian code pages), escaped bytes are
+decoded as CP1252, the Ami Pro Western default, and reported once as
+`escape-codepage-fallback` (semantic loss). Escapes inside inline commands (for example
+a family name in `<:f...>`) are not yet decoded, because command boundaries are not
+escape-aware.
 
 ## 6. Inline command registry
 

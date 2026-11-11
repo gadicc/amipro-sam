@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import codecs
+import contextvars
 import copy
+import functools
 import hashlib
 import math
 import re
 from bisect import bisect_left, bisect_right
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -278,6 +282,100 @@ def _effective_lowerable_limit(
     return min(configured, hard_limit)
 
 
+@functools.lru_cache(maxsize=32)
+def _escape_table(encoding: str) -> tuple[str, bool]:
+    """Return the 256-entry escaped-byte table for *encoding* and whether it fell back.
+
+    Escapes encode one byte of the document's ANSI code page (SAM-ESCAPE-002). A codec
+    is single-byte when its incremental decoder yields exactly one character for every
+    byte fed alone; otherwise the Ami Pro Western default (CP1252) is used. Bytes the
+    code page leaves undefined become surrogates, like raw undecodable text bytes.
+    """
+
+    def build(name: str) -> str | None:
+        decoder = codecs.getincrementaldecoder(name)(errors="surrogateescape")
+        table = []
+        for value in range(256):
+            decoder.reset()
+            character = decoder.decode(bytes([value]), final=False)
+            if len(character) != 1:
+                return None
+            table.append(character)
+        return "".join(table)
+
+    try:
+        table = build(codecs.lookup(encoding).name)
+    except LookupError:
+        table = None
+    if table is not None:
+        return table, False
+    fallback = build("cp1252")
+    assert fallback is not None
+    return fallback, True
+
+
+@dataclass
+class _EscapeCodec:
+    """Per-parse escape decoder that records what it could not decode faithfully."""
+
+    encoding: str = "cp1252"
+    undefined: Counter[int] = field(default_factory=Counter)
+    fallback_count: int = 0
+
+    def character(self, value: int) -> str:
+        table, fallback = _escape_table(self.encoding)
+        if fallback:
+            self.fallback_count += 1
+        character = table[value]
+        if "\udc80" <= character <= "\udcff":
+            self.undefined[value] += 1  # keys are byte values, so at most 256
+        return character
+
+    def diagnostics(self) -> list[Diagnostic]:
+        found: list[Diagnostic] = []
+        if self.fallback_count:
+            found.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "escape-codepage-fallback",
+                    f"{self.fallback_count} escaped byte decode(s) used CP1252 because "
+                    f"{self.encoding} is not a single-byte code page",
+                    lossiness=Lossiness.SEMANTIC,
+                )
+            )
+        if self.undefined:
+            values = ", ".join(f"0x{value:02X}" for value in sorted(self.undefined))
+            found.append(
+                Diagnostic(
+                    Severity.WARNING,
+                    "escape-byte-undefined",
+                    f"{sum(self.undefined.values())} escaped byte decode(s) undefined in "
+                    f"the document code page were preserved as surrogates: {values}",
+                    lossiness=Lossiness.CONTENT,
+                )
+            )
+        return found
+
+
+_ESCAPE_CODEC: contextvars.ContextVar[_EscapeCodec | None] = contextvars.ContextVar(
+    "amipro_sam_escape_codec", default=None
+)
+
+
+def _with_escape_codec(function):
+    """Give each parse its own escape codec without threading it through every helper."""
+
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        token = _ESCAPE_CODEC.set(_EscapeCodec())
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _ESCAPE_CODEC.reset(token)
+
+    return wrapper
+
+
 def parse_file(
     path: str | Path,
     *,
@@ -311,6 +409,7 @@ def parse_file(
     )
 
 
+@_with_escape_codec
 def parse_bytes(
     data: bytes,
     *,
@@ -324,6 +423,9 @@ def parse_bytes(
     if not data:
         raise ParseError("input is empty")
     decoded = decode_bytes(data, limits=limits, encoding=encoding)
+    escape_codec = _ESCAPE_CODEC.get()
+    if escape_codec is not None:
+        escape_codec.encoding = decoded.encoding
     all_lines = decoded.text.splitlines()
     if not all_lines:
         raise ParseError("not an Ami Pro SAM document: expected [ver] at byte offset 0")
@@ -437,6 +539,8 @@ def parse_bytes(
     _diagnose_unindexed_tail(document, data, decoded)
 
     _record_unknown_main_sections(document, sections)
+    if escape_codec is not None:
+        document.diagnostics.extend(escape_codec.diagnostics())
     if strict and document.preservation_losses:
         raise PreservationLossError(document.preservation_losses)
     return document
@@ -645,7 +749,9 @@ def _parse_metadata_and_styles(
         elif name == "charset":
             document.metadata["charset"] = " | ".join(value for value in values if value)
         elif name in {"lang", "desc"} and values:
-            document.metadata[name] = values[0]
+            document.metadata[name] = (
+                _unescape_literal(values[0]) if name == "desc" else values[0]
+            )
             if len([value for value in values if value]) > 1:
                 document.diagnostics.append(
                     Diagnostic(
@@ -4341,6 +4447,16 @@ def _unsupported_inline_marker(tag: str) -> str:
     return f"[Unsupported inline command: <{visible_tag}>]"
 
 
+def _escape_character(kind: str, operand: str) -> str | None:
+    """Decode `</x>` or `<\\x>`; a non-ASCII operand is not an escape."""
+
+    if ord(operand) >= 0x80:
+        return None
+    value = (ord(operand) + 0x40) & 0xFF if kind == "/" else ord(operand) | 0x80
+    codec = _ESCAPE_CODEC.get() or _EscapeCodec()
+    return codec.character(value)
+
+
 def _decode_special_escape(text: str, index: int) -> tuple[str, int] | None:
     if text.startswith("<;>", index):
         return ">", 3
@@ -4348,10 +4464,10 @@ def _decode_special_escape(text: str, index: int) -> tuple[str, int] | None:
         return "[", 3
     if text.startswith("</R>", index):
         return "'", 4
-    if index + 3 < len(text) and text[index + 1] == "/" and text[index + 3] == ">":
-        return chr((ord(text[index + 2]) + 0x40) & 0xFF), 4
-    if index + 3 < len(text) and text[index + 1] == "\\" and text[index + 3] == ">":
-        return chr(ord(text[index + 2]) | 0x80), 4
+    if index + 3 < len(text) and text[index + 1] in "/\\" and text[index + 3] == ">":
+        character = _escape_character(text[index + 1], text[index + 2])
+        if character is not None:
+            return character, 4
     return None
 
 
@@ -4487,11 +4603,17 @@ def _range_is_verified(
     return start <= offset and end <= range_end
 
 
+_LITERAL_TOKEN = re.compile(r"@@|<<|<;>|<\[>|</R>|<[\\/][\x00-\x7f]>")
+_LITERAL_REPLACEMENTS = {"@@": "@", "<<": "<", "<;>": ">", "<[>": "[", "</R>": "'"}
+
+
 def _unescape_literal(text: str) -> str:
-    return (
-        text.replace("@@", "@")
-        .replace("<<", "<")
-        .replace("<;>", ">")
-        .replace("<[>", "[")
-        .replace("</R>", "'")
-    )
+    """Decode literal and byte escapes in one left-to-right pass, like the body tokenizer."""
+
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in _LITERAL_REPLACEMENTS:
+            return _LITERAL_REPLACEMENTS[token]
+        return _escape_character(token[1], token[2]) or token
+
+    return _LITERAL_TOKEN.sub(replace, text)

@@ -195,7 +195,12 @@ Pro font metrics, spacing, line breaking, or pagination:
 
 Confirmed literal escapes include `<<` for `<`, `<;>` for `>`, `<[>` for `[`,
 `@@` for `@`, and `</R>` for an apostrophe. Two additional four-byte escape
-families encode characters outside safe 7-bit ASCII.
+families encode characters outside safe 7-bit ASCII: `</x>` is byte `x + 0x40`
+(0x80-0xBF) and `<\x>` is byte `x | 0x80` (0xC0-0xFF). The byte is a character of
+the document's ANSI code page, not a Latin-1 code point, so the parser decodes it
+with the selected encoding (`SAM-ESCAPE-002`): CP1250 documents yield Central
+European letters and CP1252 documents yield typographic quotes and dashes for
+0x80-0x9F.
 
 Other observed commands cover tabs, indents, page breaks, anchors, tables,
 dates/page numbers, bookmarks, fields, merge data, spelling state, notes,
